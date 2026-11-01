@@ -23,6 +23,7 @@ vi.mock("../../ipc/commands", () => ({
     purgeNote: vi.fn().mockResolvedValue(undefined),
     trashNote: vi.fn().mockResolvedValue(undefined),
     quitApp: vi.fn(),
+    openSettings: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -106,6 +107,14 @@ describe("ManagerWindow", () => {
     await screen.findByRole("listitem");
     act(() => quitBlocked.handler?.(1));
     expect(await screen.findByRole("alert")).toHaveTextContent("1 note has unsaved text");
+  });
+
+  it("opens Settings from the menu", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    render(<ManagerWindow />);
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Settings…" }));
+    expect(commands.openSettings).toHaveBeenCalled();
   });
 
   it("groups long lists by date", async () => {

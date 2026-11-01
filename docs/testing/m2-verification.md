@@ -26,3 +26,16 @@ Found while testing: a non-resizable GTK window is forced to its content's natur
 now stay resizable with equal minimum and maximum heights (32 px).
 
 Not checked yet: double-clicking the strip to expand with the real mouse.
+
+## Settings window: General and About (designs S2, S4) — 2026-11-01
+
+| Check | Result |
+|---|---|
+| Manager ⋯ → Settings… | Opens a 680 × 520 "Settings" window; it shares the single WebKit process |
+| Launch at login on | Writes `~/.config/autostart/DeskNotes.desktop` (Exec = the running binary) |
+| Launch at login off | Removes that file; other apps' entries (`xpad.desktop`) untouched |
+| Colour for new notes = Mint | The next new note is created `#c8f7c5` |
+| About | Version, "MIT license", data folder path, "No data leaves this computer." |
+
+Not checked in the real app: "Open folder" (it opens the file manager; covered by a unit
+test). Privacy, Appearance and Backup sections will appear as those features are built.

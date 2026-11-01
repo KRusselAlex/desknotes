@@ -15,6 +15,7 @@ import "../styles/global.css";
 import "../styles/components.css";
 import "../styles/note.css";
 import "../styles/manager.css";
+import "../styles/settings.css";
 
 const now = Date.now();
 const H = 3_600_000;
@@ -76,7 +77,8 @@ const params = new URLSearchParams(location.search);
 const which = params.get("w") ?? "manager";
 const noteId = params.get("id") ?? "a2";
 if (params.get("locked")) find(noteId).editLocked = true;
-mockWindows(which === "note" ? `note-${noteId}` : "manager");
+const label = which === "note" ? `note-${noteId}` : which;
+mockWindows(label);
 
 mockIPC(
   (cmd, args) => {
@@ -108,6 +110,10 @@ mockIPC(
       case "set_note_color":
         find(a.id).color = String(a.color);
         return null;
+      case "get_settings":
+        return { launchAtLogin: false, newNoteColor: "#fff4a3", version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes" };
+      case "set_launch_at_login":
+        return Boolean(a.enabled);
       case "set_edit_locked":
         find(a.id).editLocked = Boolean(a.locked);
         return null;
@@ -123,6 +129,6 @@ followSystemTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App label={which === "note" ? `note-${noteId}` : "manager"} />
+    <App label={label} />
   </StrictMode>,
 );

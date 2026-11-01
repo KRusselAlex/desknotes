@@ -8,6 +8,7 @@ import "./styles/global.css";
 import "./styles/components.css";
 import "./styles/note.css";
 import "./styles/manager.css";
+import "./styles/settings.css";
 
 // Never let a click on a link navigate the webview itself.
 document.addEventListener(

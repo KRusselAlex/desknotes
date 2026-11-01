@@ -21,6 +21,10 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let handle = app.handle().clone();
             app.manage(AppState::open(&handle));
@@ -49,6 +53,11 @@ pub fn run() {
             commands::app::startup_errors,
             commands::app::quit_app,
             commands::app::quit_ready,
+            commands::settings::open_settings,
+            commands::settings::get_settings,
+            commands::settings::set_launch_at_login,
+            commands::settings::set_new_note_color,
+            commands::settings::open_data_folder,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");

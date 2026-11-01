@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 
 vi.mock("../features/manager/ManagerWindow", () => ({ ManagerWindow: () => <p>manager</p> }));
+vi.mock("../features/settings/SettingsWindow", () => ({ SettingsWindow: () => <p>settings</p> }));
 vi.mock("../features/notes/NoteWindow", () => ({
   NoteWindow: ({ noteId }: { noteId: string }) => <p>note {noteId}</p>,
 }));
@@ -11,6 +12,8 @@ describe("App window routing", () => {
   it("routes by window label", () => {
     const { rerender } = render(<App label="manager" />);
     expect(screen.getByText("manager")).toBeInTheDocument();
+    rerender(<App label="settings" />);
+    expect(screen.getByText("settings")).toBeInTheDocument();
     rerender(<App label="note-1234-abcd" />);
     expect(screen.getByText("note 1234-abcd")).toBeInTheDocument();
     rerender(<App label={null} />);
