@@ -155,7 +155,10 @@ export function ManagerWindow() {
               label="DeskNotes menu"
               className="dn-mgr-menu"
               onClose={() => setMenuOpen(false)}
-              items={[{ id: "quit", label: "Quit DeskNotes", icon: "quit", onSelect: () => void commands.quitApp() }]}
+              items={[
+                { id: "settings", label: "Settings…", icon: "settings", onSelect: () => void commands.openSettings() },
+                { id: "quit", label: "Quit DeskNotes", icon: "quit", separatorBefore: true, onSelect: () => void commands.quitApp() },
+              ]}
             />
           )}
         </div>

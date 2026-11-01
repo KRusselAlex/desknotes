@@ -30,7 +30,10 @@ pub fn get_note(state: State<'_, AppState>, id: String) -> IpcResult<Note> {
 // synchronous command deadlocks on Windows (Tauri documentation).
 #[tauri::command]
 pub async fn create_note(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Note> {
-    let note = state.with_db(|db| db.create_note(None))?;
+    let note = state.with_db(|db| {
+        let color = db.new_note_color()?;
+        db.create_note(Some(&color))
+    })?;
     windows::open_note(&app, &note)?;
     emit_changed(&app, Some(&note.id), "other");
     Ok(note)

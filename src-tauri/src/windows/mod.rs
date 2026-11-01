@@ -128,6 +128,56 @@ fn report_window_error(app: &AppHandle, e: tauri::Error) {
     let _ = show_manager(app);
 }
 
+/// Run `build` so the new window shares the manager's WebKit web process (a
+/// "related view") instead of starting its own, which costs ~80 MiB per window
+/// (ADR-0006). On Linux `build` runs a moment later on the main thread and its
+/// errors are reported in the manager.
+fn build_sharing_process<F>(app: &AppHandle, build: F) -> tauri::Result<()>
+where
+    F: FnOnce(Option<RelatedView>) -> tauri::Result<()> + Send + 'static,
+{
+    #[cfg(target_os = "linux")]
+    if let Some(manager) = app.get_webview_window(MANAGER) {
+        let reporter = app.clone();
+        return manager.with_webview(move |platform| {
+            if let Err(e) = build(Some(platform.inner())) {
+                report_window_error(&reporter, e);
+            }
+        });
+    }
+    build(None)
+}
+
+pub const SETTINGS: &str = "settings";
+
+/// Open (or focus) the Settings window (design S1–S4, 680 × 520).
+pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(existing) = app.get_webview_window(SETTINGS) {
+        existing.show()?;
+        existing.unminimize()?;
+        return existing.set_focus();
+    }
+    let handle = app.clone();
+    build_sharing_process(app, move |related| {
+        if let Some(existing) = handle.get_webview_window(SETTINGS) {
+            return existing.set_focus();
+        }
+        let mut builder =
+            WebviewWindowBuilder::new(&handle, SETTINGS, WebviewUrl::App("index.html".into()))
+                .title("Settings")
+                .inner_size(680.0, 520.0)
+                .min_inner_size(560.0, 420.0)
+                .center();
+        #[cfg(target_os = "linux")]
+        if let Some(view) = related {
+            builder = builder.with_related_view(view);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = related;
+        builder.build().map(|_| ())
+    })
+}
+
 /// Open (or focus) the window of a note. On Linux the window itself is created a
 /// moment later on the main thread; errors then appear in the manager.
 pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
@@ -200,22 +250,7 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         window.set_focus()
     };
 
-    // On Linux every note shares the manager's WebKit web process (a "related
-    // view") instead of starting its own, which costs ~80 MiB per note
-    // (docs/testing/m1-verification.md, Jira DES-24).
-    #[cfg(target_os = "linux")]
-    if let Some(manager) = app.get_webview_window(MANAGER) {
-        let reporter = app.clone();
-        manager.with_webview(move |platform| {
-            if let Err(e) = build(Some(platform.inner())) {
-                report_window_error(&reporter, e);
-            }
-        })?;
-    } else {
-        build(None)?;
-    }
-    #[cfg(not(target_os = "linux"))]
-    build(None)?;
+    build_sharing_process(app, build)?;
 
     let position = positioning.then_some((rect.x, rect.y));
     app.state::<AppState>()

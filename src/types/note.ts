@@ -52,3 +52,11 @@ export interface SaveResult {
   title: string;
   updatedAt: number;
 }
+
+/** What the Settings window shows (Rust `SettingsView`). */
+export interface SettingsView {
+  launchAtLogin: boolean;
+  newNoteColor: string;
+  version: string;
+  dataDir: string;
+}

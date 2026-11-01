@@ -7,6 +7,7 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Settings window: launch at login, colour for new notes, About (version, data folder).
 - Always on top: pin a note above other windows (header pin or ⋯ menu).
 - Collapse a note to its header strip; it reopens collapsed and keeps its full size.
 

@@ -2,7 +2,7 @@
 // Every function maps 1:1 to a #[tauri::command] in src-tauri/src/commands.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Note, NoteCounts, NoteFilter, NoteSummary, SaveResult } from "../types/note";
+import type { Note, NoteCounts, NoteFilter, NoteSummary, SaveResult, SettingsView } from "../types/note";
 
 /** Error shape produced by the Rust side (`IpcError`). */
 export class CommandError extends Error {
@@ -49,6 +49,12 @@ export const commands = {
   showManager: () => call<void>("show_manager"),
   startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
+  openSettings: () => call<void>("open_settings"),
+  getSettings: () => call<SettingsView>("get_settings"),
+  /** Returns the launcher state actually in effect afterwards. */
+  setLaunchAtLogin: (enabled: boolean) => call<boolean>("set_launch_at_login", { enabled }),
+  setNewNoteColor: (color: string) => call<void>("set_new_note_color", { color }),
+  openDataFolder: () => call<void>("open_data_folder"),
   /** Answer to app-will-quit: whether this window's text is saved. */
   quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
 };
