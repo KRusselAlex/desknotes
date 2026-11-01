@@ -4,7 +4,7 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onNotesChanged, onQuitBlocked } from "../../ipc/events";
+import { onActionFailed, onNotesChanged, onQuitBlocked } from "../../ipc/events";
 import type { NoteCounts, NoteFilter, NoteSummary } from "../../types/note";
 
 const TABS: { id: NoteFilter; label: string }[] = [
@@ -41,15 +41,21 @@ export function ManagerWindow() {
   const [startupErrors, setStartupErrors] = useState<string[]>([]);
   const [confirmPurge, setConfirmPurge] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [hiddenCount, setHiddenCount] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const { width } = useWindowSize();
   const searching = query.trim() !== "";
 
   const refresh = useCallback(async () => {
     try {
-      const [list, c] = await Promise.all([commands.listNotes(tab, query), commands.noteCounts()]);
+      const [list, c, hidden] = await Promise.all([
+        commands.listNotes(tab, query),
+        commands.noteCounts(),
+        commands.hiddenNoteCount(),
+      ]);
       setNotes(list);
       setCounts(c);
+      setHiddenCount(hidden);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -74,7 +80,11 @@ export function ManagerWindow() {
           "Look for the note showing \"Not saved\" and press Retry.",
       ),
     );
-    return () => void unlisten.then((f) => f());
+    const unlistenFailed = onActionFailed((message) => setError(message));
+    return () => {
+      void unlisten.then((f) => f());
+      void unlistenFailed.then((f) => f());
+    };
   }, []);
 
   useEffect(() => {
@@ -156,7 +166,18 @@ export function ManagerWindow() {
               className="dn-mgr-menu"
               onClose={() => setMenuOpen(false)}
               items={[
-                { id: "settings", label: "Settings…", icon: "settings", onSelect: () => void commands.openSettings() },
+                { id: "hide-all", label: "Hide all notes", icon: "eyeoff", onSelect: () => void run(commands.hideAllNotes) },
+                ...(hiddenCount > 0
+                  ? [
+                      {
+                        id: "show-hidden",
+                        label: `Show hidden notes (${hiddenCount})`,
+                        icon: "eye" as const,
+                        onSelect: () => void run(commands.showHiddenNotes),
+                      },
+                    ]
+                  : []),
+                { id: "settings", label: "Settings…", icon: "settings", separatorBefore: true, onSelect: () => void commands.openSettings() },
                 { id: "quit", label: "Quit DeskNotes", icon: "quit", separatorBefore: true, onSelect: () => void commands.quitApp() },
               ]}
             />

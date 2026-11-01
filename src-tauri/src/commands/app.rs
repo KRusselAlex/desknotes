@@ -25,6 +25,12 @@ pub fn startup_errors(state: State<'_, AppState>) -> Vec<String> {
 /// manager explains why, so nothing is lost silently.
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
+    request_quit(app);
+}
+
+/// Quit once every note has saved; otherwise show the manager and explain.
+/// Returns immediately; the waiting happens on another thread.
+pub fn request_quit(app: AppHandle) {
     std::thread::spawn(move || {
         let unsaved = windows::save_all_open_notes(&app, SAVE_TIMEOUT);
         if unsaved == 0 {

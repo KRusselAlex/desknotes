@@ -20,6 +20,10 @@ never the owner's real notes. Tell the owner first: their mouse will move by its
    - `x.py size WID W H` to resize; `x.py wmmove WID X Y` to move (synthetic header
      drags do not work: the compositor performs real drags)
    - `x.py shot WID file.png`, then read the PNG to check the visuals
+   - `python3 -I scripts/verify/tray.py list` / `click "Hide all notes"` drive the tray
+     menu over D-Bus (works even when simulated clicks do not reach the windows)
+   - Only one DeskNotes can run: if the owner's installed copy is running, ask them to
+     quit it first, or the test build hands over to it and exits
 4. Check data: `python3 -I scripts/verify/db.py .verify-data/io.github.krusselalex.desknotes/desknotes.db`
 5. Restart: quit through the manager menu (or `app.sh stop`), `app.sh start`, and compare
    window geometry and the database with step 3.

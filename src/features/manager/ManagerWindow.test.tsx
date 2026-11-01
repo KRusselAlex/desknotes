@@ -5,6 +5,7 @@ import type { NoteSummary } from "../../types/note";
 const quitBlocked: { handler?: (count: number) => void } = {};
 vi.mock("../../ipc/events", () => ({
   onNotesChanged: () => Promise.resolve(() => undefined),
+  onActionFailed: () => Promise.resolve(() => undefined),
   onQuitBlocked: (h: (count: number) => void) => {
     quitBlocked.handler = h;
     return Promise.resolve(() => undefined);
@@ -24,6 +25,9 @@ vi.mock("../../ipc/commands", () => ({
     trashNote: vi.fn().mockResolvedValue(undefined),
     quitApp: vi.fn(),
     openSettings: vi.fn().mockResolvedValue(undefined),
+    hiddenNoteCount: vi.fn(),
+    hideAllNotes: vi.fn().mockResolvedValue(2),
+    showHiddenNotes: vi.fn().mockResolvedValue(2),
   },
 }));
 
@@ -47,6 +51,7 @@ describe("ManagerWindow", () => {
     vi.clearAllMocks();
     vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, archived: 0, trash: 1 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
+    vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
   });
 
   it("lists active notes with counts and shows a note when its row is clicked", async () => {
@@ -115,6 +120,26 @@ describe("ManagerWindow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Menu" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Settings…" }));
     expect(commands.openSettings).toHaveBeenCalled();
+  });
+
+  it("hides all notes from the menu", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([note()]);
+    render(<ManagerWindow />);
+    await screen.findByRole("listitem");
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.queryByRole("menuitem", { name: /Show hidden notes/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Hide all notes" }));
+    expect(commands.hideAllNotes).toHaveBeenCalled();
+  });
+
+  it("offers to show the hidden notes again, with their number", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([note({ visible: false })]);
+    vi.mocked(commands.hiddenNoteCount).mockResolvedValue(2);
+    render(<ManagerWindow />);
+    await screen.findByRole("listitem");
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Show hidden notes (2)" }));
+    expect(commands.showHiddenNotes).toHaveBeenCalled();
   });
 
   it("groups long lists by date", async () => {
