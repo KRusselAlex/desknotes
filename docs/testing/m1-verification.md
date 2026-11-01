@@ -22,7 +22,7 @@ Date: 2026-11-01 · Branch: `feat/m1-core`
 | Create a note and type | **Pass** | "New note" opens a 300 × 280 note at the cascade position; typed text, bold and a checklist appear. |
 | Saved locally | **Pass** | SQLite row updated after typing (title derived: "Weekend errands"). |
 | Close and reopen without losing content | **Pass** | Quit from the manager menu, relaunch: title, bold word and checklist restored exactly. |
-| Move | **Pass (programmatic)**, header drag **to confirm by hand** | A window-manager move (EWMH) to 520, 240 was saved exactly and restored after restart. Simulated header drags cannot be tested: the compositor performs real drags, and synthetic X input does not reach it. |
+| Move | **Pass** | Dragging a note by its header with the real mouse works (confirmed by the owner). A window-manager move to 520, 240 was saved exactly and restored after restart. |
 | Resize | **Pass** | Resized to 360 × 340; saved and restored exactly after restart. |
 | Position and size restored | **Pass** | After restart: window at 520, 240, size 360 × 340, matching the database. |
 | Change colour | **Pass** | Picker → Mint saved as `#c8f7c5` and restored after restart. |
@@ -72,7 +72,11 @@ note ≈ 0.8 % (blinking cursor), every other note ≈ 0.05 %.
 memory is too high for 30 visible notes (2.4 GB). This is the main performance issue,
 tracked in Jira DES-24, and it should be addressed before calling DeskNotes lightweight.
 
-## Still to check by a person
+## Checked by the owner
 
-- Dragging a note by its header with the real mouse, and resizing from its edges.
-- Readability and feel of the design at your usual display scaling.
+- Dragging a note by its header with the real mouse: works.
+
+## Still open
+
+- Resizing from the window edges with the real mouse was not checked separately
+  (programmatic resize is saved and restored).
