@@ -59,4 +59,25 @@ export interface SettingsView {
   newNoteColor: string;
   version: string;
   dataDir: string;
+  /** Last successful export, Unix ms. */
+  lastBackupAt: number | null;
+}
+
+export interface ExportResult {
+  path: string;
+  count: number;
+  skipped: number;
+  exportedAt: number;
+}
+
+export interface RestorePreview {
+  fileName: string;
+  backupCount: number;
+  currentCount: number;
+  exportedAt: number;
+}
+
+export interface RestoreResult {
+  restored: number;
+  safetyCopy: string;
 }

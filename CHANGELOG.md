@@ -7,6 +7,7 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Backup and restore of all notes as a documented JSON file (Settings → Backup), with a safety copy before every restore.
 - Settings window: launch at login, colour for new notes, About (version, data folder).
 - Always on top: pin a note above other windows (header pin or ⋯ menu).
 - Collapse a note to its header strip; it reopens collapsed and keeps its full size.

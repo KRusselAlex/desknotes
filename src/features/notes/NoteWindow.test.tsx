@@ -7,7 +7,7 @@ import type { Note } from "../../types/note";
 const handlers: { noteAction?: (a: NoteAction) => void; willQuit?: () => void } = {};
 vi.mock("../../ipc/events", () => ({
   onNotesChanged: () => Promise.resolve(() => undefined),
-  onAppWillQuit: (h: () => void) => {
+  onSaveAllRequest: (h: () => void) => {
     handlers.willQuit = h;
     return Promise.resolve(() => undefined);
   },

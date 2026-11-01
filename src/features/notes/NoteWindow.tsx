@@ -6,7 +6,7 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu, type MenuItem } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onAppWillQuit, onNoteAction, onNotesChanged } from "../../ipc/events";
+import { onSaveAllRequest, onNoteAction, onNotesChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import type { Note } from "../../types/note";
 import { headerShade } from "../appearance/colors";
@@ -186,7 +186,7 @@ function LoadedNote({ note }: { note: Note }) {
   useEffect(() => {
     const onBlur = () => void autosave.flush();
     window.addEventListener("blur", onBlur);
-    const unlisten = onAppWillQuit(() => {
+    const unlisten = onSaveAllRequest(() => {
       void autosave
         .flush()
         .then(() => commands.quitReady(autosave.currentState !== "error"))
