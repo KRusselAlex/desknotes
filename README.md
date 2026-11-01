@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/desknotes-icon.svg" width="96" height="96" alt=""></p>
+
 # DeskNotes
 
 [![CI](https://github.com/KRusselAlex/desknotes/actions/workflows/ci.yml/badge.svg)](https://github.com/KRusselAlex/desknotes/actions/workflows/ci.yml)
@@ -46,7 +48,8 @@ building DeskNotes from source.
 
 ## Development setup (Ubuntu 24.04)
 
-These packages are needed only to **build** DeskNotes:
+The quickest way is `scripts/setup-ubuntu.sh` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+It installs these packages, which are needed only to **build** DeskNotes:
 
 ```bash
 sudo apt update

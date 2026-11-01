@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="DeskNotes">
+  <title>DeskNotes</title>
+  <defs><clipPath id="dn-clip"><path d="M13 10h17a22 22 0 0 1 0 44H13a5 5 0 0 1-5-5V15a5 5 0 0 1 5-5z"/></clipPath></defs>
+  <path d="M13 10h17a22 22 0 0 1 0 44H13a5 5 0 0 1-5-5V15a5 5 0 0 1 5-5z" fill="#201e1d"/>
+  <g clip-path="url(#dn-clip)"><rect x="0" y="0" width="64" height="22" fill="#201e1d"/><path d="M0 22h64" stroke="#f5ead8" stroke-width="1.5"/></g>
+  <g fill="#f5ead8"><circle cx="14.5" cy="14" r="1.4"/><circle cx="19" cy="14" r="1.4"/><circle cx="23.5" cy="14" r="1.4"/><circle cx="14.5" cy="18" r="1.4"/><circle cx="19" cy="18" r="1.4"/><circle cx="23.5" cy="18" r="1.4"/></g>
+  <rect x="14" y="28.5" width="9" height="9" rx="3" fill="#f5ead8"/>
+  <path d="M16.4 33.2l1.7 1.7 3.2-3.4" fill="none" stroke="#201e1d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="14" y="41" width="9" height="9" rx="3" fill="none" stroke="#f5ead8" stroke-width="2.2"/>
+  <path d="M28 33h15M28 45.5h11" stroke="#f5ead8" stroke-width="3.2" stroke-linecap="round"/>
+</svg>

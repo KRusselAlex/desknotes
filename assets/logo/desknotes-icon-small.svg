@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="DeskNotes">
+  <title>DeskNotes</title>
+  <rect width="64" height="64" rx="15" fill="#e1eecc"/>
+  <g transform="translate(6.4 6.4) scale(0.8)">
+  <defs><clipPath id="dn-clip"><path d="M13 10h17a22 22 0 0 1 0 44H13a5 5 0 0 1-5-5V15a5 5 0 0 1 5-5z"/></clipPath></defs>
+  <path d="M13 10h17a22 22 0 0 1 0 44H13a5 5 0 0 1-5-5V15a5 5 0 0 1 5-5z" fill="#c67139"/>
+  <g clip-path="url(#dn-clip)"><rect x="0" y="0" width="64" height="22" fill="#b2622d"/></g>
+  <rect x="14" y="30" width="13" height="13" rx="4" fill="#fff2eb"/>
+  <path d="M17.4 36.6l2.4 2.4 4.4-4.8" fill="none" stroke="#c67139" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M32 36.5h11" stroke="#fff2eb" stroke-width="4.5" stroke-linecap="round"/>
+  </g>
+</svg>
