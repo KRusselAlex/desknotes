@@ -1,6 +1,6 @@
-import { Editor } from "@tiptap/core";
+import { Editor, type JSONContent } from "@tiptap/core";
 import fixture from "../../../tests/fixtures/rich-doc.json";
-import { createExtensions, sanitizeDoc } from "./extensions";
+import { createExtensions, sanitizeDoc, serializeDoc } from "./extensions";
 
 function editorWith(content: object) {
   return new Editor({ extensions: createExtensions(), content });
@@ -111,5 +111,32 @@ describe("pasted links", () => {
     expect(mark?.attrs?.class ?? null).toBeNull();
     expect(editor.getHTML()).not.toContain("dn-popover");
     editor.destroy();
+  });
+
+  // The core refuses any other target, so one pasted link made the note unsavable.
+  it.each(["_self", "_top", "_parent", "", "frame1"])('open in a new window, never target="%s"', (target) => {
+    const editor = new Editor({
+      extensions: createExtensions(),
+      content: `<p><a href="https://a.b" target="${target}">x</a></p>`,
+    });
+    const saved = JSON.parse(serializeDoc(editor.getJSON())) as JSONContent;
+    expect(saved.content?.[0]?.content?.[0]?.marks?.[0]?.attrs?.target).toBe("_blank");
+    editor.destroy();
+  });
+});
+
+describe("sanitizeDoc on link targets", () => {
+  it("fixes a target the core would refuse and keeps the link", () => {
+    const link = (target: unknown) => ({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "https://a.b", target } }] }] },
+      ],
+    });
+    const targetOf = (doc: JSONContent) => doc.content?.[0]?.content?.[0]?.marks?.[0]?.attrs?.target;
+    expect(targetOf(sanitizeDoc(link("_self")))).toBe("_blank");
+    expect(targetOf(sanitizeDoc(link("")))).toBe("_blank");
+    expect(targetOf(sanitizeDoc(link(null)))).toBeNull();
+    expect(targetOf(sanitizeDoc(link("_blank")))).toBe("_blank");
   });
 });

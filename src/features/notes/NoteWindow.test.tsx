@@ -144,6 +144,18 @@ describe("NoteWindow", () => {
     expect(commands.hideNote).toHaveBeenCalledWith(ID);
   });
 
+  it("gives the reason of a failed save on hover, for bug reports", async () => {
+    vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("invalid data: link target must be _blank or empty"));
+    const { container } = await openNote();
+    await typeIntoNote(container, "x");
+    await act(async () => window.dispatchEvent(new Event("blur")));
+
+    expect(await screen.findByText(/Not saved/)).toHaveAttribute(
+      "title",
+      "Reason: invalid data: link target must be _blank or empty",
+    );
+  });
+
   it("performs manager-requested actions itself after saving", async () => {
     await openNote();
     await act(async () => handlers.noteAction?.("trash"));

@@ -47,7 +47,10 @@ pub fn save_note_content(
     content: String,
 ) -> IpcResult<SaveResult> {
     let id = parse_note_id(&id)?;
-    let result = state.with_db(|db| db.save_content(&id, &content))?;
+    let result = state
+        .with_db(|db| db.save_content(&id, &content))
+        // The reason only, never the text: a refused save must be diagnosable.
+        .inspect_err(|e| eprintln!("DeskNotes: a note was not saved ({}): {}", e.code, e.message))?;
     emit_changed(&app, Some(&id), "content");
     Ok(result)
 }

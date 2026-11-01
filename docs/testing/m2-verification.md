@@ -79,3 +79,26 @@ Built by the **Packages** workflow on GitHub's runner (pull request #6); checksu
 
 Size: AppImage 83 MB (it carries WebKitGTK), `.deb` 4.7 MB. On Ubuntu 22.04 and later,
 running an AppImage needs `libfuse2t64`, or `--appimage-extract-and-run`.
+
+## Bug: a pasted link made a note unsavable — 2026-11-01
+
+Reported by the owner: in the installed 0.1.0 package, a note showed "Not saved" and Quit
+refused. Their database (inspected read-only, metadata only) held the note empty: no save
+had ever succeeded for it, while other writes worked.
+
+Cause: Tiptap copies a pasted link's `target` attribute as it is (`_self`, `_top`, empty…).
+The core accepts only `_blank` or none, and the editor's safety pass checked only `href`,
+so every later save of that note was refused and Retry could not help.
+
+| Check | Installed 0.1.0 | Fixed build (release, isolated data) |
+|---|---|---|
+| New note, type "Pasted: ", paste `<a href="https://example.com/" target="_self">` (HTML clipboard on the X display) | "Not saved"; database keeps an empty note (the typed words are lost too) | "Saved"; link stored with `target: "_blank"` |
+| Save refused for another reason (note locked in the test database behind the app's back) | no trace anywhere | stderr: `a note was not saved (not_allowed): …`; no note text in the line |
+
+Also checked outside the app: 20 pasted HTML samples (links with various targets, relative,
+`tel:`, Google results, lists, code, tables, images) parsed by the editor configuration and
+validated by the real Rust core: 4 refused before the fix, none after. A note already holding
+such a link saves again on the next Retry, because the fix also runs on every save.
+
+Not shown in a screenshot: the hover tooltip with the reason (GTK draws it as a separate
+window); covered by a unit test.

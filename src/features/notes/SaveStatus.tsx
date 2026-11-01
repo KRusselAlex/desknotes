@@ -12,12 +12,15 @@ export function SaveIndicator({ state, editing }: { state: SaveState; editing: b
   );
 }
 
-/** Inline message when a save failed (design N6). Text stays editable. */
-export function SaveError({ onRetry }: { onRetry: () => void }) {
+/**
+ * Inline message when a save failed (design N6). Text stays editable.
+ * `reason` (the core's message, never note text) is shown on hover for bug reports.
+ */
+export function SaveError({ onRetry, reason }: { onRetry: () => void; reason?: string }) {
   return (
     <div className="dn-save-error" role="alert">
       <Icon name="alert" />
-      <span>Not saved. Your text is kept in this window.</span>
+      <span title={reason ? `Reason: ${reason}` : undefined}>Not saved. Your text is kept in this window.</span>
       <button type="button" onClick={onRetry}>
         Retry
       </button>
