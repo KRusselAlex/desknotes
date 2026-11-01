@@ -17,6 +17,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@floating-ui/dom": "1.8.0",
     "@tauri-apps/api": "2.12.4",
     "@tauri-apps/plugin-opener": "2.7.2",
     "@tiptap/extension-link": "3.32.2",
