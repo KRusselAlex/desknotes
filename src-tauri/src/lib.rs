@@ -4,6 +4,7 @@
 mod commands;
 mod error;
 pub mod platform;
+mod quit;
 mod state;
 mod windows;
 
@@ -45,15 +46,16 @@ pub fn run() {
             commands::app::show_manager,
             commands::app::startup_errors,
             commands::app::quit_app,
+            commands::app::quit_ready,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");
 
     app.run(|app, event| {
-        if let RunEvent::Exit = event {
-            if let Some(state) = app.try_state::<AppState>() {
-                state.geometry.flush();
-            }
+        if let RunEvent::Exit = event
+            && let Some(state) = app.try_state::<AppState>()
+        {
+            state.geometry.flush();
         }
     });
 }

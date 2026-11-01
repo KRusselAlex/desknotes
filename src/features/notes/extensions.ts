@@ -1,8 +1,22 @@
 import type { Extensions, JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import Link from "@tiptap/extension-link";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import { isSafeLink } from "./links";
+
+/**
+ * Link that never keeps a CSS class from pasted HTML, so note text cannot borrow
+ * the app's own styles to imitate its interface. The core rejects a class too.
+ */
+const SafeLink = Link.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      class: { default: null, parseHTML: () => null, renderHTML: () => ({}) },
+    };
+  },
+});
 
 /**
  * Editor extensions. Every node and mark they can produce must be in the
@@ -13,13 +27,14 @@ export function createExtensions(): Extensions {
     StarterKit.configure({
       // Would append an empty paragraph on first edit and mark untouched notes as changed.
       trailingNode: false,
-      link: {
-        openOnClick: false, // links open with Ctrl+click, handled in NoteEditor
-        autolink: true,
-        linkOnPaste: true,
-        defaultProtocol: "https",
-        isAllowedUri: (url, ctx) => ctx.defaultValidate(url) && isSafeLink(url),
-      },
+      link: false, // replaced by SafeLink below
+    }),
+    SafeLink.configure({
+      openOnClick: false, // links open with Ctrl+click, handled in NoteWindow
+      autolink: true,
+      linkOnPaste: true,
+      defaultProtocol: "https",
+      isAllowedUri: (url, ctx) => ctx.defaultValidate(url) && isSafeLink(url),
     }),
     TaskList,
     TaskItem.configure({ nested: true }),

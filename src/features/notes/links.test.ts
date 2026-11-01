@@ -1,6 +1,11 @@
+import cases from "../../../tests/fixtures/links.json";
 import { isSafeLink, normalizeLink } from "./links";
 
 describe("links", () => {
+  it.each(cases)("shared case $href -> $safe (same answer as Rust)", ({ href, safe }) => {
+    expect(isSafeLink(href)).toBe(safe);
+  });
+
   it("accepts only http, https and mailto", () => {
     expect(isSafeLink("https://example.org")).toBe(true);
     expect(isSafeLink("HTTP://EXAMPLE.ORG")).toBe(true);
@@ -18,5 +23,6 @@ describe("links", () => {
     expect(normalizeLink("https://x.y")).toBe("https://x.y");
     expect(normalizeLink("javascript:alert(1)")).toBeNull();
     expect(normalizeLink("   ")).toBeNull();
+    expect(normalizeLink("a\u0085b.org")).toBeNull();
   });
 });

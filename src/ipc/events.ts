@@ -18,3 +18,17 @@ export function onNotesChanged(handler: (e: NotesChanged) => void): Promise<Unli
 export function onAppWillQuit(handler: () => void): Promise<UnlistenFn> {
   return listen(APP_WILL_QUIT, () => handler());
 }
+
+export const NOTE_ACTION = "note-action";
+export const QUIT_BLOCKED = "quit-blocked";
+export type NoteAction = "hide" | "archive" | "trash";
+
+/** Rust asks this note window to save, then hide, archive or trash itself. */
+export function onNoteAction(handler: (action: NoteAction) => void): Promise<UnlistenFn> {
+  return listen<NoteAction>(NOTE_ACTION, (event) => handler(event.payload));
+}
+
+/** Quitting was cancelled because `count` notes still hold unsaved text. */
+export function onQuitBlocked(handler: (count: number) => void): Promise<UnlistenFn> {
+  return listen<number>(QUIT_BLOCKED, (event) => handler(event.payload));
+}

@@ -47,6 +47,8 @@ export const commands = {
   showManager: () => call<void>("show_manager"),
   startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
+  /** Answer to app-will-quit: whether this window's text is saved. */
+  quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
 };
 
 export type Commands = typeof commands;

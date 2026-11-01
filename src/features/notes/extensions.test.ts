@@ -78,9 +78,7 @@ describe("editor document format", () => {
       "doc", "paragraph", "text", "heading", "bulletList", "orderedList", "listItem",
       "taskList", "taskItem", "blockquote", "codeBlock", "hardBreak", "horizontalRule",
     ]);
-    const allowedMarks = new Set([
-      "bold", "italic", "underline", "strike", "code", "link", "textStyle", "highlight",
-    ]);
+    const allowedMarks = new Set(["bold", "italic", "underline", "strike", "code", "link"]);
     const walk = (n: { type?: string; marks?: { type: string }[]; content?: unknown[] }) => {
       expect(allowedNodes).toContain(n.type);
       n.marks?.forEach((m) => expect(allowedMarks).toContain(m.type));
@@ -98,6 +96,20 @@ describe("no spurious changes", () => {
     editor.commands.focus("end");
     editor.commands.setTextSelection(1);
     expect(JSON.stringify(editor.getJSON())).toBe(before);
+    editor.destroy();
+  });
+});
+
+describe("pasted links", () => {
+  it("drop any CSS class so note text cannot imitate the app", () => {
+    const editor = new Editor({
+      extensions: createExtensions(),
+      content: '<p><a class="dn-popover dn-banner-error" href="https://a.b">x</a></p>',
+    });
+    const mark = editor.getJSON().content?.[0]?.content?.[0]?.marks?.[0];
+    expect(mark?.type).toBe("link");
+    expect(mark?.attrs?.class ?? null).toBeNull();
+    expect(editor.getHTML()).not.toContain("dn-popover");
     editor.destroy();
   });
 });

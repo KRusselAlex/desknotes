@@ -127,7 +127,9 @@ impl Database {
     }
 
     /// Notes whose windows should be open: visible, not archived, not in trash.
-    pub fn notes_to_show(&self) -> CoreResult<Vec<Note>> {
+    /// Returns the readable notes and the ids of notes whose stored content is
+    /// unreadable, so one damaged note never stops the others from opening.
+    pub fn notes_to_show(&self) -> CoreResult<(Vec<Note>, Vec<String>)> {
         let sql = format!(
             "SELECT {NOTE_COLUMNS} FROM notes n JOIN note_windows w ON w.note_id = n.id
              WHERE w.visible = 1 AND n.archived_at IS NULL AND n.deleted_at IS NULL
@@ -135,7 +137,16 @@ impl Database {
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], note_from_row)?;
-        rows.map(|r| finish(r?)).collect()
+        let (mut notes, mut unreadable) = (Vec::new(), Vec::new());
+        for row in rows {
+            let pair = row?;
+            let id = pair.0.id.clone();
+            match finish(pair) {
+                Ok(note) => notes.push(note),
+                Err(_) => unreadable.push(id),
+            }
+        }
+        Ok((notes, unreadable))
     }
 
     /// Notes for the manager list, newest first. `query` matches anywhere in
@@ -267,10 +278,16 @@ impl Database {
     pub fn set_archived(&self, id: &str, archived: bool) -> CoreResult<()> {
         let tx = self.conn.unchecked_transaction()?;
         let changed = tx.execute(
-            "UPDATE notes SET archived_at = CASE WHEN ?2 THEN ?3 ELSE NULL END WHERE id = ?1",
+            "UPDATE notes SET archived_at = CASE WHEN ?2 THEN ?3 ELSE NULL END
+             WHERE id = ?1 AND deleted_at IS NULL",
             params![id, archived, now_ms()],
         )?;
-        self.expect_one(changed, id)?;
+        if changed == 0 {
+            self.get_note(id)?; // NotFound if it does not exist at all
+            return Err(CoreError::NotAllowed(
+                "restore the note from the trash first".into(),
+            ));
+        }
         tx.execute(
             "UPDATE note_windows SET visible = CASE WHEN ?2 THEN 0 ELSE 1 END WHERE note_id = ?1",
             params![id, archived],
@@ -480,9 +497,9 @@ mod tests {
         db.set_archived(&id, true).unwrap();
         assert!(db.list_notes(NoteFilter::Active, None).unwrap().is_empty());
         assert_eq!(db.list_notes(NoteFilter::Archived, None).unwrap().len(), 1);
-        assert!(db.notes_to_show().unwrap().is_empty());
+        assert!(db.notes_to_show().unwrap().0.is_empty());
         db.set_archived(&id, false).unwrap();
-        assert_eq!(db.notes_to_show().unwrap().len(), 1);
+        assert_eq!(db.notes_to_show().unwrap().0.len(), 1);
     }
 
     #[test]
@@ -492,12 +509,12 @@ mod tests {
         assert_eq!(db.purge_note(&id).unwrap_err().code(), "not_allowed");
 
         db.trash_note(&id).unwrap();
-        assert!(db.notes_to_show().unwrap().is_empty());
+        assert!(db.notes_to_show().unwrap().0.is_empty());
         assert_eq!(db.list_notes(NoteFilter::Trash, None).unwrap().len(), 1);
         assert!(db.trash_note(&id).is_err(), "already in trash");
 
         db.restore_note(&id).unwrap();
-        assert_eq!(db.notes_to_show().unwrap().len(), 1);
+        assert_eq!(db.notes_to_show().unwrap().0.len(), 1);
 
         db.trash_note(&id).unwrap();
         db.purge_note(&id).unwrap();
@@ -593,7 +610,41 @@ mod tests {
         assert_eq!(db.get_note(&id).unwrap().color, "#ffd6e0");
         assert!(db.set_color(&id, "pink").is_err());
         db.set_visible(&id, false).unwrap();
-        assert!(db.notes_to_show().unwrap().is_empty());
+        assert!(db.notes_to_show().unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn notes_in_the_trash_cannot_be_archived_or_unarchived() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_archived(&id, true).unwrap();
+        db.trash_note(&id).unwrap();
+        assert_eq!(
+            db.set_archived(&id, false).unwrap_err().code(),
+            "not_allowed"
+        );
+        assert!(!db.get_note(&id).unwrap().window.visible);
+        assert_eq!(
+            db.set_archived("nope", true).unwrap_err().code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn one_unreadable_note_does_not_stop_the_others_from_opening() {
+        let db = db();
+        let good = db.create_note(None).unwrap().id;
+        let bad = db.create_note(None).unwrap().id;
+        db.conn
+            .execute(
+                "UPDATE notes SET content_json = '{oops' WHERE id = ?1",
+                [&bad],
+            )
+            .unwrap();
+        let (notes, unreadable) = db.notes_to_show().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, good);
+        assert_eq!(unreadable, vec![bad]);
     }
 
     #[test]

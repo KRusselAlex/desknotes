@@ -18,6 +18,10 @@ pub const MANAGER: &str = "manager";
 pub const NOTE_PREFIX: &str = "note-";
 pub const NOTES_CHANGED: &str = "notes-changed";
 pub const APP_WILL_QUIT: &str = "app-will-quit";
+/// Sent to the manager when quitting was cancelled because notes hold unsaved text.
+pub const QUIT_BLOCKED: &str = "quit-blocked";
+/// Sent to a note window: perform "hide", "archive" or "trash" after saving.
+pub const NOTE_ACTION: &str = "note-action";
 
 /// Payload of `notes-changed`. `kind` is "content" for text saves (the
 /// manager refreshes titles) and "other" for everything else.
@@ -81,6 +85,30 @@ fn geometry_of(
     Some(Rect::new(pos.x, pos.y, size.width, size.height))
 }
 
+/// Labels of all open note windows.
+pub fn open_note_labels(app: &AppHandle) -> std::collections::HashSet<String> {
+    app.webview_windows()
+        .into_keys()
+        .filter(|label| label.starts_with(NOTE_PREFIX))
+        .collect()
+}
+
+/// If the note's window is open and the request did not come from it (for
+/// example from the manager), hand the action to that window. It saves first
+/// and then performs the action itself, or stays open showing the save error.
+/// Returns true when the action was handed over.
+pub fn delegate_to_note(app: &AppHandle, caller_label: &str, note_id: &str, action: &str) -> bool {
+    let label = note_label(note_id);
+    if caller_label == label || app.get_webview_window(&label).is_none() {
+        return false;
+    }
+    if let Err(e) = app.emit_to(label.as_str(), NOTE_ACTION, action) {
+        eprintln!("DeskNotes: could not reach the note window: {e}");
+        return false;
+    }
+    true
+}
+
 fn open_note_windows(app: &AppHandle, except: Option<&str>) -> usize {
     app.webview_windows()
         .keys()
@@ -115,6 +143,9 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         .title("DeskNotes") // never the note text: titles are visible to others
         .decorations(false)
         .resizable(true)
+        // A double-click on the drag area would otherwise maximise the note,
+        // and that full-screen size would be saved as its normal size.
+        .maximizable(false)
         .inner_size(rect.width, rect.height)
         .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
         .always_on_top(w.always_on_top)
@@ -143,15 +174,15 @@ pub fn close_note(app: &AppHandle, note_id: &str) -> tauri::Result<()> {
         return Ok(());
     };
     let state = app.state::<AppState>();
-    if !window.is_minimized().unwrap_or(false) {
-        if let Some(r) = geometry_of(
+    if !window.is_minimized().unwrap_or(false)
+        && let Some(r) = geometry_of(
             window.scale_factor(),
             window.outer_position(),
             window.inner_size(),
-        ) {
-            let position = window_positioning_supported().then_some((r.x, r.y));
-            state.geometry.update(note_id, position, r.width, r.height);
-        }
+        )
+    {
+        let position = window_positioning_supported().then_some((r.x, r.y));
+        state.geometry.update(note_id, position, r.width, r.height);
     }
     state.geometry.flush();
     // destroy() skips CloseRequested, so the webview's close handler is not re-entered.
@@ -189,10 +220,11 @@ pub fn after_note_hidden(app: &AppHandle, hidden_note_id: &str) {
         .get_webview_window(MANAGER)
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(false);
-    if open_note_windows(app, Some(&label)) == 0 && !manager_visible {
-        if let Err(e) = show_manager(app) {
-            eprintln!("DeskNotes: could not show the manager: {e}");
-        }
+    if open_note_windows(app, Some(&label)) == 0
+        && !manager_visible
+        && let Err(e) = show_manager(app)
+    {
+        eprintln!("DeskNotes: could not show the manager: {e}");
     }
 }
 
@@ -201,7 +233,12 @@ pub fn restore_on_startup(app: &AppHandle) {
     let state = app.state::<AppState>();
     let mut opened = 0;
     match state.with_db(|db| db.notes_to_show()) {
-        Ok(notes) => {
+        Ok((notes, unreadable)) => {
+            for id in unreadable {
+                state.push_error(format!(
+                    "Note {id} could not be read and was not opened. Its data was left untouched."
+                ));
+            }
             for note in &notes {
                 match open_note(app, note) {
                     Ok(()) => opened += 1,
@@ -226,7 +263,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             let Some(id) = note_id_from_label(window.label()) else {
                 return;
             };
-            if window.is_minimized().unwrap_or(false) {
+            if window.is_minimized().unwrap_or(false) || window.is_maximized().unwrap_or(false) {
                 return;
             }
             if let Some(r) = geometry_of(

@@ -47,10 +47,11 @@ impl Database {
                 supported: LATEST_VERSION,
             });
         }
-        if version > 0 && version < LATEST_VERSION {
-            if let Some(dir) = backup_dir {
-                db.backup_to(&pre_migration_path(dir, version))?;
-            }
+        if version > 0
+            && version < LATEST_VERSION
+            && let Some(dir) = backup_dir
+        {
+            db.backup_to(&pre_migration_path(dir, version))?;
         }
         migrations::apply(&mut db.conn, version)?;
         Ok(db)

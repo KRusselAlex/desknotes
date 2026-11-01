@@ -29,16 +29,13 @@ const ALLOWED_NODES: &[&str] = &[
     "horizontalRule",
 ];
 
-const ALLOWED_MARKS: &[&str] = &[
-    "bold",
-    "italic",
-    "underline",
-    "strike",
-    "code",
-    "link",
-    "textStyle",
-    "highlight",
-];
+/// Must equal the marks the editor schema can load. A mark accepted here but
+/// unknown to the editor would make the note open empty (and be overwritten).
+const ALLOWED_MARKS: &[&str] = &["bold", "italic", "underline", "strike", "code", "link"];
+
+/// Attributes a link mark may carry. `class` must stay null so pasted HTML
+/// cannot give note text the app's own CSS classes.
+const LINK_ATTRS: &[&str] = &["href", "target", "rel", "class", "title"];
 
 const ALLOWED_LINK_SCHEMES: &[&str] = &["http:", "https:", "mailto:"];
 
@@ -82,6 +79,8 @@ fn validate_node(node: &Value, depth: usize) -> CoreResult<()> {
     if !ALLOWED_NODES.contains(&kind) {
         return Err(invalid(format!("unsupported node type \"{kind}\"")));
     }
+
+    validate_attrs(obj.get("attrs"))?;
 
     match kind {
         "text" => {
@@ -129,15 +128,43 @@ fn validate_mark(mark: &Value) -> CoreResult<()> {
     if !ALLOWED_MARKS.contains(&kind) {
         return Err(invalid(format!("unsupported mark \"{kind}\"")));
     }
+    let attrs = mark.get("attrs");
+    validate_attrs(attrs)?;
     if kind == "link" {
-        let href = mark
-            .get("attrs")
-            .and_then(|a| a.get("href"))
+        let attrs = attrs
+            .and_then(Value::as_object)
+            .ok_or_else(|| invalid("link without attributes"))?;
+        if let Some(key) = attrs.keys().find(|k| !LINK_ATTRS.contains(&k.as_str())) {
+            return Err(invalid(format!("unsupported link attribute \"{key}\"")));
+        }
+        let href = attrs
+            .get("href")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("link without href"))?;
         if !is_safe_link(href) {
             return Err(invalid("link must use http, https or mailto"));
         }
+        if !attrs.get("class").is_none_or(Value::is_null) {
+            return Err(invalid("links cannot carry a CSS class"));
+        }
+        if !attrs
+            .get("target")
+            .is_none_or(|t| t.is_null() || t.as_str() == Some("_blank"))
+        {
+            return Err(invalid("link target must be _blank or empty"));
+        }
+    }
+    Ok(())
+}
+
+/// Attributes, when present, are a flat object of strings, numbers, booleans or null.
+fn validate_attrs(attrs: Option<&Value>) -> CoreResult<()> {
+    let Some(attrs) = attrs else { return Ok(()) };
+    let obj = attrs
+        .as_object()
+        .ok_or_else(|| invalid("attributes must be an object"))?;
+    if obj.values().any(|v| v.is_array() || v.is_object()) {
+        return Err(invalid("attribute values must be plain values"));
     }
     Ok(())
 }
@@ -280,6 +307,20 @@ mod tests {
     }
 
     #[test]
+    fn shared_link_cases_match_the_typescript_rule() {
+        let cases: Vec<Value> =
+            serde_json::from_str(include_str!("../../../tests/fixtures/links.json")).unwrap();
+        for case in cases {
+            let href = case["href"].as_str().unwrap();
+            assert_eq!(
+                is_safe_link(href),
+                case["safe"].as_bool().unwrap(),
+                "{href:?}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_javascript_links() {
         let doc = json!({"type":"doc","content":[{"type":"paragraph","content":[
             {"type":"text","text":"x","marks":[{"type":"link","attrs":{"href":"JavaScript:alert(1)"}}]}
@@ -317,6 +358,35 @@ mod tests {
             node = json!({"type":"blockquote","content":[node]});
         }
         assert!(validate_doc(&json!({"type":"doc","content":[node]})).is_err());
+    }
+
+    #[test]
+    fn marks_the_editor_cannot_load_are_rejected() {
+        for mark in ["textStyle", "highlight"] {
+            let doc = json!({"type":"doc","content":[{"type":"paragraph","content":[
+                {"type":"text","text":"x","marks":[{"type":mark}]}]}]});
+            assert!(validate_doc(&doc).is_err(), "{mark} must be rejected");
+        }
+    }
+
+    #[test]
+    fn link_attributes_are_restricted() {
+        let link = |attrs: Value| {
+            json!({"type":"doc","content":[{"type":"paragraph","content":[
+                {"type":"text","text":"x","marks":[{"type":"link","attrs":attrs}]}]}]})
+        };
+        assert!(
+            validate_doc(&link(
+                json!({"href":"https://a.b","class":null,"target":"_blank"})
+            ))
+            .is_ok()
+        );
+        assert!(validate_doc(&link(json!({"href":"https://a.b","class":"dn-popover"}))).is_err());
+        assert!(validate_doc(&link(json!({"href":"https://a.b","onclick":"x"}))).is_err());
+        assert!(validate_doc(&link(json!({"href":"https://a.b","target":"_top"}))).is_err());
+        let nested =
+            json!({"type":"doc","content":[{"type":"heading","attrs":{"level":2,"x":{"y":1}}}]});
+        assert!(validate_doc(&nested).is_err());
     }
 
     #[test]

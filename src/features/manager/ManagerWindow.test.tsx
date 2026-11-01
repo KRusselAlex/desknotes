@@ -1,8 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NoteSummary } from "../../types/note";
 
-vi.mock("../../ipc/events", () => ({ onNotesChanged: () => Promise.resolve(() => undefined) }));
+const quitBlocked: { handler?: (count: number) => void } = {};
+vi.mock("../../ipc/events", () => ({
+  onNotesChanged: () => Promise.resolve(() => undefined),
+  onQuitBlocked: (h: (count: number) => void) => {
+    quitBlocked.handler = h;
+    return Promise.resolve(() => undefined);
+  },
+}));
 vi.mock("../../ipc/commands", () => ({
   commands: {
     listNotes: vi.fn(),
@@ -91,6 +98,14 @@ describe("ManagerWindow", () => {
     vi.mocked(commands.listNotes).mockRejectedValue(new Error("database is locked"));
     render(<ManagerWindow />);
     expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
+  });
+
+  it("explains when quitting was cancelled because of unsaved text", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([note()]);
+    render(<ManagerWindow />);
+    await screen.findByRole("listitem");
+    act(() => quitBlocked.handler?.(1));
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 note has unsaved text");
   });
 
   it("groups long lists by date", async () => {

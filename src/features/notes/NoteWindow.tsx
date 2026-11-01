@@ -6,7 +6,7 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu, type MenuItem } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onAppWillQuit, onNotesChanged } from "../../ipc/events";
+import { onAppWillQuit, onNoteAction, onNotesChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import type { Note } from "../../types/note";
 import { headerShade } from "../appearance/colors";
@@ -38,15 +38,15 @@ export function NoteWindow({ noteId }: { noteId: string }) {
     commands.getNote(noteId).then(setNote, () => setLoadError(true));
   }, [noteId]);
 
-  if (loadError) return <NoteLoadError noteId={noteId} />;
+  if (loadError) return <NoteLoadError noteId={noteId} color="#efe6d8" />;
   if (!note) return <div className="dn-note" aria-busy="true" style={noteStyle("#fff4a3")} />;
   return <LoadedNote note={note} />;
 }
 
 /** Design N7: keeps a note look, header still drags and hides. */
-function NoteLoadError({ noteId }: { noteId: string }) {
+function NoteLoadError({ noteId, color }: { noteId: string; color: string }) {
   return (
-    <div className="dn-note" style={noteStyle("#efe6d8")}>
+    <div className="dn-note" style={noteStyle(color)}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -82,6 +82,9 @@ function LoadedNote({ note }: { note: Note }) {
   const closing = useRef(false);
   /** Last content known to be saved (or loaded); avoids writes when nothing changed. */
   const lastContent = useRef<string | null>(null);
+  /** Set when stored content could not be loaded: never autosave over it. */
+  const contentBroken = useRef(false);
+  const [contentError, setContentError] = useState(false);
   const { width, height } = useWindowSize();
   const narrow = width < NARROW;
 
@@ -101,11 +104,19 @@ function LoadedNote({ note }: { note: Note }) {
     extensions: createExtensions(),
     content: note.content,
     editable: !note.editLocked,
+    // Refuse content the editor cannot represent instead of silently loading an
+    // empty note (which the next keystroke would save over the real one).
+    enableContentCheck: true,
+    onContentError: () => {
+      contentBroken.current = true;
+      setContentError(true);
+    },
     autofocus: note.title === "" && !note.editLocked ? "end" : false,
     onCreate: ({ editor: e }) => {
       lastContent.current = serializeDoc(e.getJSON());
     },
     onUpdate: ({ editor: e }) => {
+      if (contentBroken.current) return;
       const content = serializeDoc(e.getJSON());
       if (content === lastContent.current) return;
       lastContent.current = content;
@@ -129,17 +140,38 @@ function LoadedNote({ note }: { note: Note }) {
   });
 
   /** Save, then hide the window. Stays open if the save failed. */
+  /** Save first; run `action` only if everything is saved. Returns false otherwise. */
+  const saveThen = useCallback(
+    async (action: () => Promise<unknown>): Promise<boolean> => {
+      await autosave.flush();
+      if (autosave.currentState === "error") return false; // the error message stays visible
+      await action();
+      return true;
+    },
+    [autosave],
+  );
+
+  /** Save, then hide the window. Stays open if the save failed. */
   const hide = useCallback(async () => {
     if (closing.current) return;
     closing.current = true;
-    await autosave.flush();
-    if (autosave.currentState === "error") {
+    try {
+      const done = await saveThen(() => commands.hideNote(note.id));
+      if (done) autosave.dispose();
+    } finally {
       closing.current = false;
-      return;
     }
-    autosave.dispose();
-    await commands.hideNote(note.id);
-  }, [autosave, note.id]);
+  }, [autosave, note.id, saveThen]);
+
+  // The manager asked to hide, archive or trash this note: save first, here.
+  useEffect(() => {
+    const unlisten = onNoteAction((action) => {
+      if (action === "hide") void hide();
+      else if (action === "archive") void saveThen(() => commands.setArchived(note.id, true));
+      else if (action === "trash") void saveThen(() => commands.trashNote(note.id));
+    });
+    return () => void unlisten.then((f) => f());
+  }, [hide, note.id, saveThen]);
 
   useEffect(() => {
     const unlisten = onCloseRequested(() => void hide());
@@ -150,7 +182,12 @@ function LoadedNote({ note }: { note: Note }) {
   useEffect(() => {
     const onBlur = () => void autosave.flush();
     window.addEventListener("blur", onBlur);
-    const unlisten = onAppWillQuit(() => void autosave.flush());
+    const unlisten = onAppWillQuit(() => {
+      void autosave
+        .flush()
+        .then(() => commands.quitReady(autosave.currentState !== "error"))
+        .catch(() => undefined);
+    });
     return () => {
       window.removeEventListener("blur", onBlur);
       void unlisten.then((f) => f());
@@ -226,8 +263,7 @@ function LoadedNote({ note }: { note: Note }) {
   }, [hide, locked]);
 
   async function act(action: () => Promise<unknown>) {
-    await autosave.flush();
-    await action();
+    await saveThen(action);
   }
 
   const menuItems: MenuItem[] = [
@@ -243,6 +279,8 @@ function LoadedNote({ note }: { note: Note }) {
     { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
     { id: "trash", label: "Move to trash", icon: "trash", danger: true, onSelect: () => void act(() => commands.trashNote(note.id)) },
   ];
+
+  if (contentError) return <NoteLoadError noteId={note.id} color={color} />;
 
   const editing = focused && !locked;
   const showBar = editing && height >= SHORT && editor !== null;

@@ -4,7 +4,7 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onNotesChanged } from "../../ipc/events";
+import { onNotesChanged, onQuitBlocked } from "../../ipc/events";
 import type { NoteCounts, NoteFilter, NoteSummary } from "../../types/note";
 
 const TABS: { id: NoteFilter; label: string }[] = [
@@ -68,6 +68,13 @@ export function ManagerWindow() {
 
   useEffect(() => {
     commands.startupErrors().then(setStartupErrors, () => undefined);
+    const unlisten = onQuitBlocked((count) =>
+      setError(
+        `DeskNotes did not quit: ${count} ${count === 1 ? "note has" : "notes have"} unsaved text. ` +
+          "Look for the note showing \"Not saved\" and press Retry.",
+      ),
+    );
+    return () => void unlisten.then((f) => f());
   }, []);
 
   useEffect(() => {

@@ -4,6 +4,7 @@ use desknotes_core::{CoreResult, Database};
 use tauri::{AppHandle, Manager};
 
 use crate::error::{IpcError, IpcResult};
+use crate::quit::QuitCoordinator;
 use crate::windows::geometry::GeometryWriter;
 
 pub struct AppState {
@@ -11,6 +12,7 @@ pub struct AppState {
     /// Problems found at startup, shown in the manager. Never contains note text.
     startup_errors: Mutex<Vec<String>>,
     pub geometry: GeometryWriter,
+    pub quit: QuitCoordinator,
 }
 
 impl AppState {
@@ -37,6 +39,7 @@ impl AppState {
             geometry: GeometryWriter::spawn(db.clone()),
             db,
             startup_errors: Mutex::new(errors),
+            quit: QuitCoordinator::default(),
         }
     }
 

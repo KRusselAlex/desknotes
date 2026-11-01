@@ -51,6 +51,16 @@ Other checks:
 2. **Opening or focusing a note saved it.** Tiptap's trailing-paragraph extension and
    `setEditable` emitted updates; fixed and covered by a test.
 
+## Fixes from the pre-merge review, retested in the real app
+
+| Change | Real-app result |
+|---|---|
+| Hide, archive or trash from the manager now asks the note window to save first and act itself | Typed text, then immediately hid the note from the manager: text saved, note hidden. |
+| Quit waits for every note to confirm it saved, and is cancelled if one cannot | Typed text, then immediately quit: text saved, app exited, note reopens next launch. The cancel path is covered by unit tests (`src-tauri/src/quit.rs`, `NoteWindow.test.tsx`). |
+| Note windows cannot be maximised | Double-clicking the header no longer maximises the note. |
+| Tauri 2.11 → 2.12 (minimum Rust 1.90) to match the JavaScript packages | New notes still open at exactly 300 × 280. |
+| Content the editor cannot load is shown as "could not be opened" and never saved over | Unit tests only. |
+
 ## Resources
 
 PSS (proportional memory, shared libraries split fairly) per process, idle CPU over 10 s.

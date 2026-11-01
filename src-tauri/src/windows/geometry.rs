@@ -97,10 +97,10 @@ fn write(db: &Mutex<Option<Database>>, items: impl Iterator<Item = (String, Geom
     let Some(db) = guard.as_ref() else { return };
     for (id, g) in items {
         // NotFound is expected if the note was purged meanwhile.
-        if let Err(e) = db.set_window_geometry(&id, g.position, g.width, g.height) {
-            if e.code() != "not_found" {
-                eprintln!("DeskNotes: could not save window position: {e}");
-            }
+        if let Err(e) = db.set_window_geometry(&id, g.position, g.width, g.height)
+            && e.code() != "not_found"
+        {
+            eprintln!("DeskNotes: could not save window position: {e}");
         }
     }
 }

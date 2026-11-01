@@ -1,6 +1,6 @@
 use desknotes_core::validation::parse_note_id;
 use desknotes_core::{Note, NoteCounts, NoteFilter, NoteSummary, SaveResult};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::error::{IpcError, IpcResult};
 use crate::state::AppState;
@@ -78,12 +78,16 @@ pub async fn duplicate_note(
 #[tauri::command]
 pub async fn set_archived(
     app: AppHandle,
+    caller: WebviewWindow,
     state: State<'_, AppState>,
     id: String,
     archived: bool,
 ) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
     if archived {
+        if windows::delegate_to_note(&app, caller.label(), &id, "archive") {
+            return Ok(());
+        }
         windows::close_note(&app, &id)?;
     }
     state.with_db(|db| db.set_archived(&id, archived))?;
@@ -98,8 +102,16 @@ pub async fn set_archived(
 }
 
 #[tauri::command]
-pub async fn trash_note(app: AppHandle, state: State<'_, AppState>, id: String) -> IpcResult<()> {
+pub async fn trash_note(
+    app: AppHandle,
+    caller: WebviewWindow,
+    state: State<'_, AppState>,
+    id: String,
+) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
+    if windows::delegate_to_note(&app, caller.label(), &id, "trash") {
+        return Ok(());
+    }
     windows::close_note(&app, &id)?;
     state.with_db(|db| db.trash_note(&id))?;
     windows::after_note_hidden(&app, &id);
@@ -124,6 +136,8 @@ pub async fn restore_note(app: AppHandle, state: State<'_, AppState>, id: String
 pub fn purge_note(app: AppHandle, state: State<'_, AppState>, id: String) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
     state.with_db(|db| db.purge_note(&id))?;
+    // A trashed note should have no window; close one if a bug left it open.
+    windows::close_note(&app, &id)?;
     emit_changed(&app, None, "other");
     Ok(())
 }
@@ -145,8 +159,16 @@ pub async fn show_note(app: AppHandle, state: State<'_, AppState>, id: String) -
 }
 
 #[tauri::command]
-pub async fn hide_note(app: AppHandle, state: State<'_, AppState>, id: String) -> IpcResult<()> {
+pub async fn hide_note(
+    app: AppHandle,
+    caller: WebviewWindow,
+    state: State<'_, AppState>,
+    id: String,
+) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
+    if windows::delegate_to_note(&app, caller.label(), &id, "hide") {
+        return Ok(());
+    }
     state.with_db(|db| db.set_visible(&id, false))?;
     windows::close_note(&app, &id)?;
     windows::after_note_hidden(&app, &id);

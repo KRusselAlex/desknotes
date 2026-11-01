@@ -75,5 +75,7 @@ jobs:
         run: npm run build
       - name: Clippy (whole workspace)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Desktop app tests
+        run: cargo test -p desknotes
       - name: Build desktop app
         run: cargo build -p desknotes
