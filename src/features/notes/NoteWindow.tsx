@@ -58,6 +58,7 @@ function LoadedNote({ note }: { note: Note }) {
   const editor = useEditor({
     extensions: createExtensions(),
     content: note.content,
+    editable: !note.editLocked,
     autofocus: note.title === "" ? "end" : false,
     onUpdate: ({ editor: e }) => autosave.change(JSON.stringify(sanitizeDoc(e.getJSON()))),
     onBlur: () => void autosave.flush(),

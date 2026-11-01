@@ -23,6 +23,8 @@ export interface Note {
   updatedAt: number;
   archivedAt: number | null;
   deletedAt: number | null;
+  /** Read-only: the native layer refuses content saves while true. */
+  editLocked: boolean;
   window: NoteWindowState;
 }
 

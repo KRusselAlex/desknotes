@@ -13,7 +13,8 @@ use crate::validation::{
 };
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
-     n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top";
+     n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top,
+     n.edit_locked";
 
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
@@ -30,6 +31,7 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
             updated_at: row.get(5)?,
             archived_at: row.get(6)?,
             deleted_at: row.get(7)?,
+            edit_locked: row.get(14)?,
             window: NoteWindow {
                 x: row.get(8)?,
                 y: row.get(9)?,
@@ -171,20 +173,37 @@ impl Database {
     }
 
     /// Validate and store new content. `raw` is the editor's JSON document.
+    /// Refused while the note is edit-locked.
     pub fn save_content(&self, id: &str, raw: &str) -> CoreResult<SaveResult> {
         let doc = parse_content(raw)?;
         let title = derive_title(&doc);
         let now = now_ms();
         let changed = self.conn.execute(
             "UPDATE notes SET content_json = ?2, title = ?3, search_text = ?4, updated_at = ?5
-             WHERE id = ?1",
+             WHERE id = ?1 AND edit_locked = 0",
             params![id, doc.to_string(), title, derive_search_text(&doc), now],
         )?;
-        self.expect_one(changed, id)?;
+        if changed == 0 {
+            if self.get_note(id)?.edit_locked {
+                return Err(CoreError::NotAllowed(
+                    "this note is locked for editing".into(),
+                ));
+            }
+            return Err(CoreError::NotFound(id.to_string()));
+        }
         Ok(SaveResult {
             title,
             updated_at: now,
         })
+    }
+
+    /// Lock or unlock a note against accidental edits.
+    pub fn set_edit_locked(&self, id: &str, locked: bool) -> CoreResult<()> {
+        let changed = self.conn.execute(
+            "UPDATE notes SET edit_locked = ?2 WHERE id = ?1",
+            params![id, locked],
+        )?;
+        self.expect_one(changed, id)
     }
 
     pub fn set_color(&self, id: &str, color: &str) -> CoreResult<()> {
@@ -475,6 +494,32 @@ mod tests {
         assert_eq!(
             (w.x, w.y, w.width, w.height),
             (Some(-50.0), Some(10.5), 500.0, 400.0)
+        );
+    }
+
+    #[test]
+    fn edit_lock_refuses_content_changes_until_unlocked() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.save_content(&id, &doc("original")).unwrap();
+        assert!(!db.get_note(&id).unwrap().edit_locked);
+
+        db.set_edit_locked(&id, true).unwrap();
+        assert!(db.get_note(&id).unwrap().edit_locked);
+        assert_eq!(
+            db.save_content(&id, &doc("oops")).unwrap_err().code(),
+            "not_allowed"
+        );
+        assert_eq!(db.get_note(&id).unwrap().title, "original");
+        // Deliberate actions still work on a locked note.
+        db.set_color(&id, "#cfe8ff").unwrap();
+
+        db.set_edit_locked(&id, false).unwrap();
+        db.save_content(&id, &doc("changed")).unwrap();
+        assert_eq!(db.get_note(&id).unwrap().title, "changed");
+        assert_eq!(
+            db.set_edit_locked("missing", true).unwrap_err().code(),
+            "not_found"
         );
     }
 

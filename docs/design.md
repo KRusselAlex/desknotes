@@ -136,7 +136,8 @@ Modular monolith, three layers:
 ```
 notes        id TEXT PK (UUIDv4), title TEXT, content_json TEXT, color TEXT (#rrggbb),
              created_at INTEGER, updated_at INTEGER (Unix ms, UTC),
-             archived_at INTEGER NULL, deleted_at INTEGER NULL   -- soft delete = trash
+             archived_at INTEGER NULL, deleted_at INTEGER NULL,  -- soft delete = trash
+             edit_locked INTEGER (migration 2: read-only note)
 note_windows note_id PK→notes ON DELETE CASCADE, x, y, width, height REAL (logical px),
              visible INTEGER, always_on_top INTEGER
 settings     key TEXT PK, value TEXT

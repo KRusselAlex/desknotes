@@ -131,6 +131,47 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_from_v1_backs_up_first_and_keeps_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply_until(&mut conn, 0, 1).unwrap();
+            conn.execute_batch(
+                "INSERT INTO notes (id, title, content_json, color, created_at, updated_at)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 'old note',
+                         '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}',
+                         '#fff4a3', 1, 1);
+                 INSERT INTO note_windows (note_id, width, height)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 300, 280);",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path, &backups).unwrap();
+        assert_eq!(db.schema_version().unwrap(), LATEST_VERSION);
+        let note = db.get_note("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d").unwrap();
+        assert_eq!(note.title, "old note");
+        assert!(!note.edit_locked);
+
+        let copies: Vec<_> = std::fs::read_dir(&backups).unwrap().collect();
+        assert_eq!(copies.len(), 1, "exactly one pre-migration backup");
+        let name = copies[0]
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .into_string()
+            .unwrap();
+        assert!(name.starts_with("pre-migration-v1-"), "{name}");
+        let conn = Connection::open(copies[0].as_ref().unwrap().path()).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 1, "backup keeps the old schema untouched");
+    }
+
+    #[test]
     fn backup_is_a_readable_copy() {
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("a.db"), dir.path()).unwrap();

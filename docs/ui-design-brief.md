@@ -66,8 +66,9 @@ collapses (for example the less-used buttons move into an overflow menu).
 **Popovers and inline parts**
 - **Colour picker**: 8 preset swatches (section 4) plus, later, a custom colour.
   The current colour is marked.
-- **More menu (⋯)**: New note (Ctrl+N), Duplicate, Always on top (B), Open manager,
-  Archive, Move to trash.
+- **More menu (⋯)**: New note (Ctrl+N), Lock editing / Unlock editing,
+  Duplicate, Always on top (B), Note settings (B), Open manager, Archive,
+  Move to trash.
 - **Link editor**: small inline field under the header to add, change or remove a
   link. Shows an error if the address is not a web or e-mail link.
 
@@ -84,6 +85,15 @@ collapses (for example the less-used buttons move into an overflow menu).
 9. **Locked** (B): the note shows **no text at all** — only a lock symbol,
    "Locked", and an "Unlock" button. Not a blur: the content must be fully gone.
 10. Always on top active (B): a small pin indicator in the header.
+11. **Edit-locked** (A/B): the note is read-only so it cannot be changed by
+    mistake. Text stays fully visible, the formatting toolbar is hidden, typing does
+    nothing, and a small indicator shows the note is locked for editing. One click
+    on the indicator (or the menu item) unlocks it. Checklist boxes stay clickable
+    or not: please show both options so we can choose.
+    **Use a different icon from the privacy lock** (for example a pencil with a
+    slash) so "read-only" and "hidden behind a PIN" are never confused.
+12. **Collapsed** (B): the note rolled up to just its header, showing the title
+    and date, so it takes almost no space. Click the chevron to expand.
 
 **Checklists:** checked items are struck through and dimmed. Links are underlined;
 plain click edits, **Ctrl+click opens** the link (a hint on hover is welcome).
@@ -153,7 +163,24 @@ Sections (tabs or a left list):
 - Desktop notification: note title only (or "Private note" when locked), with
   Snooze (10 min, 1 h, tomorrow) and Dismiss.
 
-### 3.6 Small shared pieces — A
+### 3.6 Note settings window — B
+
+Opened from a note's menu or gear icon. Applies to **that note only**. Dark and
+light versions. Grouped in cards:
+
+- **Text**: font (system fonts list, "System default" first), font size (number
+  with steppers), text colour, line spacing (slider, e.g. 100–200 %), text direction
+  (Automatic, Left-to-right, Right-to-left).
+- **Background**: colour (presets + custom), opacity (only down to a level where
+  text stays readable; the design should show the lowest allowed value).
+- **Size**: width and height in pixels, "lock aspect ratio" switch, "Reset size".
+- **Behaviour**: lock editing, always on top.
+- Footer: **Reset to defaults** and **Close**. Changes apply live.
+
+Background *images* are a later idea (C): show where the option would sit, but it
+is not planned yet.
+
+### 3.7 Small shared pieces — A
 
 Buttons (primary, normal, danger, icon-only), text field, search field, tabs,
 popover, menu, inline confirmation, error banner, toast/save indicator, switch
@@ -209,9 +236,38 @@ A dark theme for the manager and settings is welcome; notes keep their own colou
 
 1. Screens for every **A** state above, and as many **B/C** screens as practical.
 2. A token list (colours, spacing, radius, type sizes, shadows) as CSS variables.
-3. The component sheet from 3.6.
+3. The component sheet from 3.7.
 4. Inline SVG icons for: grip, colour, more, close/hide, pin, lock, bold, italic,
    underline, strike, heading, bullet list, numbered list, checklist, link, search,
    trash, archive, restore, settings, bell (reminder).
 5. If the tool exports HTML/CSS or React, that is ideal: it will be adapted into
    the existing React components (`src/features/notes`, `src/features/manager`).
+
+## 8. Inspiration from an existing sticky-note app (owner's screenshots)
+
+The owner shared screenshots of another sticky-note app. They are not stored in this
+repository because they show private content in the background. What we want to
+take from them:
+
+| Idea | Use in DeskNotes |
+|---|---|
+| Large bold first line acting as the note title, normal text below | Yes: the first line styled as a title by default. |
+| Small controls row: collapse chevron, date/time chip, then settings, delete, lock editing, always on top, hide | Yes, as icon buttons, shown on hover. See the constraint below about placement. |
+| Formatting bar at the **bottom** of the note while editing: H1, H2, B, I, text colour, list type dropdown (checkbox, bullet, numbered), alignment, reminder bell, new note | Yes: please design the bottom bar as the main option and compare with the top header. |
+| List button opening a small menu of list types | Yes: saves space in narrow notes. |
+| Subtle corner marks showing where to resize | Yes, if they stay light and do not cover text. |
+| Per-note settings window with Text, Background and Size cards | Yes: section 3.6. |
+| Date/time chip | Yes: last edited, or the reminder time once reminders exist. |
+
+**Placement constraint (important).** In the reference app, the control row floats
+*above* the note, outside its coloured area. In DeskNotes each note is one window.
+Drawing controls outside the coloured area means making the window bigger than
+the note and transparent around it. On Linux that transparent strip would still
+catch mouse clicks, so clicking "through" it onto another app would not work,
+and it needs a compositor. **Prefer keeping the controls inside the note's own
+area** (a header that appears on hover, or the bottom bar). If the floating look is
+essential, show it as an alternative and we will test it on Ubuntu before committing.
+
+**Background opacity** depends on the desktop compositor. It works on a normal
+GNOME session, but it may be unavailable elsewhere, so the design should also
+look right at 100 % opacity.

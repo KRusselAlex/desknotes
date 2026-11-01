@@ -148,3 +148,18 @@ pub async fn hide_note(app: AppHandle, state: State<'_, AppState>, id: String) -
     emit_changed(&app, Some(&id), "other");
     Ok(())
 }
+
+/// Make a note read-only (or editable again). Enforced in the core: saves are
+/// refused while locked, whatever the webview sends.
+#[tauri::command]
+pub fn set_edit_locked(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    locked: bool,
+) -> IpcResult<()> {
+    let id = parse_note_id(&id)?;
+    state.with_db(|db| db.set_edit_locked(&id, locked))?;
+    emit_changed(&app, Some(&id), "other");
+    Ok(())
+}

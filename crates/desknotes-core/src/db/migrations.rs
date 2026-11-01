@@ -38,13 +38,28 @@ const MIGRATIONS: &[&str] = &[
         value TEXT NOT NULL
     );
     "#,
+    // v2 — read-only ("edit lock") flag per note
+    r#"
+    ALTER TABLE notes ADD COLUMN edit_locked INTEGER NOT NULL DEFAULT 0;
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;
 
 /// Apply every migration after `current`, each in its own transaction.
 pub fn apply(conn: &mut Connection, current: i64) -> CoreResult<()> {
-    for (index, sql) in MIGRATIONS.iter().enumerate().skip(current as usize) {
+    apply_until(conn, current, LATEST_VERSION)
+}
+
+/// Apply migrations after `current` up to and including `target`.
+pub(crate) fn apply_until(conn: &mut Connection, current: i64, target: i64) -> CoreResult<()> {
+    let count = (target - current).max(0) as usize;
+    for (index, sql) in MIGRATIONS
+        .iter()
+        .enumerate()
+        .skip(current as usize)
+        .take(count)
+    {
         let version = index as i64 + 1;
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;

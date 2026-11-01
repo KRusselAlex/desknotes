@@ -40,6 +40,7 @@ pub fn run() {
             commands::notes::purge_note,
             commands::notes::show_note,
             commands::notes::hide_note,
+            commands::notes::set_edit_locked,
             commands::app::show_manager,
             commands::app::startup_errors,
             commands::app::quit_app,

@@ -31,6 +31,8 @@ pub struct Note {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub deleted_at: Option<i64>,
+    /// Read-only: content changes are refused until unlocked.
+    pub edit_locked: bool,
     pub window: NoteWindow,
 }
 

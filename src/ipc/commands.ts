@@ -42,6 +42,7 @@ export const commands = {
   purgeNote: (id: string) => call<void>("purge_note", { id }),
   showNote: (id: string) => call<void>("show_note", { id }),
   hideNote: (id: string) => call<void>("hide_note", { id }),
+  setEditLocked: (id: string, locked: boolean) => call<void>("set_edit_locked", { id, locked }),
   showManager: () => call<void>("show_manager"),
   startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
