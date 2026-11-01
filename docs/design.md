@@ -242,6 +242,13 @@ docs, release workflow, release notes, public repository (only after your confir
 
 Windows and macOS ports follow M5 (section 20.7) and are claimed only after real builds.
 
+## 6b. Read-only notes (decided 2026-11-01)
+
+An edit-locked note is **fully frozen**: text, formatting and checklist boxes cannot
+change until it is unlocked. The core refuses every content save while
+`edit_locked` is set, so the interface and the native layer agree. Empty checklist
+boxes are drawn dashed to show they are inert (design state N17).
+
 ## 7. Forgotten PIN (proposal for M3, not yet decided)
 
 The lock protects notes from someone looking at an unlocked screen. It does not
