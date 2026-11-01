@@ -77,6 +77,17 @@ npm run tauri dev           # run the desktop app (needs the Ubuntu packages in 
 The preview runs the real React screens with Tauri's official IPC mocks and an
 in-memory fake database (`src/dev/preview.tsx`). It is never part of the app build.
 
+### Building and releasing packages
+
+```bash
+npm run tauri build -- --bundles deb   # target/release/bundle/deb/DeskNotes_<version>_amd64.deb
+```
+
+To release: set the same version in `src-tauri/tauri.conf.json`, `Cargo.toml` and
+`package.json`, update `CHANGELOG.md`, merge, then push a tag `v<version>`. The
+`Release` workflow tests, builds the `.deb` with a `SHA256SUMS` file and creates a
+**draft** release; review it and publish it by hand.
+
 ### Design
 
 Visual design comes from the Milestone 1 design export (Claude Design).
