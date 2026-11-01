@@ -1,0 +1,117 @@
+.manager {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #f6f7f9;
+}
+
+.manager-top {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.manager-top input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.manager button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+.manager button.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+.manager button.danger {
+  color: var(--danger);
+  border-color: currentColor;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+.tabs [role="tab"] {
+  border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom: 0;
+  background: transparent;
+}
+.tabs [role="tab"][aria-selected="true"] {
+  background: #fff;
+  font-weight: 600;
+}
+
+.note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+.note-row {
+  display: grid;
+  grid-template-columns: 6px 1fr auto;
+  grid-template-areas: "color title time" "color actions actions";
+  gap: 4px 10px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-top: 0;
+}
+.note-row:first-child {
+  border-top: 1px solid var(--line);
+}
+.row-color {
+  grid-area: color;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+.row-title {
+  grid-area: title;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-time {
+  grid-area: time;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.row-actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.row-actions button {
+  padding: 2px 8px;
+  font-size: 0.85em;
+}
+.confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+}
+
+.empty {
+  padding: 2rem 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.banner-error {
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: #fde7e9;
+  color: var(--danger);
+}
