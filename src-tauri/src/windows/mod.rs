@@ -117,11 +117,18 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         .resizable(true)
         .inner_size(rect.width, rect.height)
         .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
-        .always_on_top(w.always_on_top);
+        .always_on_top(w.always_on_top)
+        // Created hidden, shown below. tao maps a visible window *before*
+        // removing its decorations, so Mutter first frames it with a 37 px title
+        // bar and the note keeps that extra height, growing on every restart.
+        // Mapping only after it is undecorated avoids this (see docs/testing).
+        .visible(false);
     if positioning {
         builder = builder.position(rect.x, rect.y);
     }
-    builder.build()?;
+    let window = builder.build()?;
+    window.show()?;
+    window.set_focus()?;
 
     let position = positioning.then_some((rect.x, rect.y));
     app.state::<AppState>()
