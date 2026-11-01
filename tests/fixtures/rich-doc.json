@@ -1,0 +1,73 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "heading",
+      "attrs": { "level": 2 },
+      "content": [{ "type": "text", "text": "Groceries for Saturday" }]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        { "type": "text", "marks": [{ "type": "bold" }], "text": "Bold" },
+        { "type": "text", "text": " " },
+        { "type": "text", "marks": [{ "type": "italic" }], "text": "italic" },
+        { "type": "text", "text": " " },
+        { "type": "text", "marks": [{ "type": "underline" }], "text": "underline" },
+        { "type": "text", "text": " " },
+        { "type": "text", "marks": [{ "type": "strike" }], "text": "strike" },
+        { "type": "text", "text": " and a " },
+        {
+          "type": "text",
+          "marks": [
+            {
+              "type": "link",
+              "attrs": {
+                "href": "https://example.org",
+                "target": "_blank",
+                "rel": "noopener noreferrer nofollow",
+                "class": null,
+                "title": null
+              }
+            }
+          ],
+          "text": "link"
+        }
+      ]
+    },
+    {
+      "type": "bulletList",
+      "content": [
+        {
+          "type": "listItem",
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "bread" }] }]
+        }
+      ]
+    },
+    {
+      "type": "orderedList",
+      "attrs": { "start": 1, "type": null },
+      "content": [
+        {
+          "type": "listItem",
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "first" }] }]
+        }
+      ]
+    },
+    {
+      "type": "taskList",
+      "content": [
+        {
+          "type": "taskItem",
+          "attrs": { "checked": true },
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "milk" }] }]
+        },
+        {
+          "type": "taskItem",
+          "attrs": { "checked": false },
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "eggs" }] }]
+        }
+      ]
+    }
+  ]
+}

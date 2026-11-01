@@ -1,0 +1,70 @@
+[
+  {
+    "href": "https://example.org",
+    "safe": true
+  },
+  {
+    "href": "HTTP://EXAMPLE.ORG",
+    "safe": true
+  },
+  {
+    "href": "mailto:a@b.c",
+    "safe": true
+  },
+  {
+    "href": "  https://a.b  ",
+    "safe": true
+  },
+  {
+    "href": "\u2003https://a.b",
+    "safe": true
+  },
+  {
+    "href": "javascript:alert(1)",
+    "safe": false
+  },
+  {
+    "href": " javascript:alert(1)",
+    "safe": false
+  },
+  {
+    "href": "java\tscript:alert(1)",
+    "safe": false
+  },
+  {
+    "href": "https://a\u0085b",
+    "safe": false
+  },
+  {
+    "href": "https://a\u009fb",
+    "safe": false
+  },
+  {
+    "href": "\ufeffhttps://a.b",
+    "safe": false
+  },
+  {
+    "href": "\u0000https://a.b",
+    "safe": false
+  },
+  {
+    "href": "https://a\u007fb",
+    "safe": false
+  },
+  {
+    "href": "data:text/html,x",
+    "safe": false
+  },
+  {
+    "href": "file:///etc/passwd",
+    "safe": false
+  },
+  {
+    "href": "example.org",
+    "safe": false
+  },
+  {
+    "href": "",
+    "safe": false
+  }
+]

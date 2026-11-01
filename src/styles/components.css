@@ -1,0 +1,110 @@
+/* Shared pieces: round icon buttons, popovers, menus, tooltips (design 3.7). */
+
+.dn-tool {
+  width: var(--dn-btn);
+  height: var(--dn-btn);
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: var(--dn-ink);
+}
+.dn-tool:hover {
+  background: var(--dn-ink-hover);
+}
+.dn-tool:active,
+.dn-tool[aria-pressed="true"],
+.dn-tool[aria-expanded="true"] {
+  background: var(--dn-ink-press);
+}
+.dn-tool-wide {
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.dn-popover {
+  position: absolute;
+  z-index: 20;
+  background: #fffdf8;
+  color: var(--dn-ink);
+  box-shadow: var(--dn-shadow-pop);
+  max-width: calc(100vw - 12px);
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
+}
+
+.dn-menu {
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1;
+}
+.dn-menu-item {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--dn-radius-sm);
+  background: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+.dn-menu-item:hover,
+.dn-menu-item:focus-visible {
+  background: var(--dn-ink-hover);
+  outline: none;
+}
+.dn-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--dn-focus);
+}
+.dn-menu-item[aria-checked="true"] {
+  background: var(--dn-ink-hover);
+  font-weight: 650;
+}
+.dn-menu-item.is-danger {
+  color: var(--dn-danger);
+}
+.dn-menu-label {
+  flex: 1;
+}
+.dn-menu-shortcut {
+  font-size: 11.5px;
+  color: var(--dn-ink-muted);
+}
+.dn-menu-sep {
+  height: 1px;
+  background: var(--dn-ink-line);
+  margin: 4px 6px;
+}
+
+.dn-tooltip {
+  position: fixed;
+  z-index: 30;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--dn-ink);
+  color: #f3eadb;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: var(--dn-shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+}
+.dn-tooltip-strong {
+  font-weight: 650;
+}
+.dn-tooltip-sub {
+  opacity: 0.85;
+}

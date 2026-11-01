@@ -1,0 +1,473 @@
+/* Note window (design "DeskNotes Note Window", states N1–N17).
+   Square corners: without a transparent window the compositor draws a
+   rectangle, so the design's radius is intentionally dropped. */
+
+.dn-note {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--note-bg);
+  color: var(--dn-ink);
+  font-size: var(--dn-text-base);
+  line-height: var(--dn-leading);
+}
+
+/* Header: grip always; window controls on hover or keyboard focus (N1 vs N2). */
+.dn-note-header {
+  height: var(--dn-header-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  background: var(--note-hd);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dn-grip {
+  width: 20px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--dn-ink-muted);
+  cursor: grab;
+}
+.dn-note-controls {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  align-self: stretch;
+}
+.dn-note:not(:hover):not(:focus-within) .dn-note-controls > :not(.dn-spacer) {
+  visibility: hidden;
+}
+.dn-note-date {
+  font-size: 12px;
+  color: var(--dn-ink-muted);
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+/* Read-only chip (N16/N17): always visible, click to unlock. */
+.dn-readonly-chip {
+  height: 24px;
+  padding: 0 9px 0 7px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-ink-fill);
+  color: var(--dn-ink);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dn-readonly-chip:hover {
+  background: var(--dn-ink-press);
+}
+
+/* Body */
+.dn-note-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 10px 16px 8px;
+  cursor: text;
+}
+@media (max-width: 259px) {
+  .dn-note-body {
+    padding: 10px 14px 8px;
+  }
+}
+@media (max-height: 159px) {
+  .dn-note-body {
+    padding: 6px 12px;
+  }
+}
+.dn-note-body::-webkit-scrollbar {
+  width: 10px;
+}
+.dn-note-body::-webkit-scrollbar-thumb {
+  background: rgba(32, 30, 29, 0.35);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.dn-note-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dn-note-body .tiptap {
+  outline: none;
+  min-height: 100%;
+}
+.dn-note-body .tiptap p {
+  margin: 0 0 8px;
+}
+.dn-note-body .tiptap h1,
+.dn-note-body .tiptap h2,
+.dn-note-body .tiptap h3 {
+  font-size: var(--dn-text-h);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 4px 0;
+}
+/* The first line reads as the note's title (N1). */
+.dn-note-body .tiptap > :first-child:is(p, h1, h2, h3) {
+  font-size: var(--dn-text-title);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 6px;
+}
+.dn-note-body .tiptap ul,
+.dn-note-body .tiptap ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.dn-note-body .tiptap ol {
+  padding-left: 22px;
+}
+.dn-note-body .tiptap li p {
+  margin: 0;
+}
+.dn-note-body .tiptap a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  cursor: text;
+}
+.dn-note-body .tiptap blockquote {
+  margin: 0 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid var(--dn-ink-line);
+}
+.dn-note-body .tiptap code {
+  font-family: var(--dn-font-mono);
+  font-size: 0.9em;
+  background: var(--dn-ink-fill);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.dn-note-body .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--dn-ink-muted);
+}
+
+/* Checklists (N1, N16, N17). Tiptap 3 renders <label><input><span sr-only></label>. */
+.dn-note-body ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.dn-note-body ul[data-type="taskList"] li {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+.dn-note-body ul[data-type="taskList"] li > label {
+  position: relative;
+  flex: none;
+  display: flex;
+  margin-top: 3px;
+}
+.dn-note-body ul[data-type="taskList"] input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 5px;
+  border: 1.5px solid var(--dn-ink);
+  background: transparent;
+  cursor: pointer;
+}
+.dn-note-body ul[data-type="taskList"] input[type="checkbox"]:hover {
+  box-shadow: 0 0 0 4px var(--dn-ink-hover);
+}
+.dn-note-body ul[data-type="taskList"] input[type="checkbox"]:checked {
+  border: 0;
+  background: var(--dn-ink);
+}
+.dn-note-body ul[data-type="taskList"] input[type="checkbox"]:checked::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--note-bg);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.dn-note-body ul[data-type="taskList"] li > div {
+  flex: 1;
+  min-width: 0;
+}
+.dn-note-body ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--dn-ink-muted);
+}
+/* Read-only, fully frozen (N17): inert empty boxes are dashed. */
+.dn-note.is-readonly ul[data-type="taskList"] input[type="checkbox"] {
+  cursor: default;
+  box-shadow: none;
+}
+.dn-note.is-readonly ul[data-type="taskList"] input[type="checkbox"]:not(:checked) {
+  border-style: dashed;
+  border-color: var(--dn-ink-muted);
+}
+.dn-note.is-readonly .dn-note-body {
+  cursor: default;
+}
+
+/* Save indicator and failure (N2, N6) */
+.dn-save-indicator {
+  position: sticky;
+  float: right;
+  bottom: -4px;
+  margin-right: -6px;
+  font-size: var(--dn-text-xs);
+  color: var(--dn-ink-muted);
+  pointer-events: none;
+}
+.dn-save-error {
+  flex: none;
+  margin: 0 8px 8px;
+  padding: 8px 8px 8px 10px;
+  border-radius: var(--dn-radius);
+  background: var(--dn-danger-bg);
+  color: var(--dn-danger-ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--dn-text-sm);
+  line-height: 1.35;
+}
+.dn-save-error > span {
+  flex: 1;
+}
+.dn-save-error button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid rgba(122, 27, 20, 0.35);
+  background: #fff;
+  color: var(--dn-danger-ink);
+  font-size: var(--dn-text-sm);
+  font-weight: 650;
+}
+
+.dn-resize-mark {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  color: var(--dn-ink-muted);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Bottom formatting bar (N2, N12, N15) */
+.dn-format-bar {
+  position: relative;
+  height: var(--dn-bar-h);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  background: var(--note-hd);
+}
+.dn-menu-lists {
+  left: 30px;
+  bottom: 40px;
+  width: 236px;
+}
+.dn-menu-lists .dn-menu-item {
+  height: 30px;
+}
+.dn-menu-overflow {
+  right: 6px;
+  bottom: 40px;
+  width: 188px;
+}
+.dn-menu-overflow .dn-menu-item {
+  height: 28px;
+}
+
+/* Header popovers (N8, N9) */
+.dn-note-menu {
+  top: 34px;
+  right: 6px;
+  width: 224px;
+}
+.dn-color-popover {
+  top: 36px;
+  right: 36px;
+  width: 196px;
+  padding: 12px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+@media (max-width: 259px) {
+  .dn-color-popover {
+    right: 6px;
+  }
+}
+.dn-popover-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--dn-ink-muted);
+}
+.dn-swatches {
+  display: grid;
+  grid-template-columns: repeat(4, 32px);
+  gap: 10px 12px;
+}
+.dn-swatch {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid var(--dn-ink-line);
+  display: grid;
+  place-items: center;
+  color: var(--dn-ink);
+}
+.dn-swatch[aria-checked="true"] {
+  border: 0;
+  box-shadow: 0 0 0 2px #fffdf8, 0 0 0 4px var(--dn-ink);
+}
+.dn-popover-later {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--dn-text-sm);
+  color: var(--dn-ink-muted);
+  padding-top: 2px;
+}
+.dn-dashed-circle {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--dn-radius-pill);
+  border: 1.5px dashed var(--dn-ink-muted);
+  display: grid;
+  place-items: center;
+}
+
+/* Link editor strip (N10) */
+.dn-link-editor {
+  flex: none;
+  padding: 8px;
+  background: #fffdf8;
+  border-bottom: 1px solid var(--dn-ink-line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dn-link-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.dn-link-field {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border-radius: var(--dn-radius-pill);
+  border: 1.5px solid var(--dn-ink-line);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.dn-link-field:focus-within {
+  box-shadow: 0 0 0 2px #fffdf8, 0 0 0 4px var(--dn-focus);
+}
+.dn-link-field.is-invalid {
+  border-color: var(--dn-danger);
+}
+.dn-link-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+}
+.dn-round {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: var(--dn-ink);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.dn-round:hover {
+  background: var(--dn-ink-hover);
+}
+.dn-round-ink,
+.dn-round-ink:hover {
+  background: var(--dn-ink);
+  color: #fff;
+}
+.dn-link-error {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--dn-danger-ink);
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding-left: 6px;
+}
+
+/* Could not be opened (N7) */
+.dn-note-failed {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 24px 24px;
+}
+.dn-failed-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-ink-fill);
+  display: grid;
+  place-items: center;
+}
+.dn-failed-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+.dn-pill-ink {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: var(--dn-radius-pill);
+  border: 0;
+  background: var(--dn-ink);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+}

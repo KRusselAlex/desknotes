@@ -136,7 +136,8 @@ Modular monolith, three layers:
 ```
 notes        id TEXT PK (UUIDv4), title TEXT, content_json TEXT, color TEXT (#rrggbb),
              created_at INTEGER, updated_at INTEGER (Unix ms, UTC),
-             archived_at INTEGER NULL, deleted_at INTEGER NULL   -- soft delete = trash
+             archived_at INTEGER NULL, deleted_at INTEGER NULL,  -- soft delete = trash
+             edit_locked INTEGER (migration 2: read-only note)
 note_windows note_id PK→notes ON DELETE CASCADE, x, y, width, height REAL (logical px),
              visible INTEGER, always_on_top INTEGER
 settings     key TEXT PK, value TEXT
@@ -241,7 +242,36 @@ docs, release workflow, release notes, public repository (only after your confir
 
 Windows and macOS ports follow M5 (section 20.7) and are claimed only after real builds.
 
-## 7. Performance plan
+## 6b. Read-only notes (decided 2026-11-01)
+
+An edit-locked note is **fully frozen**: text, formatting and checklist boxes cannot
+change until it is unlocked. The core refuses every content save while
+`edit_locked` is set, so the interface and the native layer agree. Empty checklist
+boxes are drawn dashed to show they are inert (design state N17).
+
+## 7. Forgotten PIN (proposal for M3, not yet decided)
+
+The lock protects notes from someone looking at an unlocked screen. It does not
+encrypt the database, so recovery can be offered without weakening the real
+guarantee. Proposed layers, strongest first:
+
+1. **Recovery code.** When the PIN is first set, DeskNotes shows a one-time code
+   (for example 6 groups of 4 characters) to write down or print. Only its Argon2id
+   hash is stored. Entering it unlocks and forces a new PIN, and a new code is issued.
+2. **Offline reset, made visible.** With DeskNotes closed, `desknotes --reset-pin`
+   from a terminal removes the PIN. The next start shows a banner "The PIN was
+   reset on <date>" that cannot be dismissed silently, so a reset by someone else is
+   noticed. This is honest: anyone who can run commands as you can already read the
+   database file.
+3. **Later, optional:** unlock with the operating-system account (polkit on Linux,
+   Windows Hello, Touch ID) where a maintained API exists.
+
+Never: e-mail or SMS recovery, security questions, or any online service.
+If database encryption is added later, the recovery code must also protect the
+encryption key, and losing both PIN and code would then mean losing the notes.
+That trade-off must be shown to the user before encryption is enabled.
+
+## 8. Performance plan
 
 No numbers are claimed yet. After M1 builds, measure on this machine: cold start to first
 note visible, idle CPU over 60 s, RSS of the core process plus all `WebKitWebProcess`
