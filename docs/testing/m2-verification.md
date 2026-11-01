@@ -112,10 +112,10 @@ Release build with the DES-25 fix, isolated data, input simulated with `scripts/
 | Type, then lock from the More menu 341 ms later (inside the 500 ms autosave delay) | **Pass**: the last words were saved first, then `edit_locked = 1`; no "Not saved", no refused save in the log |
 | Locked note | **Pass**: "Read-only" chip, formatting bar hidden, checklist boxes drawn dashed |
 | Click a checklist box while locked | **Pass**: stays unticked; content and `updated_at` unchanged; no save attempted |
-| Type while locked | Nothing changed, but keyboard focus could not be confirmed (see below); covered by unit tests |
+| Type while locked | **Pass**, confirmed by the owner with a real keyboard |
 | Restart | **Pass**: the note reopens read-only |
 | Click the "Read-only" chip | **Pass**: `edit_locked = 0`, formatting bar back |
-| Type after unlocking | Not checked: GNOME does not give keyboard focus to a restored window on simulated input. Needs a real keyboard |
+| Type after unlocking | **Pass**, confirmed by the owner with a real keyboard (simulated typing cannot reach a restored window on GNOME) |
 
 Decision recorded: checklist boxes cannot be ticked while a note is locked (the lock means
 no change at all, as the owner asked: "fully frozen").
