@@ -14,7 +14,7 @@ use crate::validation::{
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
      n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top,
-     n.edit_locked";
+     n.edit_locked, w.collapsed";
 
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
@@ -39,6 +39,7 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
                 height: row.get(11)?,
                 visible: row.get(12)?,
                 always_on_top: row.get(13)?,
+                collapsed: row.get(15)?,
             },
         },
         content_json,
@@ -71,6 +72,7 @@ impl Database {
             height: DEFAULT_HEIGHT,
             visible: true,
             always_on_top: false,
+            collapsed: false,
         };
         self.insert_note(&empty_doc(), &color, &window)
     }
@@ -97,8 +99,8 @@ impl Database {
             ],
         )?;
         tx.execute(
-            "INSERT INTO note_windows (note_id, x, y, width, height, visible, always_on_top)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO note_windows (note_id, x, y, width, height, visible, always_on_top, collapsed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 id,
                 window.x,
@@ -106,7 +108,8 @@ impl Database {
                 window.width,
                 window.height,
                 window.visible,
-                window.always_on_top
+                window.always_on_top,
+                window.collapsed
             ],
         )?;
         tx.commit()?;
@@ -269,6 +272,7 @@ impl Database {
             x: w.x.map(|x| x + DUPLICATE_OFFSET),
             y: w.y.map(|y| y + DUPLICATE_OFFSET),
             visible: true,
+            collapsed: false,
             ..w.clone()
         };
         self.insert_note(&original.content, &original.color, &window)
@@ -363,9 +367,28 @@ impl Database {
         let (width, height) = enforce_min_size(width, height);
         let (x, y) = position.unzip();
         let changed = self.conn.execute(
-            "UPDATE note_windows SET x = COALESCE(?2, x), y = COALESCE(?3, y), width = ?4, height = ?5
+            // While collapsed, the window is only a header strip: keep the
+            // expanded height so the note reopens at its real size.
+            "UPDATE note_windows SET x = COALESCE(?2, x), y = COALESCE(?3, y), width = ?4,
+                    height = CASE WHEN collapsed = 1 THEN height ELSE ?5 END
              WHERE note_id = ?1",
             params![id, x, y, width, height],
+        )?;
+        self.expect_one(changed, id)
+    }
+
+    pub fn set_always_on_top(&self, id: &str, on: bool) -> CoreResult<()> {
+        let changed = self.conn.execute(
+            "UPDATE note_windows SET always_on_top = ?2 WHERE note_id = ?1",
+            params![id, on],
+        )?;
+        self.expect_one(changed, id)
+    }
+
+    pub fn set_collapsed(&self, id: &str, collapsed: bool) -> CoreResult<()> {
+        let changed = self.conn.execute(
+            "UPDATE note_windows SET collapsed = ?2 WHERE note_id = ?1",
+            params![id, collapsed],
         )?;
         self.expect_one(changed, id)
     }
@@ -600,6 +623,41 @@ mod tests {
             db.set_edit_locked("missing", true).unwrap_err().code(),
             "not_found"
         );
+    }
+
+    #[test]
+    fn always_on_top_and_collapse_are_stored() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_always_on_top(&id, true).unwrap();
+        assert!(db.get_note(&id).unwrap().window.always_on_top);
+        db.set_always_on_top(&id, false).unwrap();
+        assert!(!db.get_note(&id).unwrap().window.always_on_top);
+        assert_eq!(
+            db.set_collapsed("nope", true).unwrap_err().code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn collapsing_keeps_the_expanded_height() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_window_geometry(&id, Some((10.0, 20.0)), 300.0, 280.0)
+            .unwrap();
+        db.set_collapsed(&id, true).unwrap();
+        // The window is now a 32 px strip; it is moved and made wider.
+        db.set_window_geometry(&id, Some((50.0, 60.0)), 320.0, 32.0)
+            .unwrap();
+        let w = db.get_note(&id).unwrap().window;
+        assert!(w.collapsed);
+        assert_eq!(
+            (w.x, w.y, w.width, w.height),
+            (Some(50.0), Some(60.0), 320.0, 280.0)
+        );
+        db.set_collapsed(&id, false).unwrap();
+        db.set_window_geometry(&id, None, 320.0, 400.0).unwrap();
+        assert_eq!(db.get_note(&id).unwrap().window.height, 400.0);
     }
 
     #[test]

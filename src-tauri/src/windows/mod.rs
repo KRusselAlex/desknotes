@@ -4,7 +4,7 @@
 pub mod geometry;
 
 use desknotes_core::geometry::{Rect, keep_on_screen};
-use desknotes_core::{MIN_HEIGHT, MIN_WIDTH, Note};
+use desknotes_core::{COLLAPSED_HEIGHT, MIN_HEIGHT, MIN_WIDTH, Note};
 use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
@@ -152,6 +152,12 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
     let rect = keep_on_screen(Rect::new(x, y, w.width, w.height), &areas);
     let positioning = window_positioning_supported();
     let always_on_top = w.always_on_top;
+    let collapsed = w.collapsed;
+    let (min_height, height) = if collapsed {
+        (COLLAPSED_HEIGHT, COLLAPSED_HEIGHT)
+    } else {
+        (MIN_HEIGHT, rect.height)
+    };
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
@@ -169,8 +175,8 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
                 // A double-click on the drag area would otherwise maximise the note,
                 // and that full-screen size would be saved as its normal size.
                 .maximizable(false)
-                .inner_size(rect.width, rect.height)
-                .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
+                .inner_size(rect.width, height)
+                .min_inner_size(MIN_WIDTH, min_height)
                 .always_on_top(always_on_top)
                 // Created hidden, shown below. tao maps a visible window *before*
                 // removing its decorations, so Mutter first frames it with a 37 px
@@ -179,6 +185,9 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
                 .visible(false);
         if positioning {
             builder = builder.position(rect.x, rect.y);
+        }
+        if collapsed {
+            builder = builder.max_inner_size(COLLAPSED_MAX_WIDTH, COLLAPSED_HEIGHT);
         }
         #[cfg(target_os = "linux")]
         if let Some(view) = related {
@@ -214,6 +223,34 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         .update(&note.id, position, rect.width, rect.height);
     Ok(())
 }
+
+/// Roll a note window up to its header strip, or back to `height`.
+///
+/// The window stays resizable: a non-resizable GTK window is forced to its
+/// content's natural size (~200 px for a WebKit view). Equal minimum and maximum
+/// heights pin the strip to 32 px while still allowing the width to change.
+pub fn apply_collapsed(
+    window: &tauri::WebviewWindow,
+    collapsed: bool,
+    width: f64,
+    height: f64,
+) -> tauri::Result<()> {
+    if collapsed {
+        window.set_min_size(Some(tauri::LogicalSize::new(MIN_WIDTH, COLLAPSED_HEIGHT)))?;
+        window.set_max_size(Some(tauri::LogicalSize::new(
+            COLLAPSED_MAX_WIDTH,
+            COLLAPSED_HEIGHT,
+        )))?;
+        window.set_size(tauri::LogicalSize::new(width, COLLAPSED_HEIGHT))
+    } else {
+        window.set_max_size(None::<tauri::LogicalSize<f64>>)?;
+        window.set_size(tauri::LogicalSize::new(width, height))?;
+        window.set_min_size(Some(tauri::LogicalSize::new(MIN_WIDTH, MIN_HEIGHT)))
+    }
+}
+
+/// Widest a collapsed strip may be stretched.
+const COLLAPSED_MAX_WIDTH: f64 = 4096.0;
 
 /// Save the window's final geometry and destroy it. No-op if not open.
 pub fn close_note(app: &AppHandle, note_id: &str) -> tauri::Result<()> {

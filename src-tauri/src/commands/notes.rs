@@ -1,6 +1,6 @@
 use desknotes_core::validation::parse_note_id;
 use desknotes_core::{Note, NoteCounts, NoteFilter, NoteSummary, SaveResult};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::error::{IpcError, IpcResult};
 use crate::state::AppState;
@@ -172,6 +172,45 @@ pub async fn hide_note(
     state.with_db(|db| db.set_visible(&id, false))?;
     windows::close_note(&app, &id)?;
     windows::after_note_hidden(&app, &id);
+    emit_changed(&app, Some(&id), "other");
+    Ok(())
+}
+
+/// Keep a note above other windows (or not).
+#[tauri::command]
+pub fn set_always_on_top(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    on: bool,
+) -> IpcResult<()> {
+    let id = parse_note_id(&id)?;
+    state.with_db(|db| db.set_always_on_top(&id, on))?;
+    if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
+        window.set_always_on_top(on)?;
+    }
+    emit_changed(&app, Some(&id), "other");
+    Ok(())
+}
+
+/// Roll a note up to its header strip, or expand it to its saved size.
+#[tauri::command]
+pub fn set_collapsed(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    collapsed: bool,
+) -> IpcResult<()> {
+    let id = parse_note_id(&id)?;
+    // Write any pending move/resize first so the saved size is the latest one.
+    state.geometry.flush();
+    let note = state.with_db(|db| {
+        db.set_collapsed(&id, collapsed)?;
+        db.get_note(&id)
+    })?;
+    if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
+        windows::apply_collapsed(&window, collapsed, note.window.width, note.window.height)?;
+    }
     emit_changed(&app, Some(&id), "other");
     Ok(())
 }

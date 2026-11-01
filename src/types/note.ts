@@ -12,6 +12,8 @@ export interface NoteWindowState {
   height: number;
   visible: boolean;
   alwaysOnTop: boolean;
+  /** Rolled up to its header strip; height keeps the expanded height. */
+  collapsed: boolean;
 }
 
 export interface Note {

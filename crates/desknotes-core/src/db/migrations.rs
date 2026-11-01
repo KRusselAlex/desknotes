@@ -42,6 +42,10 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE notes ADD COLUMN edit_locked INTEGER NOT NULL DEFAULT 0;
     "#,
+    // v3 — note rolled up to its header strip
+    r#"
+    ALTER TABLE note_windows ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0;
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;

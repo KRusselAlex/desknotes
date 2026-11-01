@@ -5,6 +5,8 @@ pub const DEFAULT_WIDTH: f64 = 300.0;
 pub const DEFAULT_HEIGHT: f64 = 280.0;
 pub const MIN_WIDTH: f64 = 180.0;
 pub const MIN_HEIGHT: f64 = 120.0;
+/// Height of a collapsed note: just its header strip.
+pub const COLLAPSED_HEIGHT: f64 = 32.0;
 
 /// Where a note window sits and whether it is shown. Logical pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,6 +19,8 @@ pub struct NoteWindow {
     pub height: f64,
     pub visible: bool,
     pub always_on_top: bool,
+    /// Rolled up to its header strip. `height` keeps the expanded height.
+    pub collapsed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

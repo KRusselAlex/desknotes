@@ -27,7 +27,7 @@ const doc = (title: string, ...lines: string[]) => ({
 });
 
 const base = { createdAt: now, archivedAt: null, deletedAt: null, editLocked: false };
-const win = { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false };
+const win = { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false, collapsed: false };
 const notes: Note[] = [
   { ...base, id: "a1", title: "Groceries for Saturday", content: fixture, color: "#fff4a3", updatedAt: now - 0.2 * H, window: win },
   {
