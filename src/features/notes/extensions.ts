@@ -8,12 +8,15 @@ import { isSafeLink } from "./links";
 /**
  * Link that never keeps a CSS class from pasted HTML, so note text cannot borrow
  * the app's own styles to imitate its interface. The core rejects a class too.
+ * Pasted targets (`_self`, `_top`, …) become `_blank`: links always open in the
+ * browser, and the core refuses any other target, which made the note unsavable.
  */
 const SafeLink = Link.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
       class: { default: null, parseHTML: () => null, renderHTML: () => ({}) },
+      target: { default: "_blank", parseHTML: () => "_blank" },
     };
   },
 });
@@ -43,15 +46,20 @@ export function createExtensions(): Extensions {
 }
 
 /**
- * Drop link marks whose href is not safe, keeping the text. The native layer
- * rejects such documents, so removing them here prevents a failed save.
+ * Drop link marks whose href is not safe, keeping the text, and give other
+ * targets `_blank`. The native layer rejects such documents, so fixing them here
+ * prevents a failed save, including for links already in an open note.
  */
 export function sanitizeDoc(node: JSONContent): JSONContent {
   const copy: JSONContent = { ...node };
   if (node.marks) {
-    copy.marks = node.marks.filter(
-      (m) => m.type !== "link" || isSafeLink(String(m.attrs?.href ?? "")),
-    );
+    copy.marks = node.marks
+      .filter((m) => m.type !== "link" || isSafeLink(String(m.attrs?.href ?? "")))
+      .map((m) => {
+        const target: unknown = m.attrs?.target;
+        if (m.type !== "link" || target === undefined || target === null || target === "_blank") return m;
+        return { ...m, attrs: { ...m.attrs, target: "_blank" } };
+      });
     if (copy.marks.length === 0) delete copy.marks;
   }
   if (node.content) copy.content = node.content.map(sanitizeDoc);

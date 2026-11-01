@@ -77,6 +77,7 @@ function LoadedNote({ note }: { note: Note }) {
   const [collapsed, setCollapsedView] = useState(note.window.collapsed);
   const [locked, setLocked] = useState(note.editLocked);
   const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [saveErrorReason, setSaveErrorReason] = useState<string>();
   const [popover, setPopover] = useState<Popover>("none");
   const [focused, setFocused] = useState(false);
   const [, setTick] = useState(0); // refreshes the relative date chip
@@ -99,7 +100,10 @@ function LoadedNote({ note }: { note: Note }) {
           setUpdatedAt(result.updatedAt);
           setTitle(result.title);
         },
-        onStateChange: (state) => setSaveState(state),
+        onStateChange: (state, error) => {
+          setSaveState(state);
+          setSaveErrorReason(error);
+        },
       }),
     [note.id],
   );
@@ -466,7 +470,7 @@ function LoadedNote({ note }: { note: Note }) {
       </div>
       <LinkHint container={bodyEl} />
 
-      {saveState === "error" && <SaveError onRetry={() => void autosave.flush()} />}
+      {saveState === "error" && <SaveError reason={saveErrorReason} onRetry={() => void autosave.flush()} />}
       {showBar && editor && (
         <FormatBar editor={editor} narrow={narrow} onLink={() => setPopover("link")} />
       )}
