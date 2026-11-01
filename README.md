@@ -1,5 +1,7 @@
 # DeskNotes
 
+[![CI](https://github.com/KRusselAlex/desknotes/actions/workflows/ci.yml/badge.svg)](https://github.com/KRusselAlex/desknotes/actions/workflows/ci.yml)
+
 Lightweight, private sticky notes for the Linux desktop. Built with Tauri 2, React and
 SQLite. Free, open source (MIT), offline, no account, no telemetry.
 
