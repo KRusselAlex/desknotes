@@ -50,7 +50,12 @@ pub fn save_note_content(
     let result = state
         .with_db(|db| db.save_content(&id, &content))
         // The reason only, never the text: a refused save must be diagnosable.
-        .inspect_err(|e| eprintln!("DeskNotes: a note was not saved ({}): {}", e.code, e.message))?;
+        .inspect_err(|e| {
+            eprintln!(
+                "DeskNotes: a note was not saved ({}): {}",
+                e.code, e.message
+            )
+        })?;
     emit_changed(&app, Some(&id), "content");
     Ok(result)
 }
