@@ -2,7 +2,17 @@
 // Every function maps 1:1 to a #[tauri::command] in src-tauri/src/commands.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Note, NoteCounts, NoteFilter, NoteSummary, SaveResult, SettingsView } from "../types/note";
+import type {
+  ExportResult,
+  Note,
+  NoteCounts,
+  NoteFilter,
+  NoteSummary,
+  RestorePreview,
+  RestoreResult,
+  SaveResult,
+  SettingsView,
+} from "../types/note";
 
 /** Error shape produced by the Rust side (`IpcError`). */
 export class CommandError extends Error {
@@ -55,7 +65,14 @@ export const commands = {
   setLaunchAtLogin: (enabled: boolean) => call<boolean>("set_launch_at_login", { enabled }),
   setNewNoteColor: (color: string) => call<void>("set_new_note_color", { color }),
   openDataFolder: () => call<void>("open_data_folder"),
-  /** Answer to app-will-quit: whether this window's text is saved. */
+  /** Opens a save dialog; null when cancelled. */
+  exportBackup: () => call<ExportResult | null>("export_backup"),
+  /** Opens a file dialog and validates the file; null when cancelled. Nothing changes yet. */
+  chooseBackup: () => call<RestorePreview | null>("choose_backup"),
+  cancelRestore: () => call<void>("cancel_restore"),
+  /** Replaces every note with the chosen backup (after a safety copy). */
+  restoreBackup: () => call<RestoreResult>("restore_backup"),
+  /** Answer to save-all-notes: whether this window's text is saved. */
   quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
 };
 

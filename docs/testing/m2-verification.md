@@ -39,3 +39,14 @@ Not checked yet: double-clicking the strip to expand with the real mouse.
 
 Not checked in the real app: "Open folder" (it opens the file manager; covered by a unit
 test). Privacy, Appearance and Backup sections will appear as those features are built.
+
+## Backup and restore (design S3) — 2026-11-01
+
+Automated: core round trip (export then restore reproduces every note exactly, including
+archived and trashed ones and window state), safety copy before restore, validation of
+every field (format, version, ids, duplicates, content allowlist and links, colours,
+numbers), damaged notes reported on export; 7 UI tests for the Backup pane.
+
+**Not yet verified in the real app:** the native save and open dialogs and the full
+restore with windows reopening. Simulated input stopped reaching the app during this
+session, so this needs a check by hand (steps in the pull request).

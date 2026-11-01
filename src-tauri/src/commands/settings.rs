@@ -16,6 +16,8 @@ pub struct SettingsView {
     pub new_note_color: String,
     pub version: String,
     pub data_dir: String,
+    /// Time of the last successful export (Unix ms), if any.
+    pub last_backup_at: Option<i64>,
 }
 
 #[tauri::command]
@@ -36,6 +38,9 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Set
         new_note_color: state.with_db(|db| db.new_note_color())?,
         version: app.package_info().version.to_string(),
         data_dir,
+        last_backup_at: state
+            .with_db(|db| db.get_setting(desknotes_core::db::LAST_BACKUP_AT))?
+            .and_then(|v| v.parse().ok()),
     })
 }
 

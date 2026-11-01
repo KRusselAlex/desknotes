@@ -13,6 +13,12 @@ pub struct AppState {
     startup_errors: Mutex<Vec<String>>,
     pub geometry: GeometryWriter,
     pub quit: QuitCoordinator,
+    /// A validated backup chosen in the restore dialog, waiting for confirmation.
+    pub pending_restore: Mutex<Option<PendingRestore>>,
+}
+
+pub struct PendingRestore {
+    pub backup: desknotes_core::backup::Backup,
 }
 
 impl AppState {
@@ -40,6 +46,7 @@ impl AppState {
             db,
             startup_errors: Mutex::new(errors),
             quit: QuitCoordinator::default(),
+            pending_restore: Mutex::new(None),
         }
     }
 

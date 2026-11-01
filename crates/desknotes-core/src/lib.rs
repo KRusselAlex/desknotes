@@ -4,6 +4,7 @@
 //! validation, geometry rules and the SQLite repository. The Tauri app in
 //! `src-tauri` is a thin adapter around this crate (see docs/adr/0001).
 
+pub mod backup;
 pub mod db;
 pub mod error;
 pub mod geometry;

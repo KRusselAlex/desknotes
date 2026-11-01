@@ -5,11 +5,13 @@ import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
 import type { SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
+import { BackupPane } from "./BackupPane";
 
-type Section = "general" | "about";
+type Section = "general" | "backup" | "about";
 
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "general", label: "General", icon: "settings" },
+  { id: "backup", label: "Backup", icon: "download" },
   { id: "about", label: "About", icon: "info" },
 ];
 
@@ -96,6 +98,12 @@ export function SettingsWindow() {
               </div>
             </div>
           </>
+        )}
+        {settings && section === "backup" && (
+          <BackupPane
+            lastBackupAt={settings.lastBackupAt}
+            onExported={(at) => setSettings((s) => (s ? { ...s, lastBackupAt: at } : s))}
+          />
         )}
         {settings && section === "about" && (
           <>

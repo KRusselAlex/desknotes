@@ -21,6 +21,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -58,6 +59,10 @@ pub fn run() {
             commands::settings::set_launch_at_login,
             commands::settings::set_new_note_color,
             commands::settings::open_data_folder,
+            commands::backup::export_backup,
+            commands::backup::choose_backup,
+            commands::backup::cancel_restore,
+            commands::backup::restore_backup,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");

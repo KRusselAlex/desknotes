@@ -174,3 +174,86 @@
   color: var(--dn-sage-ink);
   font-weight: 600;
 }
+
+/* Backup (design S3) */
+.dn-card-pad {
+  padding: 16px 18px;
+  gap: 12px;
+  font-size: 13px;
+}
+.dn-small {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.dn-button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dn-settings .dn-btn-accent.is-small {
+  height: 34px;
+}
+.dn-btn-outline.is-medium {
+  height: 34px;
+  padding: 0 14px 0 10px;
+  font-size: 13.5px;
+}
+.dn-notice-ok {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: var(--dn-sage-tint);
+  color: var(--dn-sage-ink);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.dn-settings .dn-banner-error {
+  overflow-wrap: anywhere;
+}
+.dn-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(46, 43, 37, 0.35);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.dn-modal {
+  width: min(400px, calc(100vw - 32px));
+  padding: 22px 24px;
+  border-radius: 22px;
+  background: var(--dn-app-raised);
+  box-shadow: var(--dn-shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dn-modal-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+.dn-modal-text {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--dn-app-muted);
+  overflow-wrap: anywhere;
+}
+.dn-modal-text strong {
+  color: var(--dn-app-text);
+  font-weight: 600;
+}
+.dn-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+.dn-btn-outline.is-large,
+.dn-btn-danger.is-large {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+}

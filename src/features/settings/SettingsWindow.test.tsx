@@ -18,6 +18,7 @@ const settings = {
   newNoteColor: "#fff4a3",
   version: "0.1.0",
   dataDir: "/home/me/.local/share/io.github.krusselalex.desknotes",
+  lastBackupAt: null,
 };
 
 describe("SettingsWindow", () => {

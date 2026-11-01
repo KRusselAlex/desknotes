@@ -2,5 +2,6 @@
 //! Each one validates its inputs and delegates to desknotes-core.
 
 pub mod app;
+pub mod backup;
 pub mod notes;
 pub mod settings;

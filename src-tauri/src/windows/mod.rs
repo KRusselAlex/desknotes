@@ -17,7 +17,9 @@ use crate::state::AppState;
 pub const MANAGER: &str = "manager";
 pub const NOTE_PREFIX: &str = "note-";
 pub const NOTES_CHANGED: &str = "notes-changed";
-pub const APP_WILL_QUIT: &str = "app-will-quit";
+/// Asks every note window to save now and answer with `quit_ready`
+/// (used before quitting, exporting and restoring).
+pub const SAVE_ALL_NOTES: &str = "save-all-notes";
 /// Sent to the manager when quitting was cancelled because notes hold unsaved text.
 pub const QUIT_BLOCKED: &str = "quit-blocked";
 /// Sent to a note window: perform "hide", "archive" or "trash" after saving.
@@ -83,6 +85,20 @@ fn geometry_of(
     let pos = position.ok()?.to_logical::<f64>(scale);
     let size = size.ok()?.to_logical::<f64>(scale);
     Some(Rect::new(pos.x, pos.y, size.width, size.height))
+}
+
+/// Ask every open note window to save and wait (blocking, at most `timeout`)
+/// for their answers. Returns how many still hold unsaved text. Never call it
+/// on the main thread.
+pub fn save_all_open_notes(app: &AppHandle, timeout: std::time::Duration) -> usize {
+    let labels = open_note_labels(app);
+    if labels.is_empty() {
+        return 0;
+    }
+    let state = app.state::<AppState>();
+    state.quit.begin(labels);
+    let _ = app.emit(SAVE_ALL_NOTES, ());
+    state.quit.wait(timeout)
 }
 
 /// Labels of all open note windows.

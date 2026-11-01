@@ -111,7 +111,7 @@ mockIPC(
         find(a.id).color = String(a.color);
         return null;
       case "get_settings":
-        return { launchAtLogin: false, newNoteColor: "#fff4a3", version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes" };
+        return { launchAtLogin: false, newNoteColor: "#fff4a3", version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
       case "set_launch_at_login":
         return Boolean(a.enabled);
       case "set_edit_locked":
