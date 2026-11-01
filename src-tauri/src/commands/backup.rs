@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt as _;
 
 use super::app::SAVE_TIMEOUT;
-use crate::error::{IpcError, IpcResult};
+use crate::error::{IpcError, IpcResult, unsaved_error};
 use crate::state::{AppState, PendingRestore};
 use crate::windows::{self, emit_changed};
 
@@ -38,16 +38,6 @@ pub struct RestoreResult {
     pub restored: usize,
     /// Where the copy of the previous notes was saved.
     pub safety_copy: String,
-}
-
-fn unsaved_error(count: usize) -> IpcError {
-    IpcError::new(
-        "unsaved",
-        format!(
-            "{count} {} unsaved text. Press Retry in the note showing \"Not saved\" first.",
-            if count == 1 { "note has" } else { "notes have" }
-        ),
-    )
 }
 
 /// "desknotes-2026-11-01.json" for today's date (UTC).

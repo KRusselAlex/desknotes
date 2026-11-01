@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use desknotes_core::{CoreResult, Database};
@@ -15,6 +16,8 @@ pub struct AppState {
     pub quit: QuitCoordinator,
     /// A validated backup chosen in the restore dialog, waiting for confirmation.
     pub pending_restore: Mutex<Option<PendingRestore>>,
+    /// Whether the tray icon was created (the desktop may not support one).
+    tray: AtomicBool,
 }
 
 pub struct PendingRestore {
@@ -47,6 +50,7 @@ impl AppState {
             startup_errors: Mutex::new(errors),
             quit: QuitCoordinator::default(),
             pending_restore: Mutex::new(None),
+            tray: AtomicBool::new(false),
         }
     }
 
@@ -60,6 +64,14 @@ impl AppState {
             IpcError::new("database_unavailable", "the notes database is not open")
         })?;
         Ok(f(db)?)
+    }
+
+    pub fn set_tray_available(&self, available: bool) {
+        self.tray.store(available, Ordering::Relaxed);
+    }
+
+    pub fn tray_available(&self) -> bool {
+        self.tray.load(Ordering::Relaxed)
     }
 
     pub fn push_error(&self, message: String) {

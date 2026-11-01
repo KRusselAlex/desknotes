@@ -44,7 +44,10 @@
         "priority": "optional",
         "files": {
           "/usr/share/doc/desk-notes/copyright": "../LICENSE"
-        }
+        },
+        "depends": [
+          "libayatana-appindicator3-1"
+        ]
       }
     }
   }

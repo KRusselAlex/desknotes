@@ -110,6 +110,8 @@ mockIPC(
       case "set_note_color":
         find(a.id).color = String(a.color);
         return null;
+      case "hidden_note_count":
+        return 0;
       case "get_settings":
         return { launchAtLogin: false, newNoteColor: "#fff4a3", version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
       case "set_launch_at_login":
