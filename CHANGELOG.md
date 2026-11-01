@@ -7,7 +7,7 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- Installable `.deb` package (about 10 MB) with proper metadata and license, tested on a clean Ubuntu 24.04; release workflow that drafts a GitHub release from a version tag.
+- Installable `.deb` package (about 10 MB) with proper metadata and license, tested on a clean Ubuntu 24.04; AppImage built in CI for other distributions; release workflow that drafts a GitHub release from a version tag.
 - Backup and restore of all notes as a documented JSON file (Settings → Backup), with a safety copy before every restore.
 - Settings window: launch at login, colour for new notes, About (version, data folder).
 - Always on top: pin a note above other windows (header pin or ⋯ menu).

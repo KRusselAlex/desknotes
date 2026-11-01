@@ -83,9 +83,13 @@ in-memory fake database (`src/dev/preview.tsx`). It is never part of the app bui
 npm run tauri build -- --bundles deb   # target/release/bundle/deb/DeskNotes_<version>_amd64.deb
 ```
 
+The AppImage is built only in CI (the **Packages** workflow), because its tool downloads
+helper programs. Pull requests that change packaging get both files as workflow
+artifacts for testing.
+
 To release: set the same version in `src-tauri/tauri.conf.json`, `Cargo.toml` and
 `package.json`, update `CHANGELOG.md`, merge, then push a tag `v<version>`. The
-`Release` workflow tests, builds the `.deb` with a `SHA256SUMS` file and creates a
+`Packages` workflow tests, builds the `.deb` and AppImage with a `SHA256SUMS` file and creates a
 **draft** release; review it and publish it by hand.
 
 ### Design

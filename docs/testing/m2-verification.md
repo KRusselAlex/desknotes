@@ -65,3 +65,17 @@ Built with `npm run tauri build -- --bundles deb` (release profile, LTO, strippe
 | Uninstall | `apt remove desk-notes` removes the binary; notes are kept |
 
 Not checked: installing the package on the owner's own desktop (needs sudo).
+
+## AppImage built in CI (DES-17) — 2026-11-01
+
+Built by the **Packages** workflow on GitHub's runner (pull request #6); checksums in
+`SHA256SUMS` verified after download.
+
+| Container (Ubuntu 24.04, Xvfb) | Result |
+|---|---|
+| Bare, nothing installed | Does not start: `libfribidi.so.0` missing (AppImages expect basic desktop libraries) |
+| GTK only | Does not start: `libEGL.so.1` missing (graphics drivers are never bundled) |
+| GTK + EGL/GL graphics libraries, **no WebKitGTK** | Starts and keeps running (WebKitGTK comes from inside the AppImage) |
+
+Size: AppImage 83 MB (it carries WebKitGTK), `.deb` 4.7 MB. On Ubuntu 22.04 and later,
+running an AppImage needs `libfuse2t64`, or `--appimage-extract-and-run`.

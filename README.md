@@ -44,6 +44,9 @@ sudo apt install ./DeskNotes_<version>_amd64.deb
   normal Ubuntu desktop already has; on a minimal system `apt` installs them for you.
 - Start it from the applications menu. Remove it with `sudo apt remove desk-notes`;
   your notes stay in `~/.local/share/io.github.krusselalex.desknotes/`.
+- **Other Linux distributions:** download `DeskNotes_<version>_amd64.AppImage` (about
+  80 MB, it carries its own WebKitGTK), make it executable and run it. On Ubuntu 22.04
+  and later AppImages need `sudo apt install libfuse2t64` first.
 - Windows and macOS packages will follow once those platforms are built and tested.
 
 Users never need Rust, Node.js or the `-dev` packages below: those are only for
