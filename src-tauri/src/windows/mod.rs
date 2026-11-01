@@ -116,7 +116,20 @@ fn open_note_windows(app: &AppHandle, except: Option<&str>) -> usize {
         .count()
 }
 
-/// Open (or focus) the window of a note.
+#[cfg(target_os = "linux")]
+type RelatedView = webkit2gtk::WebView;
+#[cfg(not(target_os = "linux"))]
+type RelatedView = ();
+
+fn report_window_error(app: &AppHandle, e: tauri::Error) {
+    app.state::<AppState>().push_error(format!(
+        "A note window could not be opened (its content is safe): {e}"
+    ));
+    let _ = show_manager(app);
+}
+
+/// Open (or focus) the window of a note. On Linux the window itself is created a
+/// moment later on the main thread; errors then appear in the manager.
 pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
     let label = note_label(&note.id);
     if let Some(existing) = app.get_webview_window(&label) {
@@ -138,28 +151,62 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
     };
     let rect = keep_on_screen(Rect::new(x, y, w.width, w.height), &areas);
     let positioning = window_positioning_supported();
+    let always_on_top = w.always_on_top;
 
-    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-        .title("DeskNotes") // never the note text: titles are visible to others
-        .decorations(false)
-        .resizable(true)
-        // A double-click on the drag area would otherwise maximise the note,
-        // and that full-screen size would be saved as its normal size.
-        .maximizable(false)
-        .inner_size(rect.width, rect.height)
-        .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
-        .always_on_top(w.always_on_top)
-        // Created hidden, shown below. tao maps a visible window *before*
-        // removing its decorations, so Mutter first frames it with a 37 px title
-        // bar and the note keeps that extra height, growing on every restart.
-        // Mapping only after it is undecorated avoids this (see docs/testing).
-        .visible(false);
-    if positioning {
-        builder = builder.position(rect.x, rect.y);
+    // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
+    let handle = app.clone();
+    let build = move |related: Option<RelatedView>| -> tauri::Result<()> {
+        // Requests are queued; a second one for the same note just focuses it.
+        if let Some(existing) = handle.get_webview_window(&label) {
+            existing.show()?;
+            return existing.set_focus();
+        }
+        let mut builder =
+            WebviewWindowBuilder::new(&handle, &label, WebviewUrl::App("index.html".into()))
+                .title("DeskNotes") // never the note text: titles are visible to others
+                .decorations(false)
+                .resizable(true)
+                // A double-click on the drag area would otherwise maximise the note,
+                // and that full-screen size would be saved as its normal size.
+                .maximizable(false)
+                .inner_size(rect.width, rect.height)
+                .min_inner_size(MIN_WIDTH, MIN_HEIGHT)
+                .always_on_top(always_on_top)
+                // Created hidden, shown below. tao maps a visible window *before*
+                // removing its decorations, so Mutter first frames it with a 37 px
+                // title bar and the note keeps that extra height, growing on every
+                // restart. Mapping only after it is undecorated avoids this.
+                .visible(false);
+        if positioning {
+            builder = builder.position(rect.x, rect.y);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(view) = related {
+            builder = builder.with_related_view(view);
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = related;
+        let window = builder.build()?;
+        window.show()?;
+        window.set_focus()
+    };
+
+    // On Linux every note shares the manager's WebKit web process (a "related
+    // view") instead of starting its own, which costs ~80 MiB per note
+    // (docs/testing/m1-verification.md, Jira DES-24).
+    #[cfg(target_os = "linux")]
+    if let Some(manager) = app.get_webview_window(MANAGER) {
+        let reporter = app.clone();
+        manager.with_webview(move |platform| {
+            if let Err(e) = build(Some(platform.inner())) {
+                report_window_error(&reporter, e);
+            }
+        })?;
+    } else {
+        build(None)?;
     }
-    let window = builder.build()?;
-    window.show()?;
-    window.set_focus()?;
+    #[cfg(not(target_os = "linux"))]
+    build(None)?;
 
     let position = positioning.then_some((rect.x, rect.y));
     app.state::<AppState>()
@@ -231,29 +278,30 @@ pub fn after_note_hidden(app: &AppHandle, hidden_note_id: &str) {
 /// Open saved notes and the manager at startup.
 pub fn restore_on_startup(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let mut opened = 0;
-    match state.with_db(|db| db.notes_to_show()) {
+    let notes = match state.with_db(|db| db.notes_to_show()) {
         Ok((notes, unreadable)) => {
             for id in unreadable {
                 state.push_error(format!(
                     "Note {id} could not be read and was not opened. Its data was left untouched."
                 ));
             }
-            for note in &notes {
-                match open_note(app, note) {
-                    Ok(()) => opened += 1,
-                    Err(e) => state.push_error(format!(
-                        "A note could not be shown (its content is safe): {e}"
-                    )),
-                }
-            }
+            notes
         }
-        Err(e) if e.code == "database_unavailable" => {} // already reported
-        Err(e) => state.push_error(format!("Saved notes could not be loaded: {}", e.message)),
-    }
-    let show_manager = opened == 0 || !state.errors().is_empty();
+        Err(e) if e.code == "database_unavailable" => Vec::new(), // already reported
+        Err(e) => {
+            state.push_error(format!("Saved notes could not be loaded: {}", e.message));
+            Vec::new()
+        }
+    };
+    // The manager comes first: note windows share its web process.
+    let show_manager = notes.is_empty() || !state.errors().is_empty();
     if let Err(e) = ensure_manager(app, show_manager) {
         eprintln!("DeskNotes: could not create the manager window: {e}");
+    }
+    for note in &notes {
+        if let Err(e) = open_note(app, note) {
+            report_window_error(app, e);
+        }
     }
 }
 

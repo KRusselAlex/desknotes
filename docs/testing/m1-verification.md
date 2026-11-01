@@ -78,9 +78,8 @@ Release binary size: 9.7 MB.
 Settled idle CPU per process (release, 10 notes): main process ≈ 0.8 %, the focused
 note ≈ 0.8 % (blinking cursor), every other note ≈ 0.05 %.
 
-**Finding:** each window gets its own WebKit web process (≈ 80 MiB). CPU is fine, but
-memory is too high for 30 visible notes (2.4 GB). This is the main performance issue,
-tracked in Jira DES-24, and it should be addressed before calling DeskNotes lightweight.
+**Finding:** each window got its own WebKit web process (≈ 80 MiB). CPU is fine, but
+memory was too high for 30 visible notes (2.4 GB). Addressed in ADR-0006 (below).
 
 ## Checked by the owner
 
@@ -90,3 +89,17 @@ tracked in Jira DES-24, and it should be addressed before calling DeskNotes ligh
 
 - Resizing from the window edges with the real mouse was not checked separately
   (programmatic resize is saved and restored).
+
+## Shared web process (ADR-0006), 2026-11-01
+
+Same machine, debug build with the dev server, so comparable with the first two rows above.
+
+| Open windows | Before (separate processes) | After (shared process) |
+|---|---|---|
+| manager + 1 note | 294 MiB, 4 processes | 261 MiB, 3 processes |
+| manager + 10 notes | 1005 MiB, 13 processes | 446 MiB, 3 processes |
+| about 30 notes | 2390 MiB, 33 processes (release) | 737 MiB, 3 processes (28 notes, debug) |
+
+Restart with 28 visible notes: all restored at 300 × 280 in 2.2 s (debug build), still one
+web process. Typing in a note after the change still saves. Idle CPU 1.7–2.5 % right
+after opening.
