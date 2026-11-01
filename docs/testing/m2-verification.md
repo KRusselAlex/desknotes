@@ -99,3 +99,43 @@ Also checked with the installed release build (scratch data): clicks in the mana
 
 Not checked: the icon's look in the top bar (needs a person), and the "no tray" fallback
 (Hide all opens the manager) in a desktop without AppIndicator support.
+
+## Bug: a pasted link made a note unsavable — 2026-11-01
+
+Reported by the owner: in the installed 0.1.0 package, a note showed "Not saved" and Quit
+refused. Their database (inspected read-only, metadata only) held the note empty: no save
+had ever succeeded for it, while other writes worked.
+
+Cause: Tiptap copies a pasted link's `target` attribute as it is (`_self`, `_top`, empty…).
+The core accepts only `_blank` or none, and the editor's safety pass checked only `href`,
+so every later save of that note was refused and Retry could not help.
+
+| Check | Installed 0.1.0 | Fixed build (release, isolated data) |
+|---|---|---|
+| New note, type "Pasted: ", paste `<a href="https://example.com/" target="_self">` (HTML clipboard on the X display) | "Not saved"; database keeps an empty note (the typed words are lost too) | "Saved"; link stored with `target: "_blank"` |
+| Save refused for another reason (note locked in the test database behind the app's back) | no trace anywhere | stderr: `a note was not saved (not_allowed): …`; no note text in the line |
+
+Also checked outside the app: 20 pasted HTML samples (links with various targets, relative,
+`tel:`, Google results, lists, code, tables, images) parsed by the editor configuration and
+validated by the real Rust core: 4 refused before the fix, none after. A note already holding
+such a link saves again on the next Retry, because the fix also runs on every save.
+
+Not shown in a screenshot: the hover tooltip with the reason (GTK draws it as a separate
+window); covered by a unit test.
+
+## Edit lock (DES-18) — 2026-11-01
+
+Release build with the DES-25 fix, isolated data, input simulated with `scripts/verify/`.
+
+| Check | Result |
+|---|---|
+| Type, then lock from the More menu 341 ms later (inside the 500 ms autosave delay) | **Pass**: the last words were saved first, then `edit_locked = 1`; no "Not saved", no refused save in the log |
+| Locked note | **Pass**: "Read-only" chip, formatting bar hidden, checklist boxes drawn dashed |
+| Click a checklist box while locked | **Pass**: stays unticked; content and `updated_at` unchanged; no save attempted |
+| Type while locked | **Pass**, confirmed by the owner with a real keyboard |
+| Restart | **Pass**: the note reopens read-only |
+| Click the "Read-only" chip | **Pass**: `edit_locked = 0`, formatting bar back |
+| Type after unlocking | **Pass**, confirmed by the owner with a real keyboard (simulated typing cannot reach a restored window on GNOME) |
+
+Decision recorded: checklist boxes cannot be ticked while a note is locked (the lock means
+no change at all, as the owner asked: "fully frozen").
