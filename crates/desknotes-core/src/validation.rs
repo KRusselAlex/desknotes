@@ -153,6 +153,13 @@ pub fn is_safe_link(href: &str) -> bool {
     ALLOWED_LINK_SCHEMES.iter().any(|s| lower.starts_with(s))
 }
 
+/// Note IDs are UUIDs. Checking them keeps window labels and SQL inputs tame.
+pub fn parse_note_id(id: &str) -> CoreResult<String> {
+    uuid::Uuid::parse_str(id)
+        .map(|u| u.hyphenated().to_string())
+        .map_err(|_| invalid("note id must be a UUID"))
+}
+
 /// `#rrggbb` only.
 pub fn validate_color(color: &str) -> CoreResult<String> {
     let ok = color.len() == 7
@@ -291,6 +298,15 @@ mod tests {
             {"type":"text","text":"é".repeat(200)}]}]});
         assert_eq!(derive_title(&long).chars().count(), TITLE_MAX_CHARS);
         assert_eq!(derive_title(&empty_doc()), "");
+    }
+
+    #[test]
+    fn note_ids_must_be_uuids() {
+        let id = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
+        assert_eq!(parse_note_id(id).unwrap(), id);
+        assert_eq!(parse_note_id(&id.to_uppercase()).unwrap(), id);
+        assert!(parse_note_id("../../etc").is_err());
+        assert!(parse_note_id("note-1").is_err());
     }
 
     #[test]

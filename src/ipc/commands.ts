@@ -43,6 +43,7 @@ export const commands = {
   showNote: (id: string) => call<void>("show_note", { id }),
   hideNote: (id: string) => call<void>("hide_note", { id }),
   showManager: () => call<void>("show_manager"),
+  startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
 };
 

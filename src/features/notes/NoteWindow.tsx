@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
 import { commands } from "../../ipc/commands";
-import { onNotesChanged } from "../../ipc/events";
+import { onAppWillQuit, onNotesChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import type { Note } from "../../types/note";
 import { COLOR_PRESETS, INK, headerShade } from "../appearance/colors";
@@ -96,17 +96,22 @@ function LoadedNote({ note }: { note: Note }) {
     return () => void unlisten.then((f) => f());
   }, [hide]);
 
-  // Flush when the window loses focus (e.g. clicking Quit in the manager).
+  // Flush when the window loses focus (e.g. clicking Quit in the manager)
+  // and when the app announces it is quitting.
   useEffect(() => {
     const onBlur = () => void autosave.flush();
     window.addEventListener("blur", onBlur);
-    return () => window.removeEventListener("blur", onBlur);
+    const unlisten = onAppWillQuit(() => void autosave.flush());
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      void unlisten.then((f) => f());
+    };
   }, [autosave]);
 
   // Colour changed from another window.
   useEffect(() => {
-    const unlisten = onNotesChanged(({ id }) => {
-      if (id === null || id === note.id) {
+    const unlisten = onNotesChanged(({ id, kind }) => {
+      if (kind !== "content" && (id === null || id === note.id)) {
         commands.getNote(note.id).then((n) => setColor(n.color), () => undefined);
       }
     });

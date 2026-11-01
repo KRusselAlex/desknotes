@@ -274,22 +274,25 @@ impl Database {
         Ok(())
     }
 
+    /// Store a window's size, and its position when the platform reports a
+    /// real one (`None` keeps the saved position, e.g. on native Wayland).
     pub fn set_window_geometry(
         &self,
         id: &str,
-        x: f64,
-        y: f64,
+        position: Option<(f64, f64)>,
         width: f64,
         height: f64,
     ) -> CoreResult<()> {
-        if !(x.is_finite() && y.is_finite()) {
+        if position.is_some_and(|(x, y)| !(x.is_finite() && y.is_finite())) {
             return Err(CoreError::Validation(
                 "window position must be finite".into(),
             ));
         }
         let (width, height) = enforce_min_size(width, height);
+        let (x, y) = position.unzip();
         let changed = self.conn.execute(
-            "UPDATE note_windows SET x = ?2, y = ?3, width = ?4, height = ?5 WHERE note_id = ?1",
+            "UPDATE note_windows SET x = COALESCE(?2, x), y = COALESCE(?3, y), width = ?4, height = ?5
+             WHERE note_id = ?1",
             params![id, x, y, width, height],
         )?;
         self.expect_one(changed, id)
@@ -441,7 +444,7 @@ mod tests {
         let db = db();
         let id = db.create_note(Some("#c8f7c5")).unwrap().id;
         db.save_content(&id, FIXTURE).unwrap();
-        db.set_window_geometry(&id, 100.0, 200.0, 400.0, 300.0)
+        db.set_window_geometry(&id, Some((100.0, 200.0)), 400.0, 300.0)
             .unwrap();
         let copy = db.duplicate_note(&id).unwrap();
         let original = db.get_note(&id).unwrap();
@@ -456,14 +459,22 @@ mod tests {
     fn geometry_is_stored_and_min_size_enforced() {
         let db = db();
         let id = db.create_note(None).unwrap().id;
-        db.set_window_geometry(&id, -50.0, 10.5, 20.0, 20.0)
+        db.set_window_geometry(&id, Some((-50.0, 10.5)), 20.0, 20.0)
             .unwrap();
         let w = db.get_note(&id).unwrap().window;
         assert_eq!((w.x, w.y), (Some(-50.0), Some(10.5)));
         assert_eq!((w.width, w.height), (crate::MIN_WIDTH, crate::MIN_HEIGHT));
         assert!(
-            db.set_window_geometry(&id, f64::NAN, 0.0, 300.0, 300.0)
+            db.set_window_geometry(&id, Some((f64::NAN, 0.0)), 300.0, 300.0)
                 .is_err()
+        );
+
+        // A size-only update keeps the saved position.
+        db.set_window_geometry(&id, None, 500.0, 400.0).unwrap();
+        let w = db.get_note(&id).unwrap().window;
+        assert_eq!(
+            (w.x, w.y, w.width, w.height),
+            (Some(-50.0), Some(10.5), 500.0, 400.0)
         );
     }
 
