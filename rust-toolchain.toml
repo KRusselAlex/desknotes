@@ -1,0 +1,6 @@
+# Rust version used to develop and build DeskNotes. rustup installs it automatically
+# the first time you run cargo in this folder. Raise it deliberately, in its own commit.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

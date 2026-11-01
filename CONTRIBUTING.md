@@ -40,6 +40,18 @@ Common scopes: `core`, `ui`, `shell`, `db`, `docs`, `ci`.
 | `tests/fixtures` | Data shared by Rust and TypeScript tests |
 | `docs/` | Design and architecture decision records |
 
+## Setting up (Ubuntu)
+
+```bash
+git clone https://github.com/KRusselAlex/desknotes.git && cd desknotes
+scripts/setup-ubuntu.sh            # installs what is missing, then checks the build
+scripts/setup-ubuntu.sh --check    # only reports what is missing
+```
+
+Tool versions are pinned: Rust in `rust-toolchain.toml` (rustup installs it on first
+use) and Node.js in `.nvmrc` (`nvm use` picks it up). CI uses the same pins.
+Docker is not needed for development: the app needs your desktop session.
+
 ## Development commands
 
 ```bash
