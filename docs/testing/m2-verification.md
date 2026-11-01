@@ -64,7 +64,8 @@ Built with `npm run tauri build -- --bundles deb` (release profile, LTO, strippe
 | Desktop entry | `Name=DeskNotes`, `Exec=desknotes`, `Icon=desknotes`, menu category Office |
 | Uninstall | `apt remove desk-notes` removes the binary; notes are kept |
 
-Not checked: installing the package on the owner's own desktop (needs sudo).
+Installed by the owner on their Ubuntu 24.04 desktop with `sudo apt install`: works
+(`dpkg`: desk-notes 0.1.0 installed, 10.6 MB; binary, desktop entry and icons present).
 
 ## AppImage built in CI (DES-17) — 2026-11-01
 

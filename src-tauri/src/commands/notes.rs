@@ -2,7 +2,8 @@ use desknotes_core::validation::parse_note_id;
 use desknotes_core::{Note, NoteCounts, NoteFilter, NoteSummary, SaveResult};
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
-use crate::error::{IpcError, IpcResult};
+use super::app::SAVE_TIMEOUT;
+use crate::error::{IpcError, IpcResult, unsaved_error};
 use crate::state::AppState;
 use crate::windows::{self, emit_changed};
 
@@ -29,14 +30,90 @@ pub fn get_note(state: State<'_, AppState>, id: String) -> IpcResult<Note> {
 // Commands that create windows are async: creating a window from a
 // synchronous command deadlocks on Windows (Tauri documentation).
 #[tauri::command]
-pub async fn create_note(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Note> {
+pub async fn create_note(app: AppHandle) -> IpcResult<Note> {
+    new_note(&app)
+}
+
+/// Create a note in the preferred colour and open its window.
+pub fn new_note(app: &AppHandle) -> IpcResult<Note> {
+    let state = app.state::<AppState>();
     let note = state.with_db(|db| {
         let color = db.new_note_color()?;
         db.create_note(Some(&color))
     })?;
-    windows::open_note(&app, &note)?;
-    emit_changed(&app, Some(&note.id), "other");
+    windows::open_note(app, &note)?;
+    emit_changed(app, Some(&note.id), "other");
     Ok(note)
+}
+
+/// Save every open note, then hide them all and remember which ones, so
+/// "Show hidden notes" brings back exactly those. Blocking: never call it on
+/// the main thread.
+pub fn hide_all(app: &AppHandle) -> IpcResult<usize> {
+    let unsaved = windows::save_all_open_notes(app, SAVE_TIMEOUT);
+    if unsaved > 0 {
+        return Err(unsaved_error(unsaved));
+    }
+    let state = app.state::<AppState>();
+    let ids: Vec<String> = windows::open_note_labels(app)
+        .iter()
+        .filter_map(|l| l.strip_prefix(windows::NOTE_PREFIX).map(str::to_owned))
+        .collect();
+    for id in &ids {
+        state.with_db(|db| db.set_visible(id, false))?;
+        windows::close_note(app, id)?;
+    }
+    // Hiding again keeps the notes hidden earlier in the list too.
+    let mut remembered = state.with_db(|db| db.hidden_by_hide_all())?;
+    for id in &ids {
+        if !remembered.contains(id) {
+            remembered.push(id.clone());
+        }
+    }
+    state.with_db(|db| db.set_hidden_by_hide_all(&remembered))?;
+    // Without a tray icon the manager is the only way back.
+    if !state.tray_available() {
+        windows::show_manager(app)?;
+    }
+    emit_changed(app, None, "other");
+    Ok(ids.len())
+}
+
+/// Show again the notes hidden by "Hide all notes" (those still active).
+pub fn show_hidden(app: &AppHandle) -> IpcResult<usize> {
+    let state = app.state::<AppState>();
+    let ids = state.with_db(|db| db.hidden_by_hide_all())?;
+    let mut shown = 0;
+    for id in &ids {
+        let Ok(note) = state.with_db(|db| db.get_note(id)) else {
+            continue;
+        };
+        if note.archived_at.is_some() || note.deleted_at.is_some() {
+            continue;
+        }
+        state.with_db(|db| db.set_visible(id, true))?;
+        windows::open_note(app, &note)?;
+        shown += 1;
+    }
+    state.with_db(|db| db.set_hidden_by_hide_all(&[]))?;
+    emit_changed(app, None, "other");
+    Ok(shown)
+}
+
+#[tauri::command]
+pub async fn hide_all_notes(app: AppHandle) -> IpcResult<usize> {
+    hide_all(&app)
+}
+
+#[tauri::command]
+pub async fn show_hidden_notes(app: AppHandle) -> IpcResult<usize> {
+    show_hidden(&app)
+}
+
+/// How many notes "Show hidden notes" would bring back.
+#[tauri::command]
+pub fn hidden_note_count(state: State<'_, AppState>) -> IpcResult<usize> {
+    Ok(state.with_db(|db| db.hidden_by_hide_all())?.len())
 }
 
 #[tauri::command]

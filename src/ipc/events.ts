@@ -33,3 +33,10 @@ export function onNoteAction(handler: (action: NoteAction) => void): Promise<Unl
 export function onQuitBlocked(handler: (count: number) => void): Promise<UnlistenFn> {
   return listen<number>(QUIT_BLOCKED, (event) => handler(event.payload));
 }
+
+export const ACTION_FAILED = "action-failed";
+
+/** An action started from the tray failed; the message explains why. */
+export function onActionFailed(handler: (message: string) => void): Promise<UnlistenFn> {
+  return listen<string>(ACTION_FAILED, (event) => handler(event.payload));
+}

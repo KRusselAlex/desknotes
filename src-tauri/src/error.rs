@@ -31,3 +31,14 @@ impl From<tauri::Error> for IpcError {
 }
 
 pub type IpcResult<T> = Result<T, IpcError>;
+
+/// "N notes have unsaved text", used when an action needs every note saved first.
+pub fn unsaved_error(count: usize) -> IpcError {
+    IpcError::new(
+        "unsaved",
+        format!(
+            "{count} {} unsaved text. Press Retry in the note showing \"Not saved\" first.",
+            if count == 1 { "note has" } else { "notes have" }
+        ),
+    )
+}

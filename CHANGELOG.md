@@ -7,6 +7,8 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Tray icon (Ubuntu AppIndicator) with New note, Hide all notes, Show hidden notes, Open manager, Settings and Quit.
+- Hide all notes / Show hidden notes, also in the manager menu.
 - Installable `.deb` package (about 10 MB) with proper metadata and license, tested on a clean Ubuntu 24.04; AppImage built in CI for other distributions; release workflow that drafts a GitHub release from a version tag.
 - Backup and restore of all notes as a documented JSON file (Settings → Backup), with a safety copy before every restore.
 - Settings window: launch at login, colour for new notes, About (version, data folder).

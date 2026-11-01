@@ -6,6 +6,7 @@ mod error;
 pub mod platform;
 mod quit;
 mod state;
+mod tray;
 mod windows;
 
 use tauri::{Manager, RunEvent};
@@ -30,6 +31,7 @@ pub fn run() {
             let handle = app.handle().clone();
             app.manage(AppState::open(&handle));
             windows::restore_on_startup(&handle);
+            tray::install(&handle);
             Ok(())
         })
         .on_window_event(windows::on_window_event)
@@ -50,6 +52,9 @@ pub fn run() {
             commands::notes::set_edit_locked,
             commands::notes::set_always_on_top,
             commands::notes::set_collapsed,
+            commands::notes::hide_all_notes,
+            commands::notes::show_hidden_notes,
+            commands::notes::hidden_note_count,
             commands::app::show_manager,
             commands::app::startup_errors,
             commands::app::quit_app,

@@ -57,6 +57,11 @@ export const commands = {
   setAlwaysOnTop: (id: string, on: boolean) => call<void>("set_always_on_top", { id, on }),
   setCollapsed: (id: string, collapsed: boolean) => call<void>("set_collapsed", { id, collapsed }),
   showManager: () => call<void>("show_manager"),
+  /** Saves every note, hides them all and remembers which. Returns how many. */
+  hideAllNotes: () => call<number>("hide_all_notes"),
+  /** Shows the notes hidden by hideAllNotes again. Returns how many. */
+  showHiddenNotes: () => call<number>("show_hidden_notes"),
+  hiddenNoteCount: () => call<number>("hidden_note_count"),
   startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
   openSettings: () => call<void>("open_settings"),
