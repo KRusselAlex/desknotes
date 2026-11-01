@@ -43,6 +43,8 @@ pub fn run() {
             commands::notes::show_note,
             commands::notes::hide_note,
             commands::notes::set_edit_locked,
+            commands::notes::set_always_on_top,
+            commands::notes::set_collapsed,
             commands::app::show_manager,
             commands::app::startup_errors,
             commands::app::quit_app,

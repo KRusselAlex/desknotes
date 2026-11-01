@@ -6,6 +6,10 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Always on top: pin a note above other windows (header pin or ⋯ menu).
+- Collapse a note to its header strip; it reopens collapsed and keeps its full size.
+
 ### Changed
 - Note windows share one WebKit process on Linux: about 70 % less memory with many notes.
 

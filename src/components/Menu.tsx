@@ -8,8 +8,10 @@ export interface MenuItem {
   icon?: IconName;
   shortcut?: string;
   danger?: boolean;
-  /** For radio-style items (list type). */
+  /** For radio-style items (list type) and checkable items. */
   checked?: boolean;
+  /** On/off item (role menuitemcheckbox), e.g. "Always on top". */
+  checkable?: boolean;
   separatorBefore?: boolean;
   onSelect: () => void;
 }
@@ -63,8 +65,8 @@ export function Menu({ label, items, onClose, className, style, radio }: MenuPro
           <button
             type="button"
             data-menu-item
-            role={radio ? "menuitemradio" : "menuitem"}
-            aria-checked={radio ? Boolean(item.checked) : undefined}
+            role={radio ? "menuitemradio" : item.checkable ? "menuitemcheckbox" : "menuitem"}
+            aria-checked={radio || item.checkable ? Boolean(item.checked) : undefined}
             className={`dn-menu-item${item.danger ? " is-danger" : ""}`}
             onClick={() => {
               item.onSelect();
@@ -74,6 +76,7 @@ export function Menu({ label, items, onClose, className, style, radio }: MenuPro
             {item.icon && <Icon name={item.icon} size={15} />}
             <span className="dn-menu-label">{item.label}</span>
             {item.shortcut && <span className="dn-menu-shortcut">{item.shortcut}</span>}
+            {item.checkable && item.checked && <Icon name="check" size={14} stroke={2.75} />}
           </button>
         </div>
       ))}

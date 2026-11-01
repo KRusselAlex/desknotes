@@ -32,6 +32,8 @@ vi.mock("../../ipc/commands", () => ({
     showManager: vi.fn().mockResolvedValue(undefined),
     createNote: vi.fn().mockResolvedValue({}),
     quitReady: vi.fn().mockResolvedValue(undefined),
+    setAlwaysOnTop: vi.fn().mockResolvedValue(undefined),
+    setCollapsed: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -49,7 +51,7 @@ const note = (over: Partial<Note> = {}): Note => ({
   archivedAt: null,
   deletedAt: null,
   editLocked: false,
-  window: { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false },
+  window: { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false, collapsed: false },
   ...over,
 });
 
@@ -71,7 +73,8 @@ async function typeIntoNote(container: HTMLElement, text: string) {
 describe("NoteWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(commands.saveNoteContent).mockResolvedValue({ title: "", updatedAt: Date.now() });
+    // Like the core: the title is derived from the first line of the note.
+    vi.mocked(commands.saveNoteContent).mockResolvedValue({ title: "Groceries for Saturday", updatedAt: Date.now() });
   });
 
   it("renders the saved rich text with the note colour", async () => {
@@ -168,6 +171,53 @@ describe("NoteWindow", () => {
     expect(await screen.findByText("This note could not be opened.")).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 700));
     expect(commands.saveNoteContent).not.toHaveBeenCalled();
+  });
+
+  it("pins a note on top and shows the pin while it is on", async () => {
+    await openNote();
+    await userEvent.click(screen.getByRole("button", { name: "Always on top" }));
+    expect(commands.setAlwaysOnTop).toHaveBeenCalledWith(ID, true);
+    const pin = screen.getByRole("button", { name: "Always on top is on" });
+    await userEvent.click(pin);
+    expect(commands.setAlwaysOnTop).toHaveBeenLastCalledWith(ID, false);
+  });
+
+  it("offers always on top in the more menu as a checkbox", async () => {
+    await openNote({ window: { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: true, collapsed: false } });
+    await userEvent.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Always on top" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("collapses to a strip with the title, after saving, and expands again", async () => {
+    const { container } = await openNote();
+    await typeIntoNote(container, "more ");
+    await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+    expect(commands.saveNoteContent).toHaveBeenCalled();
+    expect(commands.setCollapsed).toHaveBeenCalledWith(ID, true);
+    expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+      vi.mocked(commands.setCollapsed).mock.invocationCallOrder[0]!,
+    );
+    expect(container.querySelector(".dn-collapsed-title")).toHaveTextContent("Groceries for Saturday");
+    await userEvent.click(screen.getByRole("button", { name: "Expand" }));
+    expect(commands.setCollapsed).toHaveBeenLastCalledWith(ID, false);
+    expect(container.querySelector(".dn-note-header")).not.toBeNull();
+  });
+
+  it("opens a collapsed note as its strip", async () => {
+    vi.mocked(commands.getNote).mockResolvedValue(
+      note({ window: { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false, collapsed: true } }),
+    );
+    render(<NoteWindow noteId={ID} />);
+    expect(await screen.findByRole("button", { name: "Expand" })).toBeInTheDocument();
+  });
+
+  it("does not collapse while its text is not saved", async () => {
+    vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("disk full"));
+    const { container } = await openNote();
+    await typeIntoNote(container, "precious ");
+    await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+    expect(commands.setCollapsed).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Not saved/)).toBeInTheDocument();
   });
 
   it("shows a recoverable message when the note cannot be loaded", async () => {

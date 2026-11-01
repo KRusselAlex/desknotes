@@ -471,3 +471,44 @@
   font-size: 13.5px;
   font-weight: 600;
 }
+
+/* Always on top (B2): a dark pin that stays visible even when reading. */
+.dn-pin-on {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-ink);
+  color: var(--note-bg);
+  display: grid;
+  place-items: center;
+}
+.dn-note:not(:hover):not(:focus-within) .dn-note-controls > .dn-pin-on {
+  visibility: visible;
+}
+
+/* Collapsed (B3): just the header strip. */
+.dn-note.is-collapsed {
+  background: var(--note-hd);
+}
+.dn-collapsed-strip {
+  height: var(--dn-header-h);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 2px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dn-collapsed-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

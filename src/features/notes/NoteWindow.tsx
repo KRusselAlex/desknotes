@@ -72,6 +72,9 @@ function NoteLoadError({ noteId, color }: { noteId: string; color: string }) {
 function LoadedNote({ note }: { note: Note }) {
   const [color, setColor] = useState(note.color);
   const [updatedAt, setUpdatedAt] = useState(note.updatedAt);
+  const [title, setTitle] = useState(note.title);
+  const [pinned, setPinned] = useState(note.window.alwaysOnTop);
+  const [collapsed, setCollapsedView] = useState(note.window.collapsed);
   const [locked, setLocked] = useState(note.editLocked);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [popover, setPopover] = useState<Popover>("none");
@@ -94,6 +97,7 @@ function LoadedNote({ note }: { note: Note }) {
         save: async (content) => {
           const result = await commands.saveNoteContent(note.id, content);
           setUpdatedAt(result.updatedAt);
+          setTitle(result.title);
         },
         onStateChange: (state) => setSaveState(state),
       }),
@@ -202,6 +206,8 @@ function LoadedNote({ note }: { note: Note }) {
           (n) => {
             setColor(n.color);
             setLocked(n.editLocked);
+            setPinned(n.window.alwaysOnTop);
+            setCollapsedView(n.window.collapsed);
           },
           () => undefined,
         );
@@ -266,6 +272,24 @@ function LoadedNote({ note }: { note: Note }) {
     await saveThen(action);
   }
 
+  async function togglePinned() {
+    const next = !pinned;
+    setPinned(next);
+    try {
+      await commands.setAlwaysOnTop(note.id, next);
+    } catch {
+      setPinned(!next);
+    }
+  }
+
+  /** Collapse only after the text is saved; expanding never needs a save. */
+  async function setCollapsed(next: boolean) {
+    setPopover("none");
+    const run = () => commands.setCollapsed(note.id, next).then(() => setCollapsedView(next));
+    if (next) await saveThen(run);
+    else await run();
+  }
+
   const menuItems: MenuItem[] = [
     { id: "new", label: "New note", icon: "plus", shortcut: "Ctrl+N", onSelect: () => void commands.createNote() },
     {
@@ -275,12 +299,66 @@ function LoadedNote({ note }: { note: Note }) {
       onSelect: () => void setEditLock(!locked),
     },
     { id: "dup", label: "Duplicate", icon: "duplicate", onSelect: () => void act(() => commands.duplicateNote(note.id)) },
+    {
+      id: "pin",
+      label: "Always on top",
+      icon: "pin",
+      checkable: true,
+      checked: pinned,
+      onSelect: () => void togglePinned(),
+    },
     { id: "manager", label: "Open manager", icon: "note", separatorBefore: true, onSelect: () => void commands.showManager() },
     { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
     { id: "trash", label: "Move to trash", icon: "trash", danger: true, onSelect: () => void act(() => commands.trashNote(note.id)) },
   ];
 
   if (contentError) return <NoteLoadError noteId={note.id} color={color} />;
+
+  const pinButton = pinned && (
+    <button
+      type="button"
+      className="dn-pin-on"
+      aria-label="Always on top is on"
+      title="Always on top · click to turn off"
+      aria-pressed="true"
+      onClick={() => void togglePinned()}
+    >
+      <Icon name="pin" size={13} />
+    </button>
+  );
+
+  // Design B3: the note rolled up to its header strip. The editor stays mounted
+  // (hidden) so nothing typed can be lost while collapsed.
+  if (collapsed) {
+    return (
+      <div className="dn-note is-collapsed" style={noteStyle(color)}>
+        <div className="dn-collapsed-strip" data-tauri-drag-region onDoubleClick={() => void setCollapsed(false)}>
+          <button
+            type="button"
+            className="dn-tool"
+            aria-label="Expand"
+            aria-expanded="false"
+            title="Expand"
+            onClick={() => void setCollapsed(false)}
+          >
+            <Icon name="chevright" />
+          </button>
+          <span className="dn-collapsed-title" data-tauri-drag-region>
+            {title || "Empty note"}
+          </span>
+          {!narrow && (
+            <span className="dn-note-date" data-tauri-drag-region>
+              {noteDateLabel(updatedAt)}
+            </span>
+          )}
+          {pinButton}
+        </div>
+        <div hidden>
+          <EditorContent editor={editor} />
+        </div>
+      </div>
+    );
+  }
 
   const editing = focused && !locked;
   const showBar = editing && height >= SHORT && editor !== null;
@@ -311,8 +389,32 @@ function LoadedNote({ note }: { note: Note }) {
           </button>
         )}
         <div className="dn-note-controls">
+          <button
+            type="button"
+            className="dn-tool"
+            aria-label="Collapse note"
+            aria-expanded="true"
+            title="Collapse to header"
+            onClick={() => void setCollapsed(true)}
+          >
+            <Icon name="chevdown" />
+          </button>
           {!narrow && !locked && <span className="dn-note-date" data-tauri-drag-region>{noteDateLabel(updatedAt)}</span>}
           <span className="dn-spacer" data-tauri-drag-region />
+          {pinned ? (
+            pinButton
+          ) : (
+            <button
+              type="button"
+              className="dn-tool"
+              aria-label="Always on top"
+              aria-pressed="false"
+              title="Keep above other windows"
+              onClick={() => void togglePinned()}
+            >
+              <Icon name="pin" />
+            </button>
+          )}
           {!locked && (
             <button
               type="button"
