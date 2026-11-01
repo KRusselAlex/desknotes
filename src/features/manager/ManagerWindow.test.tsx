@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NoteSummary } from "../../types/note";
 
@@ -6,7 +6,12 @@ vi.mock("../../ipc/events", () => ({ onNotesChanged: () => Promise.resolve(() =>
 vi.mock("../../ipc/commands", () => ({
   commands: {
     listNotes: vi.fn(),
+    noteCounts: vi.fn(),
+    startupErrors: vi.fn(),
     createNote: vi.fn().mockResolvedValue({}),
+    showNote: vi.fn().mockResolvedValue(undefined),
+    hideNote: vi.fn().mockResolvedValue(undefined),
+    setArchived: vi.fn().mockResolvedValue(undefined),
     restoreNote: vi.fn().mockResolvedValue(undefined),
     purgeNote: vi.fn().mockResolvedValue(undefined),
     trashNote: vi.fn().mockResolvedValue(undefined),
@@ -15,38 +20,56 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 import { commands } from "../../ipc/commands";
-import { ManagerWindow, formatEdited } from "./ManagerWindow";
+import { ManagerWindow, highlight } from "./ManagerWindow";
 
 const note = (over: Partial<NoteSummary> = {}): NoteSummary => ({
   id: "n1",
-  title: "Call the bank",
+  title: "Weekend errands",
   color: "#fff4a3",
   updatedAt: Date.now(),
   archivedAt: null,
   deletedAt: null,
   visible: true,
+  snippet: null,
   ...over,
 });
 
 describe("ManagerWindow", () => {
   beforeEach(() => {
-    vi.mocked(commands.listNotes).mockReset();
+    vi.clearAllMocks();
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, archived: 0, trash: 1 });
+    vi.mocked(commands.startupErrors).mockResolvedValue([]);
   });
 
-  it("lists active notes and searches", async () => {
+  it("lists active notes with counts and shows a note when its row is clicked", async () => {
     vi.mocked(commands.listNotes).mockResolvedValue([note()]);
     render(<ManagerWindow />);
-    expect(await screen.findByText("Call the bank")).toBeInTheDocument();
-    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "bank");
-    await waitFor(() => expect(commands.listNotes).toHaveBeenLastCalledWith("active", "bank"));
+    const row = await screen.findByRole("listitem");
+    expect(within(row).getByText("Weekend errands")).toBeInTheDocument();
+    expect(within(row).getByText(/On desktop/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Active/ })).toHaveTextContent("1");
+    await userEvent.click(row);
+    expect(commands.showNote).toHaveBeenCalledWith("n1");
   });
 
-  it("asks for confirmation before permanent deletion", async () => {
-    vi.mocked(commands.listNotes).mockResolvedValue([note({ deletedAt: 1 })]);
+  it("searches and highlights the match in the snippet", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([note({ snippet: "Pick up the bike before 5" })]);
     render(<ManagerWindow />);
-    await userEvent.click(screen.getByRole("tab", { name: "Trash" }));
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "bike");
+    await waitFor(() => expect(commands.listNotes).toHaveBeenLastCalledWith("active", "bike"));
+    expect(await screen.findByText("bike", { selector: "mark" })).toBeInTheDocument();
+    expect(screen.getByText("1 note in Active")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByRole("searchbox")).toHaveValue("");
+  });
+
+  it("asks for confirmation before permanent deletion and focuses Cancel", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([note({ deletedAt: Date.now() })]);
+    render(<ManagerWindow />);
+    await userEvent.click(screen.getByRole("tab", { name: /Trash/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Delete permanently" }));
     expect(commands.purgeNote).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
 
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(commands.purgeNote).not.toHaveBeenCalled();
@@ -56,15 +79,32 @@ describe("ManagerWindow", () => {
     expect(commands.purgeNote).toHaveBeenCalledWith("n1");
   });
 
-  it("shows errors instead of failing silently", async () => {
+  it("shows an empty state per tab", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    render(<ManagerWindow />);
+    expect(await screen.findByText("No notes yet. Press Ctrl+N to create one.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /Archived/ }));
+    expect(await screen.findByText("Nothing archived.")).toBeInTheDocument();
+  });
+
+  it("shows errors in a banner instead of failing silently", async () => {
     vi.mocked(commands.listNotes).mockRejectedValue(new Error("database is locked"));
     render(<ManagerWindow />);
     expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
   });
 
-  it("formats today as a time and older dates as a date", () => {
-    const now = new Date(2026, 10, 1, 15, 0).getTime();
-    expect(formatEdited(new Date(2026, 10, 1, 9, 5).getTime(), now)).toMatch(/09|9/);
-    expect(formatEdited(new Date(2025, 0, 2).getTime(), now)).toMatch(/2025/);
+  it("groups long lists by date", async () => {
+    const many = Array.from({ length: 14 }, (_, i) => note({ id: `n${i}`, title: `Note ${i}` }));
+    vi.mocked(commands.listNotes).mockResolvedValue(many);
+    render(<ManagerWindow />);
+    expect(await screen.findByText("Today")).toBeInTheDocument();
+  });
+});
+
+describe("highlight", () => {
+  it("marks the first case-insensitive match", () => {
+    const { container } = render(<p>{highlight("Ride the Bike home", "bike")}</p>);
+    expect(container.querySelector("mark")).toHaveTextContent("Bike");
+    expect(container).toHaveTextContent("Ride the Bike home");
   });
 });

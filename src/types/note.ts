@@ -36,6 +36,14 @@ export interface NoteSummary {
   archivedAt: number | null;
   deletedAt: number | null;
   visible: boolean;
+  /** Text around the first match, only when searching. */
+  snippet: string | null;
+}
+
+export interface NoteCounts {
+  active: number;
+  archived: number;
+  trash: number;
 }
 
 export interface SaveResult {

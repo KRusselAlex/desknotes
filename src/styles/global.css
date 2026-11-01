@@ -1,18 +1,4 @@
-:root {
-  --font-ui: system-ui, "Ubuntu", "Cantarell", "Segoe UI", "Noto Sans", sans-serif;
-  --ink: #1f2328;
-  --muted: #59636e;
-  --line: rgba(31, 35, 40, 0.15);
-  --focus: #0b57d0;
-  --danger: #b3261e;
-  --radius: 8px;
-  font-family: var(--font-ui);
-  font-size: 15px;
-  line-height: 1.45;
-  color: var(--ink);
-  -webkit-font-smoothing: antialiased;
-}
-
+/* Base styles shared by every window. Colours and sizes come from tokens.css. */
 *,
 *::before,
 *::after {
@@ -26,6 +12,14 @@ body,
   height: 100%;
 }
 
+body {
+  font-family: var(--dn-font);
+  line-height: var(--dn-leading);
+  -webkit-font-smoothing: antialiased;
+  background: transparent;
+  overflow: hidden;
+}
+
 button,
 input {
   font: inherit;
@@ -36,13 +30,24 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 :focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--dn-focus);
   outline-offset: 2px;
+}
+
+.dn-spacer {
+  flex: 1;
+  align-self: stretch;
 }
 
 .outside-tauri {
   padding: 2rem;
+  font-family: var(--dn-font);
 }
 
 @media (prefers-reduced-motion: reduce) {

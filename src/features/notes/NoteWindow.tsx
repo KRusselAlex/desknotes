@@ -1,54 +1,96 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
+import { noteDateLabel } from "../../app/time";
+import { useWindowSize } from "../../app/useWindowSize";
+import { Icon } from "../../components/Icon";
+import { Menu, type MenuItem } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
 import { onAppWillQuit, onNotesChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import type { Note } from "../../types/note";
-import { COLOR_PRESETS, INK, headerShade } from "../appearance/colors";
+import { headerShade } from "../appearance/colors";
 import { Autosave, type SaveState } from "./autosave";
-import { createExtensions, sanitizeDoc } from "./extensions";
+import { ColorPopover } from "./ColorPopover";
+import { createExtensions, serializeDoc } from "./extensions";
+import { FormatBar } from "./FormatBar";
 import { LinkEditor } from "./LinkEditor";
+import { LinkHint } from "./LinkHint";
 import { isSafeLink } from "./links";
-import { SaveStatus } from "./SaveStatus";
-import { FormatToolbar } from "./Toolbar";
+import { SaveError, SaveIndicator } from "./SaveStatus";
+
+/** Below this width the date hides and the bar keeps only List, B, I, Link. */
+const NARROW = 260;
+/** Below this height the formatting bar does not fit (minimum note is 120). */
+const SHORT = 160;
 
 type Popover = "none" | "color" | "menu" | "link";
 
+function noteStyle(color: string): CSSProperties {
+  return { "--note-bg": color, "--note-hd": headerShade(color) } as CSSProperties;
+}
+
 export function NoteWindow({ noteId }: { noteId: string }) {
   const [note, setNote] = useState<Note | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
-    commands.getNote(noteId).then(setNote, (e: Error) => setLoadError(e.message));
+    commands.getNote(noteId).then(setNote, () => setLoadError(true));
   }, [noteId]);
 
-  if (loadError) {
-    return (
-      <div className="note-load-error" role="alert">
-        <p>This note could not be opened. Its content has not been changed.</p>
-        <p className="detail">{loadError}</p>
-        <button type="button" onClick={() => void commands.showManager()}>
+  if (loadError) return <NoteLoadError noteId={noteId} />;
+  if (!note) return <div className="dn-note" aria-busy="true" style={noteStyle("#fff4a3")} />;
+  return <LoadedNote note={note} />;
+}
+
+/** Design N7: keeps a note look, header still drags and hides. */
+function NoteLoadError({ noteId }: { noteId: string }) {
+  return (
+    <div className="dn-note" style={noteStyle("#efe6d8")}>
+      <header className="dn-note-header" data-tauri-drag-region>
+        <span className="dn-grip" data-tauri-drag-region>
+          <Icon name="grip" size={14} />
+        </span>
+        <span className="dn-spacer" data-tauri-drag-region />
+        <button type="button" className="dn-tool" aria-label="Hide note" onClick={() => void commands.hideNote(noteId)}>
+          <Icon name="close" />
+        </button>
+      </header>
+      <div className="dn-note-failed" role="alert">
+        <span className="dn-failed-icon">
+          <Icon name="alert" size={20} />
+        </span>
+        <div className="dn-failed-title">This note could not be opened.</div>
+        <button type="button" className="dn-pill-ink" onClick={() => void commands.showManager()}>
           Open manager
         </button>
       </div>
-    );
-  }
-  if (!note) return <div className="note-loading" aria-busy="true" />;
-  return <LoadedNote note={note} />;
+    </div>
+  );
 }
 
 function LoadedNote({ note }: { note: Note }) {
   const [color, setColor] = useState(note.color);
+  const [updatedAt, setUpdatedAt] = useState(note.updatedAt);
+  const [locked, setLocked] = useState(note.editLocked);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [popover, setPopover] = useState<Popover>("none");
+  const [focused, setFocused] = useState(false);
+  const [, setTick] = useState(0); // refreshes the relative date chip
+  const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const closing = useRef(false);
+  /** Last content known to be saved (or loaded); avoids writes when nothing changed. */
+  const lastContent = useRef<string | null>(null);
+  const { width, height } = useWindowSize();
+  const narrow = width < NARROW;
 
   const autosave = useMemo(
     () =>
       new Autosave({
         save: async (content) => {
-          await commands.saveNoteContent(note.id, content);
+          const result = await commands.saveNoteContent(note.id, content);
+          setUpdatedAt(result.updatedAt);
         },
         onStateChange: (state) => setSaveState(state),
       }),
@@ -59,8 +101,16 @@ function LoadedNote({ note }: { note: Note }) {
     extensions: createExtensions(),
     content: note.content,
     editable: !note.editLocked,
-    autofocus: note.title === "" ? "end" : false,
-    onUpdate: ({ editor: e }) => autosave.change(JSON.stringify(sanitizeDoc(e.getJSON()))),
+    autofocus: note.title === "" && !note.editLocked ? "end" : false,
+    onCreate: ({ editor: e }) => {
+      lastContent.current = serializeDoc(e.getJSON());
+    },
+    onUpdate: ({ editor: e }) => {
+      const content = serializeDoc(e.getJSON());
+      if (content === lastContent.current) return;
+      lastContent.current = content;
+      autosave.change(content);
+    },
     onBlur: () => void autosave.flush(),
     editorProps: {
       attributes: { "aria-label": "Note text", spellcheck: "true" },
@@ -91,14 +141,12 @@ function LoadedNote({ note }: { note: Note }) {
     await commands.hideNote(note.id);
   }, [autosave, note.id]);
 
-  // Window-manager close (Alt+F4, title bar) goes through the same path.
   useEffect(() => {
     const unlisten = onCloseRequested(() => void hide());
     return () => void unlisten.then((f) => f());
   }, [hide]);
 
-  // Flush when the window loses focus (e.g. clicking Quit in the manager)
-  // and when the app announces it is quitting.
+  // Flush when focus leaves the window and when the app is quitting.
   useEffect(() => {
     const onBlur = () => void autosave.flush();
     window.addEventListener("blur", onBlur);
@@ -109,15 +157,54 @@ function LoadedNote({ note }: { note: Note }) {
     };
   }, [autosave]);
 
-  // Colour changed from another window.
+  // Changes made from another window (colour, lock).
   useEffect(() => {
     const unlisten = onNotesChanged(({ id, kind }) => {
       if (kind !== "content" && (id === null || id === note.id)) {
-        commands.getNote(note.id).then((n) => setColor(n.color), () => undefined);
+        commands.getNote(note.id).then(
+          (n) => {
+            setColor(n.color);
+            setLocked(n.editLocked);
+          },
+          () => undefined,
+        );
       }
     });
     return () => void unlisten.then((f) => f());
   }, [note.id]);
+
+  useEffect(() => {
+    // false: changing editability is not a content change, so do not emit an update.
+    editor?.setEditable(!locked, false);
+  }, [editor, locked]);
+
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Close popovers on outside click or Escape.
+  useEffect(() => {
+    if (popover === "none" || popover === "link") return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest(".dn-popover") && !t.closest("[data-popover-toggle]")) setPopover("none");
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [popover]);
+
+  const closePopover = useCallback(() => {
+    setPopover("none");
+    editor?.commands.focus();
+  }, [editor]);
+
+  async function setEditLock(value: boolean) {
+    if (value) await autosave.flush();
+    await commands.setEditLocked(note.id, value);
+    setLocked(value);
+    if (!value) editor?.commands.focus("end");
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -129,103 +216,125 @@ function LoadedNote({ note }: { note: Note }) {
       } else if (key === "w") {
         e.preventDefault();
         void hide();
-      } else if (key === "k") {
+      } else if (key === "k" && !locked) {
         e.preventDefault();
         setPopover("link");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [hide]);
-
-  async function pickColor(value: string) {
-    setColor(value);
-    setPopover("none");
-    await commands.setNoteColor(note.id, value);
-  }
+  }, [hide, locked]);
 
   async function act(action: () => Promise<unknown>) {
-    setPopover("none");
     await autosave.flush();
     await action();
   }
 
+  const menuItems: MenuItem[] = [
+    { id: "new", label: "New note", icon: "plus", shortcut: "Ctrl+N", onSelect: () => void commands.createNote() },
+    {
+      id: "lock",
+      label: locked ? "Allow editing" : "Lock editing",
+      icon: "editlock",
+      onSelect: () => void setEditLock(!locked),
+    },
+    { id: "dup", label: "Duplicate", icon: "duplicate", onSelect: () => void act(() => commands.duplicateNote(note.id)) },
+    { id: "manager", label: "Open manager", icon: "note", separatorBefore: true, onSelect: () => void commands.showManager() },
+    { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
+    { id: "trash", label: "Move to trash", icon: "trash", danger: true, onSelect: () => void act(() => commands.trashNote(note.id)) },
+  ];
+
+  const editing = focused && !locked;
+  const showBar = editing && height >= SHORT && editor !== null;
+
   return (
     <div
-      className="note"
-      style={{ background: color, color: INK, ["--note-header" as string]: headerShade(color) }}
+      ref={rootRef}
+      className={`dn-note${locked ? " is-readonly" : ""}${editing ? " is-editing" : ""}`}
+      style={noteStyle(color)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!rootRef.current?.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
     >
-      <header className="note-header" data-tauri-drag-region>
-        <span className="grip" aria-hidden="true" data-tauri-drag-region>
-          ⠿
+      <header className="dn-note-header" data-tauri-drag-region>
+        <span className="dn-grip" data-tauri-drag-region>
+          <Icon name="grip" size={14} />
         </span>
-        {editor && <FormatToolbar editor={editor} onLink={() => setPopover("link")} />}
-        <div className="note-actions">
+        {locked && (
           <button
             type="button"
-            className="tool"
-            aria-label="Note colour"
-            aria-expanded={popover === "color"}
-            onClick={() => setPopover(popover === "color" ? "none" : "color")}
+            className="dn-readonly-chip"
+            title="Read-only. Click to allow editing."
+            onClick={() => void setEditLock(false)}
           >
-            🎨
+            <Icon name="editlock" size={13} />
+            Read-only
           </button>
+        )}
+        <div className="dn-note-controls">
+          {!narrow && !locked && <span className="dn-note-date" data-tauri-drag-region>{noteDateLabel(updatedAt)}</span>}
+          <span className="dn-spacer" data-tauri-drag-region />
+          {!locked && (
+            <button
+              type="button"
+              className="dn-tool"
+              aria-label="Colour"
+              title="Colour"
+              aria-expanded={popover === "color"}
+              data-popover-toggle
+              onClick={() => setPopover(popover === "color" ? "none" : "color")}
+            >
+              <Icon name="colour" />
+            </button>
+          )}
           <button
             type="button"
-            className="tool"
-            aria-label="More actions"
+            className="dn-tool"
+            aria-label="More"
+            title="More"
+            aria-haspopup="menu"
             aria-expanded={popover === "menu"}
+            data-popover-toggle
             onClick={() => setPopover(popover === "menu" ? "none" : "menu")}
           >
-            ⋯
+            <Icon name="more" />
           </button>
-          <button type="button" className="tool" aria-label="Hide note" title="Hide note (Ctrl+W)" onClick={() => void hide()}>
-            ✕
+          <button type="button" className="dn-tool" aria-label="Hide note" title="Hide note (Ctrl+W)" onClick={() => void hide()}>
+            <Icon name="close" />
           </button>
         </div>
       </header>
 
       {popover === "color" && (
-        <div className="popover color-grid" role="group" aria-label="Note colour">
-          {COLOR_PRESETS.map((p) => (
-            <button
-              key={p.value}
-              type="button"
-              className="swatch"
-              style={{ background: p.value }}
-              aria-label={p.name}
-              aria-pressed={p.value === color}
-              onClick={() => void pickColor(p.value)}
-            />
-          ))}
-        </div>
+        <ColorPopover
+          current={color}
+          onClose={closePopover}
+          onPick={(value) => {
+            setColor(value);
+            closePopover();
+            void commands.setNoteColor(note.id, value);
+          }}
+        />
       )}
-
-      {popover === "menu" && (
-        <div className="popover menu" role="menu">
-          <button role="menuitem" type="button" onClick={() => void act(commands.createNote)}>
-            New note <kbd>Ctrl+N</kbd>
-          </button>
-          <button role="menuitem" type="button" onClick={() => void act(() => commands.duplicateNote(note.id))}>
-            Duplicate
-          </button>
-          <button role="menuitem" type="button" onClick={() => void act(commands.showManager)}>
-            Open manager
-          </button>
-          <button role="menuitem" type="button" onClick={() => void act(() => commands.setArchived(note.id, true))}>
-            Archive
-          </button>
-          <button role="menuitem" type="button" onClick={() => void act(() => commands.trashNote(note.id))}>
-            Move to trash
-          </button>
-        </div>
-      )}
-
+      {popover === "menu" && <Menu label="Note actions" items={menuItems} onClose={closePopover} className="dn-note-menu" />}
       {popover === "link" && editor && <LinkEditor editor={editor} onClose={() => setPopover("none")} />}
 
-      <EditorContent editor={editor} className="note-body" onClick={() => setPopover((p) => (p === "link" ? p : "none"))} />
+      <div className="dn-note-body" ref={setBodyEl}>
+        <EditorContent editor={editor} />
+        <SaveIndicator state={saveState} editing={editing} />
+      </div>
+      <LinkHint container={bodyEl} />
 
-      <SaveStatus state={saveState} onRetry={() => void autosave.flush()} />
+      {saveState === "error" && <SaveError onRetry={() => void autosave.flush()} />}
+      {showBar && editor && (
+        <FormatBar editor={editor} narrow={narrow} onLink={() => setPopover("link")} />
+      )}
+      {!showBar && saveState !== "error" && (
+        <span className="dn-resize-mark" aria-hidden="true">
+          <Icon name="resize" size={12} />
+        </span>
+      )}
     </div>
   );
 }

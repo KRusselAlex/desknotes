@@ -42,7 +42,34 @@ Common scopes: `core`, `ui`, `shell`, `db`, `docs`, `ci`.
 
 ## Development commands
 
-Commands are documented here as each part of Milestone 1 lands.
+```bash
+npm install                 # frontend dependencies
+npm test                    # frontend tests (Vitest)
+npm run lint                # ESLint
+npm run typecheck           # TypeScript
+cargo test -p desknotes-core                         # core tests, no GUI libraries needed
+cargo clippy -p desknotes-core --all-targets -- -D warnings
+npm run tauri dev           # run the desktop app (needs the Ubuntu packages in README)
+```
+
+### UI preview without the desktop app
+
+`npm run dev`, then open:
+
+- `http://localhost:1420/preview.html?w=manager` — the manager
+- `http://localhost:1420/preview.html?w=note&id=a2` — a note window (resize the
+  browser to 300 × 280 to see the real size)
+- add `&locked=1` (read-only note), `&failsave=1` (saves fail) or `&error=1`
+  (manager startup error)
+
+The preview runs the real React screens with Tauri's official IPC mocks and an
+in-memory fake database (`src/dev/preview.tsx`). It is never part of the app build.
+
+### Design
+
+Visual design comes from the Milestone 1 design export (Claude Design).
+Tokens live in `src/styles/tokens.css` and icons in `src/components/icons.ts`;
+use them instead of new colours or sizes. `docs/ui-design-brief.md` lists the screens and states.
 
 ## Architecture decisions
 

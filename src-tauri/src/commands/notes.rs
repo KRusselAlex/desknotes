@@ -1,5 +1,5 @@
 use desknotes_core::validation::parse_note_id;
-use desknotes_core::{Note, NoteFilter, NoteSummary, SaveResult};
+use desknotes_core::{Note, NoteCounts, NoteFilter, NoteSummary, SaveResult};
 use tauri::{AppHandle, State};
 
 use crate::error::{IpcError, IpcResult};
@@ -13,6 +13,11 @@ pub fn list_notes(
     query: Option<String>,
 ) -> IpcResult<Vec<NoteSummary>> {
     state.with_db(|db| db.list_notes(filter, query.as_deref()))
+}
+
+#[tauri::command]
+pub fn note_counts(state: State<'_, AppState>) -> IpcResult<NoteCounts> {
+    state.with_db(|db| db.count_notes())
 }
 
 #[tauri::command]

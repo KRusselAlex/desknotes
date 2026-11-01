@@ -47,6 +47,16 @@ pub struct NoteSummary {
     pub archived_at: Option<i64>,
     pub deleted_at: Option<i64>,
     pub visible: bool,
+    /// Text around the first match, only when searching.
+    pub snippet: Option<String>,
+}
+
+/// Number of notes in each manager tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct NoteCounts {
+    pub active: i64,
+    pub archived: i64,
+    pub trash: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

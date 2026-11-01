@@ -2,7 +2,7 @@
 // Every function maps 1:1 to a #[tauri::command] in src-tauri/src/commands.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Note, NoteFilter, NoteSummary, SaveResult } from "../types/note";
+import type { Note, NoteCounts, NoteFilter, NoteSummary, SaveResult } from "../types/note";
 
 /** Error shape produced by the Rust side (`IpcError`). */
 export class CommandError extends Error {
@@ -29,6 +29,7 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export const commands = {
   listNotes: (filter: NoteFilter, query: string) =>
     call<NoteSummary[]>("list_notes", { filter, query }),
+  noteCounts: () => call<NoteCounts>("note_counts"),
   getNote: (id: string) => call<Note>("get_note", { id }),
   createNote: () => call<Note>("create_note"),
   /** `content` is the serialized editor document; Rust validates it. */

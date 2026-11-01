@@ -1,6 +1,7 @@
 import type { Extensions, JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
+import { Placeholder } from "@tiptap/extensions";
 import { isSafeLink } from "./links";
 
 /**
@@ -10,6 +11,8 @@ import { isSafeLink } from "./links";
 export function createExtensions(): Extensions {
   return [
     StarterKit.configure({
+      // Would append an empty paragraph on first edit and mark untouched notes as changed.
+      trailingNode: false,
       link: {
         openOnClick: false, // links open with Ctrl+click, handled in NoteEditor
         autolink: true,
@@ -20,6 +23,7 @@ export function createExtensions(): Extensions {
     }),
     TaskList,
     TaskItem.configure({ nested: true }),
+    Placeholder.configure({ placeholder: "Write something…" }),
   ];
 }
 
@@ -37,4 +41,9 @@ export function sanitizeDoc(node: JSONContent): JSONContent {
   }
   if (node.content) copy.content = node.content.map(sanitizeDoc);
   return copy;
+}
+
+/** Serialized form used for saving and for detecting real changes. */
+export function serializeDoc(doc: JSONContent): string {
+  return JSON.stringify(sanitizeDoc(doc));
 }

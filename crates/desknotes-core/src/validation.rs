@@ -219,6 +219,44 @@ pub fn derive_title(doc: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// A short excerpt of the document around the first case-insensitive match
+/// of `needle` (already lower-cased), or `None` if it does not occur.
+pub fn derive_snippet(doc: &Value, needle: &str) -> Option<String> {
+    const BEFORE: usize = 24;
+    const AFTER: usize = 60;
+    if needle.is_empty() {
+        return None;
+    }
+    let text: Vec<char> = block_texts(doc)
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .collect();
+    let needle: Vec<char> = needle.chars().collect();
+    let lower = |c: &char| c.to_lowercase().collect::<String>();
+    let start = (0..text.len()).find(|&i| {
+        i + needle.len() <= text.len()
+            && text[i..i + needle.len()]
+                .iter()
+                .zip(&needle)
+                .all(|(a, b)| lower(a) == b.to_string())
+    })?;
+    let from = start.saturating_sub(BEFORE);
+    let to = (start + needle.len() + AFTER).min(text.len());
+    let mut out = String::new();
+    if from > 0 {
+        out.push('…');
+    }
+    let excerpt: String = text[from..to].iter().collect();
+    out.push_str(excerpt.trim());
+    if to < text.len() {
+        out.push('…');
+    }
+    Some(out)
+}
+
 /// Lower-cased plain text used for search. Derived from the document on every save.
 pub fn derive_search_text(doc: &Value) -> String {
     block_texts(doc).join("\n").to_lowercase()
@@ -307,6 +345,27 @@ mod tests {
         assert_eq!(parse_note_id(&id.to_uppercase()).unwrap(), id);
         assert!(parse_note_id("../../etc").is_err());
         assert!(parse_note_id("note-1").is_err());
+    }
+
+    #[test]
+    fn snippet_shows_text_around_the_first_match() {
+        let doc = json!({"type":"doc","content":[
+            {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Bike repair"}]},
+            {"type":"paragraph","content":[{"type":"text","text":"Booked for Saturday morning at BikeWorks, bring the old chain and the receipt from last year please."}]}
+        ]});
+        assert_eq!(
+            derive_snippet(&doc, "bike").unwrap(),
+            "Bike repair Booked for Saturday morning at BikeWorks, bring the…"
+        );
+        let later = derive_snippet(&doc, "receipt").unwrap();
+        assert!(
+            later.starts_with('…') && later.contains("receipt"),
+            "{later}"
+        );
+        assert_eq!(derive_snippet(&doc, "absent"), None);
+        assert_eq!(derive_snippet(&doc, ""), None);
+        let accents = json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Réunion ÉCOLE"}]}]});
+        assert_eq!(derive_snippet(&accents, "école").unwrap(), "Réunion ÉCOLE");
     }
 
     #[test]

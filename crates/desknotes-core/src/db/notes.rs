@@ -9,7 +9,7 @@ use crate::geometry::enforce_min_size;
 use crate::model::*;
 use crate::now_ms;
 use crate::validation::{
-    derive_search_text, derive_title, empty_doc, parse_content, validate_color,
+    derive_search_text, derive_snippet, derive_title, empty_doc, parse_content, validate_color,
 };
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
@@ -139,7 +139,7 @@ impl Database {
     }
 
     /// Notes for the manager list, newest first. `query` matches anywhere in
-    /// the note text, case-insensitively.
+    /// the note text, case-insensitively; matching rows carry a snippet.
     pub fn list_notes(
         &self,
         filter: NoteFilter,
@@ -152,24 +152,60 @@ impl Database {
         };
         let needle = query.map(|q| q.trim().to_lowercase()).unwrap_or_default();
         let sql = format!(
-            "SELECT n.id, n.title, n.color, n.updated_at, n.archived_at, n.deleted_at, w.visible
+            "SELECT n.id, n.title, n.color, n.updated_at, n.archived_at, n.deleted_at, w.visible,
+                    CASE WHEN ?1 = '' THEN NULL ELSE n.content_json END
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              WHERE {condition} AND (?1 = '' OR instr(n.search_text, ?1) > 0)
              ORDER BY n.updated_at DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([needle], |r| {
-            Ok(NoteSummary {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                color: r.get(2)?,
-                updated_at: r.get(3)?,
-                archived_at: r.get(4)?,
-                deleted_at: r.get(5)?,
-                visible: r.get(6)?,
-            })
+        let rows = stmt.query_map([&needle], |r| {
+            let content: Option<String> = r.get(7)?;
+            Ok((
+                NoteSummary {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    color: r.get(2)?,
+                    updated_at: r.get(3)?,
+                    archived_at: r.get(4)?,
+                    deleted_at: r.get(5)?,
+                    visible: r.get(6)?,
+                    snippet: None,
+                },
+                content,
+            ))
         })?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let mut out = Vec::new();
+        for row in rows {
+            let (mut summary, content) = row?;
+            if let Some(raw) = content {
+                // A note whose stored JSON is unreadable is still listed, just without a snippet.
+                if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    summary.snippet = derive_snippet(&doc, &needle);
+                }
+            }
+            out.push(summary);
+        }
+        Ok(out)
+    }
+
+    /// Counts for the manager tabs.
+    pub fn count_notes(&self) -> CoreResult<NoteCounts> {
+        Ok(self.conn.query_row(
+            "SELECT
+                coalesce(sum(archived_at IS NULL AND deleted_at IS NULL), 0),
+                coalesce(sum(archived_at IS NOT NULL AND deleted_at IS NULL), 0),
+                coalesce(sum(deleted_at IS NOT NULL), 0)
+             FROM notes",
+            [],
+            |r| {
+                Ok(NoteCounts {
+                    active: r.get(0)?,
+                    archived: r.get(1)?,
+                    trash: r.get(2)?,
+                })
+            },
+        )?)
     }
 
     /// Validate and store new content. `raw` is the editor's JSON document.
@@ -409,6 +445,32 @@ mod tests {
         assert_eq!(hits("_c"), vec![b.clone()]);
         assert_eq!(hits("  ").len(), 2);
         assert!(hits("absent").is_empty());
+    }
+
+    #[test]
+    fn search_rows_carry_a_snippet_and_counts_follow_tabs() {
+        let db = db();
+        let a = db.create_note(None).unwrap().id;
+        let b = db.create_note(None).unwrap().id;
+        let c = db.create_note(None).unwrap().id;
+        db.save_content(&a, &doc("Pick up the Bike before 5"))
+            .unwrap();
+        db.set_archived(&b, true).unwrap();
+        db.trash_note(&c).unwrap();
+
+        let hits = db.list_notes(NoteFilter::Active, Some("bike")).unwrap();
+        assert_eq!(
+            hits[0].snippet.as_deref(),
+            Some("Pick up the Bike before 5")
+        );
+        assert!(
+            db.list_notes(NoteFilter::Active, None).unwrap()[0]
+                .snippet
+                .is_none()
+        );
+
+        let counts = db.count_notes().unwrap();
+        assert_eq!((counts.active, counts.archived, counts.trash), (1, 1, 1));
     }
 
     #[test]

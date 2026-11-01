@@ -90,3 +90,14 @@ describe("editor document format", () => {
     editor.destroy();
   });
 });
+
+describe("no spurious changes", () => {
+  it("focusing and clicking an untouched note does not change its document", () => {
+    const editor = editorWith(fixture);
+    const before = JSON.stringify(editor.getJSON());
+    editor.commands.focus("end");
+    editor.commands.setTextSelection(1);
+    expect(JSON.stringify(editor.getJSON())).toBe(before);
+    editor.destroy();
+  });
+});

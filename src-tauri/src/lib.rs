@@ -29,6 +29,7 @@ pub fn run() {
         .on_window_event(windows::on_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::notes::list_notes,
+            commands::notes::note_counts,
             commands::notes::get_note,
             commands::notes::create_note,
             commands::notes::save_note_content,

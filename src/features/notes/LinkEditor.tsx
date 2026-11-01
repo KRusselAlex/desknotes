@@ -1,16 +1,17 @@
 import { useState, type KeyboardEvent } from "react";
 import type { Editor } from "@tiptap/react";
+import { Icon } from "../../components/Icon";
 import { normalizeLink } from "./links";
 
-/** Small inline field to add, change or remove the link on the selection. */
+/** Inline strip under the header to add, change or remove a link (design N10). */
 export function LinkEditor({ editor, onClose }: { editor: Editor; onClose: () => void }) {
-  const [value, setValue] = useState<string>(() => editor.getAttributes("link").href ?? "");
+  const existing: string = editor.getAttributes("link").href ?? "";
+  const [value, setValue] = useState(existing);
   const [invalid, setInvalid] = useState(false);
 
   function apply() {
     if (!value.trim()) {
-      editor.chain().focus().extendMarkRange("link").unsetLink().run();
-      onClose();
+      remove();
       return;
     }
     const href = normalizeLink(value);
@@ -19,6 +20,11 @@ export function LinkEditor({ editor, onClose }: { editor: Editor; onClose: () =>
       return;
     }
     editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+    onClose();
+  }
+
+  function remove() {
+    editor.chain().focus().extendMarkRange("link").unsetLink().run();
     onClose();
   }
 
@@ -34,20 +40,39 @@ export function LinkEditor({ editor, onClose }: { editor: Editor; onClose: () =>
   }
 
   return (
-    <div className="link-editor">
-      <input
-        autoFocus
-        aria-label="Link address"
-        aria-invalid={invalid}
-        placeholder="https://… (empty removes the link)"
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value);
-          setInvalid(false);
-        }}
-        onKeyDown={onKeyDown}
-      />
-      {invalid && <span role="alert">Only web and email links are allowed.</span>}
+    <div className="dn-link-editor">
+      <div className="dn-link-row">
+        <label className={`dn-link-field${invalid ? " is-invalid" : ""}`}>
+          <Icon name="link" size={14} />
+          <input
+            autoFocus
+            aria-label="Link address"
+            aria-invalid={invalid}
+            aria-describedby={invalid ? "link-error" : undefined}
+            placeholder="https://…"
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setInvalid(false);
+            }}
+            onKeyDown={onKeyDown}
+          />
+        </label>
+        <button type="button" className="dn-round dn-round-ink" aria-label="Apply link" onClick={apply}>
+          <Icon name="check" size={15} stroke={2.75} />
+        </button>
+        {existing && (
+          <button type="button" className="dn-round" aria-label="Remove link" onClick={remove}>
+            <Icon name="trash" size={15} />
+          </button>
+        )}
+      </div>
+      {invalid && (
+        <div id="link-error" role="alert" className="dn-link-error">
+          <Icon name="alert" size={13} />
+          Use a web (https://…) or e-mail address.
+        </div>
+      )}
     </div>
   );
 }
