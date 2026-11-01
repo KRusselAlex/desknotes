@@ -33,15 +33,21 @@ the `backups/` folder next to it.
 
 ## Installing (for users)
 
-No release is published yet; packages arrive with Milestone 2. The plan:
+No release has been published yet. When it is, download `DeskNotes_<version>_amd64.deb`
+from the [releases page](https://github.com/KRusselAlex/desknotes/releases) and run:
 
-- **`.deb` package (Ubuntu, Debian):** install with
-  `sudo apt install ./DeskNotes_<version>_amd64.deb`. The package lists the libraries
-  it needs (WebKitGTK, GTK) and `apt` installs any that are missing automatically.
-  On a standard Ubuntu desktop they are usually already present.
-- **AppImage (most Linux distributions):** one file that carries its own libraries.
-  Make it executable and run it; nothing else to install.
-- Windows and macOS installers will follow once those platforms are built and tested.
+```bash
+sudo apt install ./DeskNotes_<version>_amd64.deb
+```
+
+- DeskNotes itself is about **10 MB** installed. It uses WebKitGTK and GTK, which a
+  normal Ubuntu desktop already has; on a minimal system `apt` installs them for you.
+- Start it from the applications menu. Remove it with `sudo apt remove desk-notes`;
+  your notes stay in `~/.local/share/io.github.krusselalex.desknotes/`.
+- **Other Linux distributions:** download `DeskNotes_<version>_amd64.AppImage` (about
+  80 MB, it carries its own WebKitGTK), make it executable and run it. On Ubuntu 22.04
+  and later AppImages need `sudo apt install libfuse2t64` first.
+- Windows and macOS packages will follow once those platforms are built and tested.
 
 Users never need Rust, Node.js or the `-dev` packages below: those are only for
 building DeskNotes from source.

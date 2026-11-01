@@ -47,6 +47,35 @@ archived and trashed ones and window state), safety copy before restore, validat
 every field (format, version, ids, duplicates, content allowlist and links, colours,
 numbers), damaged notes reported on export; 7 UI tests for the Backup pane.
 
-**Not yet verified in the real app:** the native save and open dialogs and the full
-restore with windows reopening. Simulated input stopped reaching the app during this
-session, so this needs a check by hand (steps in the pull request).
+**Checked by the owner in the real app:** export through the save dialog, restore through
+the open dialog and confirmation, notes replaced and reopened (2026-11-01).
+
+## .deb package (DES-17) — 2026-11-01
+
+Built with `npm run tauri build -- --bundles deb` (release profile, LTO, stripped).
+
+| Check | Result |
+|---|---|
+| Package | `desk-notes` 0.1.0, 4.7 MB file, 10.3 MB installed; Maintainer, Homepage, Section set; license in `/usr/share/doc/desk-notes/copyright` |
+| Depends | `libwebkit2gtk-4.1-0`, `libgtk-3-0` |
+| This Ubuntu desktop (simulated) | Installs only DeskNotes: 0 extra packages |
+| Bare Ubuntu 24.04 container | apt pulls 277 packages (131 MB download, the GTK/WebKit stack); no missing library (`ldd`) |
+| Start in the container | Runs under a virtual display (still running after 10 s) |
+| Desktop entry | `Name=DeskNotes`, `Exec=desknotes`, `Icon=desknotes`, menu category Office |
+| Uninstall | `apt remove desk-notes` removes the binary; notes are kept |
+
+Not checked: installing the package on the owner's own desktop (needs sudo).
+
+## AppImage built in CI (DES-17) — 2026-11-01
+
+Built by the **Packages** workflow on GitHub's runner (pull request #6); checksums in
+`SHA256SUMS` verified after download.
+
+| Container (Ubuntu 24.04, Xvfb) | Result |
+|---|---|
+| Bare, nothing installed | Does not start: `libfribidi.so.0` missing (AppImages expect basic desktop libraries) |
+| GTK only | Does not start: `libEGL.so.1` missing (graphics drivers are never bundled) |
+| GTK + EGL/GL graphics libraries, **no WebKitGTK** | Starts and keeps running (WebKitGTK comes from inside the AppImage) |
+
+Size: AppImage 83 MB (it carries WebKitGTK), `.deb` 4.7 MB. On Ubuntu 22.04 and later,
+running an AppImage needs `libfuse2t64`, or `--appimage-extract-and-run`.
