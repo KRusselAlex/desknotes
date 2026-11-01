@@ -41,4 +41,5 @@ Real-app checks on Ubuntu: see the `desknotes-verify-ubuntu` skill and `scripts/
 ## Known platform facts (verified 2026-11-01, Ubuntu 24.04 GNOME Wayland)
 - Windows run through XWayland (`GDK_BACKEND=x11`, ADR-0002); positions and sizes restore.
 - Note windows must be created hidden and then shown, or Mutter adds 37 px to their height.
-- Each window costs one WebKit web process (~80 MiB); see Jira DES-24.
+- Note windows share the manager's WebKit web process (ADR-0006, ~20 MiB per note);
+  the manager must exist before notes open and must never be destroyed.

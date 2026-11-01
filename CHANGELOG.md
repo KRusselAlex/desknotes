@@ -6,6 +6,9 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Note windows share one WebKit process on Linux: about 70 % less memory with many notes.
+
 ### Fixed
 - Notes no longer grow 37 px taller on every restart (Ubuntu/XWayland).
 - Opening or focusing a note no longer marks it as edited.

@@ -693,6 +693,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "thiserror 2.0.21",
+ "webkit2gtk",
 ]
 
 [[package]]
