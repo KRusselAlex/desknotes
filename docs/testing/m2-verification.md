@@ -80,3 +80,22 @@ Built by the **Packages** workflow on GitHub's runner (pull request #6); checksu
 
 Size: AppImage 83 MB (it carries WebKitGTK), `.deb` 4.7 MB. On Ubuntu 22.04 and later,
 running an AppImage needs `libfuse2t64`, or `--appimage-extract-and-run`.
+
+## Tray icon, Hide all, Show hidden notes — 2026-11-01
+
+Driven through the tray's D-Bus menu (`scripts/verify/tray.py`, the same interface GNOME
+Shell's AppIndicators extension uses), debug build, scratch data.
+
+| Action | Result |
+|---|---|
+| Tray registered | `org/ayatana/NotificationItem/tray_icon_tray_app_main` owned by DeskNotes; items New note, Hide all notes, Show hidden notes, Open manager, Settings…, Quit DeskNotes |
+| New note (twice) | 2 note windows, both visible in the database |
+| Hide all notes | 0 note windows; both hidden in the database; both ids remembered |
+| Show hidden notes | 2 note windows again; both visible |
+| Quit DeskNotes | Process exits |
+
+Also checked with the installed release build (scratch data): clicks in the manager work,
+"New note" works, and ⋯ → Quit DeskNotes exits immediately.
+
+Not checked: the icon's look in the top bar (needs a person), and the "no tray" fallback
+(Hide all opens the manager) in a desktop without AppIndicator support.
