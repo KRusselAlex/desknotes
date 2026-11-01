@@ -27,7 +27,24 @@ application-data directory (on Linux: `~/.local/share/io.github.krusselalex.desk
 DeskNotes makes no network requests. Before a database upgrade, a copy is saved in
 the `backups/` folder next to it.
 
+## Installing (for users)
+
+No release is published yet; packages arrive with Milestone 2. The plan:
+
+- **`.deb` package (Ubuntu, Debian):** install with
+  `sudo apt install ./DeskNotes_<version>_amd64.deb`. The package lists the libraries
+  it needs (WebKitGTK, GTK) and `apt` installs any that are missing automatically.
+  On a standard Ubuntu desktop they are usually already present.
+- **AppImage (most Linux distributions):** one file that carries its own libraries.
+  Make it executable and run it; nothing else to install.
+- Windows and macOS installers will follow once those platforms are built and tested.
+
+Users never need Rust, Node.js or the `-dev` packages below: those are only for
+building DeskNotes from source.
+
 ## Development setup (Ubuntu 24.04)
+
+These packages are needed only to **build** DeskNotes:
 
 ```bash
 sudo apt update
