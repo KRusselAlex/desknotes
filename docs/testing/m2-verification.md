@@ -139,3 +139,30 @@ Release build with the DES-25 fix, isolated data, input simulated with `scripts/
 
 Decision recorded: checklist boxes cannot be ticked while a note is locked (the lock means
 no change at all, as the owner asked: "fully frozen").
+
+## Spike: floating controls and background opacity (DES-21) — 2026-11-01
+
+**Floating controls: not needed.** The owner's Note Window design keeps every control
+inside the note's coloured area ("no transparent window margin is needed"), which is how
+the app is built. The click-through question for a transparent strip around the note
+therefore no longer applies and was not tested.
+
+**Background opacity: works on Ubuntu 24.04 GNOME (XWayland).** Tested with a throwaway
+build (branch `spike/des-21-opacity`, not merged): note windows created with
+`transparent(true)` and the note background drawn at 55 % opacity, text fully opaque.
+
+| Check | Result |
+|---|---|
+| Window visual | Note window gets a 32-bit ARGB visual (`xwininfo`: Depth 32); the manager stays 24-bit |
+| Shared web process (ADR-0006) | Still one WebKit web process with a transparent note open |
+| Hidden-then-shown creation | Note opened at exactly 300 × 280 (no 37 px growth) |
+| Saving | Typed text saved as usual |
+| On screen | **Owner confirmed**: the window behind shows through the note body, and the text stays readable |
+
+Not checked: desktops without a compositor (there, transparency is unavailable and the note
+must look right at 100 %, as the design brief says); per-pixel capture of the composited
+screen (XWayland refuses root captures and GNOME restricts its screenshot service).
+
+Outcome for DES-19 (per-note background opacity): feasible. Make only the background
+translucent, keep text and controls opaque, set a minimum opacity that keeps text readable,
+and create a note window transparent only when its opacity is below 100 %.
