@@ -311,7 +311,14 @@ pub fn set_collapsed(
         db.get_note(&id)
     })?;
     if let Some(window) = app.get_webview_window(&windows::note_label(&id)) {
-        windows::apply_collapsed(&window, collapsed, note.window.width, note.window.height)?;
+        let min = state.with_db(|db| db.min_note_size())?;
+        windows::apply_collapsed(
+            &window,
+            collapsed,
+            note.window.width,
+            note.window.height,
+            min,
+        )?;
     }
     emit_changed(&app, Some(&id), "other");
     Ok(())

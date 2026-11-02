@@ -167,6 +167,36 @@ Outcome for DES-19 (per-note background opacity): feasible. Make only the backgr
 translucent, keep text and controls opaque, set a minimum opacity that keeps text readable,
 and create a note window transparent only when its opacity is below 100 %.
 
+## New .deb from main (69e00dd) — 2026-11-02
+
+Checked on scratch data before handing it over: tray menu with its six items, Hide all /
+Show hidden (database matches) and Quit work; a new note opens and saves. **Confirmed by the
+owner** after installing it on their desktop: a link pasted from a web page now saves
+(DES-25). The package still says version 0.1.0; versioning is part of DES-22.
+
+## Minimum note size (DES-26, design S2) — 2026-11-02
+
+Release build, isolated data. Setting range: 180–600 × 120–600 px (180 × 120 is the floor
+the note layout needs and the design's default).
+
+| Check | Result |
+|---|---|
+| Settings → General | Row "Minimum note size 180 × 120 px" as in the design (light and dark checked in the preview) |
+| Type 350 in the width field, Enter | Saved as 350 × 120; the open 300 px note grows to 350 on screen and its size is saved |
+| Resize that note to 200 × 150 | Stops at 350 wide; the 150 height is allowed |
+| Type 900 | Banner gives the reason, the field returns to 350, the saved value is unchanged |
+| Restart | Setting kept; the note reopens at 350 × 150 |
+| Show a hidden 300 px note | Opens at 350 × 280, size saved |
+| Collapse, try to shrink, expand | Strip is 350 × 32 and cannot shrink; expands back to 350 × 150 |
+| After review fixes: two hidden 300 × 280 notes, minimum 400 × 300, Show hidden notes | Both open at 400 × 300 and that size is saved; the same after a restart |
+
+Raising the minimum enlarges smaller notes (GTK cannot keep a window below its minimum);
+lowering it later does not shrink them back.
+
+Test-tool notes: GNOME does not move keyboard focus to an existing window on simulated
+clicks, so typing went to the focused note until the Settings window was opened anew.
+`scripts/verify/x.py list` lists windows titled "DeskNotes" only, not "Settings".
+
 ## Show / hide all shortcut (DES-27) — 2026-11-02
 
 **Platform facts (Ubuntu 24.04, GNOME Shell 46.0, xdg-desktop-portal-gnome 46.2):**

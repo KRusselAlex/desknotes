@@ -73,6 +73,7 @@ pub fn run() {
             commands::settings::get_toggle_shortcut,
             commands::settings::set_toggle_shortcut,
             commands::settings::remove_toggle_shortcut,
+            commands::settings::set_min_note_size,
             commands::settings::open_data_folder,
             commands::backup::export_backup,
             commands::backup::choose_backup,
