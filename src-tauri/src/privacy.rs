@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use desknotes_core::now_ms;
 use serde::Serialize;
@@ -107,10 +107,75 @@ pub fn spawn_lock(app: &AppHandle) {
 /// already on and does nothing.
 static AUTO_LOCK: Mutex<()> = Mutex::new(());
 
-/// Whether an automatic trigger should lock: a PIN is set and the lock is not
-/// already in effect.
-pub fn auto_lock_needed(pin_set: bool, locked: bool) -> bool {
-    pin_set && !locked
+/// Used when the lock-after setting cannot be read (core default).
+const DEFAULT_LOCK_AFTER_MINUTES: u32 = 5;
+
+/// What the database said about the lock; `None` where it could not be read.
+struct LockInputs {
+    pin_set: Option<bool>,
+    locked: bool,
+    minutes: Option<u32>,
+}
+
+/// Whether an automatic trigger should lock. Fails safe: when it is unknown
+/// whether a PIN is set, lock anyway (`lock` checks again and reports its own
+/// error) rather than leave private notes readable.
+pub fn auto_lock_needed(pin_set: Option<bool>, locked: bool) -> bool {
+    pin_set.unwrap_or(true) && !locked
+}
+
+/// Whether the inactivity check should lock now. Unknown PIN state locks
+/// (see [`auto_lock_needed`]); an unreadable setting uses the default period.
+pub fn should_lock_for_inactivity(
+    pin_set: Option<bool>,
+    locked: bool,
+    minutes: Option<u32>,
+    now_ms: i64,
+    last_ms: i64,
+) -> bool {
+    auto_lock_needed(pin_set, locked)
+        && inactive_long_enough(
+            now_ms,
+            last_ms,
+            minutes.unwrap_or(DEFAULT_LOCK_AFTER_MINUTES),
+        )
+}
+
+/// Read what the automatic triggers need. A failure is logged once (no note
+/// text or secrets in it) and the unknowns stay `None`.
+fn read_lock_inputs(state: &AppState) -> LockInputs {
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    let read = state.with_db(|db| {
+        Ok(LockInputs {
+            pin_set: db.pin_is_set().ok(),
+            locked: db.privacy_locked(),
+            minutes: db.lock_after_minutes().ok(),
+        })
+    });
+    match read {
+        Ok(inputs) => {
+            if inputs.pin_set.is_none() || inputs.minutes.is_none() {
+                log_unreadable_once(&LOGGED, "a lock setting could not be read");
+            }
+            inputs
+        }
+        Err(e) => {
+            log_unreadable_once(&LOGGED, &e.message);
+            LockInputs {
+                pin_set: None,
+                locked: false,
+                minutes: None,
+            }
+        }
+    }
+}
+
+fn log_unreadable_once(logged: &AtomicBool, why: &str) {
+    if !logged.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "DeskNotes: automatic lock is locking anyway because the settings are unreadable: {why}"
+        );
+    }
 }
 
 /// Lock because of sleep, a screen lock or inactivity. Blocking (waits for the
@@ -118,11 +183,8 @@ pub fn auto_lock_needed(pin_set: bool, locked: bool) -> bool {
 /// Returns false when locking failed; the manager is told why.
 pub fn lock_automatically(app: &AppHandle) -> bool {
     let _one_at_a_time = AUTO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let state = app.state::<AppState>();
-    let needed = state
-        .with_db(|db| Ok(auto_lock_needed(db.pin_is_set()?, db.privacy_locked())))
-        .unwrap_or(false);
-    if !needed {
+    let inputs = read_lock_inputs(&app.state::<AppState>());
+    if !auto_lock_needed(inputs.pin_set, inputs.locked) {
         return true;
     }
     match lock(app) {
@@ -142,16 +204,16 @@ pub fn lock_automatically(app: &AppHandle) -> bool {
 /// window has reported input for the chosen number of minutes.
 pub fn lock_if_inactive(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let minutes = state.with_db(|db| {
-        Ok(if auto_lock_needed(db.pin_is_set()?, db.privacy_locked()) {
-            Some(db.lock_after_minutes()?)
-        } else {
-            None
-        })
-    });
-    let Ok(Some(minutes)) = minutes else { return };
+    let inputs = read_lock_inputs(&state);
     let last = state.last_activity_ms.load(Ordering::Relaxed);
-    if inactive_long_enough(now_ms(), last, minutes) && !lock_automatically(app) {
+    if should_lock_for_inactivity(
+        inputs.pin_set,
+        inputs.locked,
+        inputs.minutes,
+        now_ms(),
+        last,
+    ) && !lock_automatically(app)
+    {
         // Do not report the same failure every check: try again after a full period.
         state.touch_activity();
     }
@@ -201,10 +263,69 @@ mod tests {
 
     #[test]
     fn automatic_locks_need_a_pin_and_an_unlocked_state() {
-        assert!(auto_lock_needed(true, false));
-        assert!(!auto_lock_needed(false, false), "no PIN, nothing to lock");
-        assert!(!auto_lock_needed(true, true), "already locked");
-        assert!(!auto_lock_needed(false, true));
+        assert!(auto_lock_needed(Some(true), false));
+        assert!(
+            !auto_lock_needed(Some(false), false),
+            "no PIN, nothing to lock"
+        );
+        assert!(!auto_lock_needed(Some(true), true), "already locked");
+        assert!(!auto_lock_needed(Some(false), true));
+    }
+
+    #[test]
+    fn an_unreadable_pin_state_locks_instead_of_giving_up() {
+        assert!(auto_lock_needed(None, false));
+        assert!(!auto_lock_needed(None, true), "already locked");
+    }
+
+    #[test]
+    fn inactivity_locks_with_the_default_period_when_the_setting_is_unreadable() {
+        let last = 1_000_000;
+        let five = 5 * 60_000;
+        // Unknown PIN state and unknown period: lock once 5 minutes have passed.
+        assert!(!should_lock_for_inactivity(
+            None,
+            false,
+            None,
+            last + five - 1,
+            last
+        ));
+        assert!(should_lock_for_inactivity(
+            None,
+            false,
+            None,
+            last + five,
+            last
+        ));
+        // Known values still decide as before.
+        assert!(!should_lock_for_inactivity(
+            Some(false),
+            false,
+            Some(1),
+            last + five,
+            last
+        ));
+        assert!(!should_lock_for_inactivity(
+            Some(true),
+            true,
+            Some(1),
+            last + five,
+            last
+        ));
+        assert!(should_lock_for_inactivity(
+            Some(true),
+            false,
+            Some(1),
+            last + 60_000,
+            last
+        ));
+        assert!(!should_lock_for_inactivity(
+            Some(true),
+            false,
+            Some(10),
+            last + five,
+            last
+        ));
     }
 
     #[test]
