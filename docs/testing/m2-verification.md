@@ -187,8 +187,10 @@ DeskNotes (single instance). Release build, isolated data:
 | DeskNotes not running | It starts DeskNotes |
 | No notes on screen and none remembered (the manager is then on screen) | Manager stays; no error |
 
-Not checked: a real key press through a GNOME custom shortcut (needs a change to the
-owner's keyboard settings).
+**Real key press, confirmed by the owner (2026-11-02):** they added a GNOME custom shortcut
+by hand (Ctrl+Alt+N running the release build with `--toggle-notes`); pressing it hides and
+shows their notes. From a terminal, the same command started DeskNotes, then hid and showed
+the note.
 
 **Part 2, setting up the GNOME shortcut (backend only, no UI yet):** module
 `src-tauri/src/platform/gnome_shortcut.rs` and commands `get_toggle_shortcut`,
@@ -203,5 +205,5 @@ against a **scratch keyfile backend** (`GSETTINGS_BACKEND=keyfile`, scratch
 | Remove | Only DeskNotes' entry goes; the other shortcut keeps its name, key and place |
 | The owner's own GNOME settings | `dconf dump` of media-keys identical before and after |
 
-Not checked: a real key press (needs the owner's consent to add the shortcut to their
-desktop, which the Settings dialog will ask for once it is designed).
+Not checked yet: DeskNotes adding the shortcut itself on a real desktop (waits for the
+Settings dialog design; the owner's hand-made shortcut shows the key press works).
