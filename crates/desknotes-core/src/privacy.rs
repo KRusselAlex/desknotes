@@ -42,14 +42,15 @@ fn bad_pin() -> CoreError {
 /// Accepts exactly six ASCII digits that are not all equal and not an ascending or
 /// descending run (each digit the previous one plus or minus one).
 pub fn validate_new_pin(pin: &str) -> CoreResult<()> {
-    let digits: Vec<i8> = pin.bytes().map(|b| b as i8 - b'0' as i8).collect();
+    // Check length and character class first, so arithmetic only sees ASCII digits.
     if pin.len() != PIN_DIGITS || !pin.bytes().all(|b| b.is_ascii_digit()) {
         return Err(bad_pin());
     }
+    let digits: Vec<u8> = pin.bytes().map(|b| b - b'0').collect();
     if digits.windows(2).all(|w| w[1] == w[0]) {
         return Err(bad_pin());
     }
-    if digits.windows(2).all(|w| w[1] - w[0] == 1) || digits.windows(2).all(|w| w[0] - w[1] == 1) {
+    if digits.windows(2).all(|w| w[1] == w[0] + 1) || digits.windows(2).all(|w| w[0] == w[1] + 1) {
         return Err(bad_pin());
     }
     Ok(())
@@ -166,7 +167,19 @@ mod tests {
     #[test]
     fn refuses_weak_or_malformed_pins() {
         for pin in [
-            "12345", "1234567", "12a456", "000000", "123456", "654321", "345678",
+            "12345",
+            "1234567",
+            "12a456",
+            "000000",
+            "123456",
+            "654321",
+            "345678",
+            // Non-ASCII input must be refused, never panic.
+            "12€456",
+            "１２３４５６",
+            "12345€",
+            "€€€€€€",
+            "",
         ] {
             let err = validate_new_pin(pin).expect_err(pin);
             assert_eq!(err.code(), "validation", "{pin}");
