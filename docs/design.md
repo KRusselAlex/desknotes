@@ -252,7 +252,14 @@ change until it is unlocked. The core refuses every content save while
 `edit_locked` is set, so the interface and the native layer agree. Empty checklist
 boxes are drawn dashed to show they are inert (design state N17).
 
-## 7. Forgotten PIN (proposal for M3, not yet decided)
+## 7. Forgotten PIN (decided for M3 — see docs/superpowers/specs/2026-11-02-privacy-lock-design.md D5, D6, D11, D14)
+
+Built: the owner chooses in Settings → Privacy between the Ubuntu password (polkit, with the
+`.deb`) and a recovery code; `desknotes --reset-pin` is the last resort and is announced at
+the next start. Operating-system unlock on Windows/macOS (Windows Hello, Touch ID) remains
+for when those platforms are built. The original proposal follows.
+
+### Original proposal
 
 The lock protects notes from someone looking at an unlocked screen. It does not
 encrypt the database, so recovery can be offered without weakening the real
