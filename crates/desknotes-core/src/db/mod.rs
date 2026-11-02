@@ -14,6 +14,7 @@ use crate::error::{CoreError, CoreResult};
 
 pub use backup::{Export, LAST_BACKUP_AT};
 pub use migrations::LATEST_VERSION;
+pub use privacy::{LOCK_AFTER_CHOICES, PinCheck};
 
 pub struct Database {
     conn: Connection,

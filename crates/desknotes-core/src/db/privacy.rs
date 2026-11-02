@@ -18,7 +18,7 @@ pub const PIN_HASH: &str = "pin_hash";
 pub const PIN_RECOVERY_HASH: &str = "pin_recovery_hash";
 /// JSON `{"failures": .., "wait_until_ms": ..}`, shared by PIN and recovery-code checks.
 pub const PIN_THROTTLE: &str = "pin_throttle";
-/// Unix ms of the last PIN reset by recovery code, until the owner acknowledges it.
+/// Unix ms of the last `desknotes --reset-pin` (D11), until the owner acknowledges it.
 pub const PIN_RESET_AT: &str = "pin_reset_at";
 pub const LOCK_AFTER_MINUTES: &str = "lock_after_minutes";
 
