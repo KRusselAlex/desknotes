@@ -9,10 +9,13 @@ import type {
   NoteFilter,
   NoteSize,
   NoteSummary,
+  PinCheck,
+  PrivacyStatus,
   RestorePreview,
   RestoreResult,
   SaveResult,
   SettingsView,
+  SetupResult,
   ToggleShortcut,
 } from "../types/note";
 
@@ -88,6 +91,34 @@ export const commands = {
   restoreBackup: () => call<RestoreResult>("restore_backup"),
   /** Answer to save-all-notes: whether this window's text is saved. */
   quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
+
+  // Privacy lock. PINs are sent once to be checked and never stored here.
+  privacyStatus: () => call<PrivacyStatus>("privacy_status"),
+  /** Unlocks every private note when the PIN is right. */
+  unlock: (pin: string) => call<PinCheck>("unlock", { pin }),
+  /** Saves every open note, then locks private notes. */
+  lockNow: () => call<void>("lock_now"),
+  /** Settings only. */
+  setupPin: (pin: string) => call<SetupResult>("setup_pin", { pin }),
+  /** Settings only. */
+  changePin: (current: string, next: string) => call<PinCheck>("change_pin", { current, new: next }),
+  /** Settings only. Private flags and labels are kept. */
+  turnOffLock: (pin: string) => call<PinCheck>("turn_off_lock", { pin }),
+  /** Settings only. Null when the PIN was not accepted. */
+  newRecoveryCode: (pin: string) => call<string | null>("new_recovery_code", { pin }),
+  /** Settings only: 1, 5, 10 or 15. */
+  setLockAfter: (minutes: number) => call<void>("set_lock_after", { minutes }),
+  /** Making a note private needs a PIN; `label` replaces the stored one ("" or null clears it). */
+  setNotePrivate: (id: string, isPrivate: boolean, label: string | null) =>
+    call<void>("set_note_private", { id, private: isPrivate, label }),
+  /** Input seen in this window, for the inactivity lock. */
+  reportActivity: () => call<void>("report_activity"),
+  acknowledgePinReset: () => call<void>("acknowledge_pin_reset"),
+  /** Asks for the Ubuntu password; true when it was given and the lock is off. */
+  forgotPinSystem: () => call<boolean>("forgot_pin_system"),
+  recoverWithCode: (code: string) => call<PinCheck>("recover_with_code", { code }),
+  /** Settings only, after forgotPinSystem or recoverWithCode succeeded. */
+  chooseNewPin: (pin: string) => call<SetupResult>("choose_new_pin", { pin }),
 };
 
 export type Commands = typeof commands;

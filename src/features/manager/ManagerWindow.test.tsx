@@ -43,6 +43,9 @@ const note = (over: Partial<NoteSummary> = {}): NoteSummary => ({
   deletedAt: null,
   visible: true,
   snippet: null,
+  private: false,
+  privateLabel: "",
+  locked: false,
   ...over,
 });
 
