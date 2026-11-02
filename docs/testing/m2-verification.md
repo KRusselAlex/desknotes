@@ -197,6 +197,24 @@ Test-tool notes: GNOME does not move keyboard focus to an existing window on sim
 clicks, so typing went to the focused note until the Settings window was opened anew.
 `scripts/verify/x.py list` lists windows titled "DeskNotes" only, not "Settings".
 
+## Notes off-screen at startup (DES-14) — 2026-11-02
+
+Policy chosen by the owner: **fully inside**. A note moves into the work area it
+overlaps most (the primary one if none), keeps its size, and is aligned top-left when it
+is larger than that area. Six core tests cover it.
+
+Release build, isolated data, one 1920 × 1200 monitor with GNOME's top bar. Positions set
+in the scratch database while DeskNotes was stopped, then restarted:
+
+| Note | Saved at | Opened at (screen and database) |
+|---|---|---|
+| On a monitor that no longer exists | 3000, 400 | 1620, 400 |
+| Half off the bottom-right | 1800, 1100 | 1620, 920 |
+| Fully visible (control) | 200, 200 | 200, 200 |
+| Header above the screen | 700, −150 | 700, 32 (below the top bar) |
+
+All stayed 300 × 280. Not checked: unplugging a real second monitor (only one here).
+
 ## Show / hide all shortcut (DES-27) — 2026-11-02
 
 **Platform facts (Ubuntu 24.04, GNOME Shell 46.0, xdg-desktop-portal-gnome 46.2):**
