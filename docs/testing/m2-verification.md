@@ -189,3 +189,19 @@ DeskNotes (single instance). Release build, isolated data:
 
 Not checked: a real key press through a GNOME custom shortcut (needs a change to the
 owner's keyboard settings).
+
+**Part 2, setting up the GNOME shortcut (backend only, no UI yet):** module
+`src-tauri/src/platform/gnome_shortcut.rs` and commands `get_toggle_shortcut`,
+`set_toggle_shortcut`, `remove_toggle_shortcut`. Tested with the real GIO settings code
+against a **scratch keyfile backend** (`GSETTINGS_BACKEND=keyfile`, scratch
+`XDG_CONFIG_HOME`; the test refuses to run otherwise):
+
+| Check | Result |
+|---|---|
+| Install Ctrl+Alt+N next to another custom shortcut | Both in the list, in order; name, command and key written |
+| Conflicts | Another custom shortcut on Super+E is reported by name; GNOME's Ctrl+Alt+T is reported as "terminal"; Ctrl+Alt+N is free |
+| Remove | Only DeskNotes' entry goes; the other shortcut keeps its name, key and place |
+| The owner's own GNOME settings | `dconf dump` of media-keys identical before and after |
+
+Not checked: a real key press (needs the owner's consent to add the shortcut to their
+desktop, which the Settings dialog will ask for once it is designed).

@@ -76,6 +76,96 @@ pub fn set_new_note_color(
     Ok(())
 }
 
+/// The "Show / hide all notes" keyboard shortcut, as GNOME has it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleShortcut {
+    /// False on desktops without GNOME custom shortcuts.
+    pub available: bool,
+    /// Accelerator text, e.g. `<Control><Alt>n`; `None` when not set up.
+    pub binding: Option<String>,
+    /// Readable form, e.g. "Ctrl+Alt+N".
+    pub label: Option<String>,
+}
+
+fn toggle_shortcut_view() -> ToggleShortcut {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::platform::gnome_shortcut as gnome;
+        let current = gnome::current();
+        ToggleShortcut {
+            available: gnome::available(),
+            binding: current.as_ref().map(|a| a.to_gsettings()),
+            label: current.as_ref().map(|a| a.label()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        ToggleShortcut {
+            available: false,
+            binding: None,
+            label: None,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_toggle_shortcut() -> ToggleShortcut {
+    toggle_shortcut_view()
+}
+
+/// Add or change the GNOME custom shortcut that runs `desknotes --toggle-notes`.
+/// The Settings window calls this only after the person confirmed it.
+#[tauri::command]
+pub fn set_toggle_shortcut(binding: String) -> IpcResult<ToggleShortcut> {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::platform::gnome_shortcut::{self as gnome, Accel};
+        if !gnome::available() {
+            return Err(IpcError::new(
+                "shortcut",
+                "This desktop has no GNOME keyboard shortcuts.",
+            ));
+        }
+        let accel = Accel::parse(&binding)
+            .ok_or_else(|| IpcError::new("validation", "This key combination is not supported."))?;
+        if !accel.is_acceptable() {
+            return Err(IpcError::new(
+                "validation",
+                "Use Ctrl, Alt or Super with the key.",
+            ));
+        }
+        let taken = gnome::conflicts(&accel);
+        if !taken.is_empty() {
+            return Err(IpcError::new(
+                "shortcut_taken",
+                format!("{} is already used by {}.", accel.label(), taken.join(", ")),
+            ));
+        }
+        let command = gnome::toggle_command().map_err(|e| IpcError::new("shortcut", e))?;
+        gnome::install(&accel, &command).map_err(|e| IpcError::new("shortcut", e))?;
+        Ok(toggle_shortcut_view())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = binding;
+        Err(IpcError::new(
+            "shortcut",
+            "Not available on this system yet.",
+        ))
+    }
+}
+
+/// Remove DeskNotes' GNOME custom shortcut (other shortcuts are kept).
+#[tauri::command]
+pub fn remove_toggle_shortcut() -> IpcResult<ToggleShortcut> {
+    #[cfg(target_os = "linux")]
+    if crate::platform::gnome_shortcut::available() {
+        crate::platform::gnome_shortcut::remove().map_err(|e| IpcError::new("shortcut", e))?;
+    }
+    Ok(toggle_shortcut_view())
+}
+
 /// Show the folder that holds the notes database in the file manager.
 #[tauri::command]
 pub fn open_data_folder(app: AppHandle) -> IpcResult<()> {

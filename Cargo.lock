@@ -706,6 +706,7 @@ name = "desknotes"
 version = "0.1.0"
 dependencies = [
  "desknotes-core",
+ "gio",
  "serde",
  "serde_json",
  "tauri",

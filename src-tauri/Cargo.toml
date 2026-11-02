@@ -29,3 +29,5 @@ tauri-plugin-dialog = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version Tauri uses; only to name the WebKit view type shared between windows.
 webkit2gtk = "=2.0.2"
+# Same version Tauri uses; GNOME settings for the show / hide all shortcut (DES-27).
+gio = "=0.18.4"
