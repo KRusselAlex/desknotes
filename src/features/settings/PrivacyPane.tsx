@@ -259,15 +259,23 @@ function PinDialog({
 }) {
   const titleId = useId();
   const [code, setCode] = useState<string | null>(null);
+  /** The PIN is being checked: the change (and any new code) may already be committed,
+   * so the dialog cannot close until the answer is in. */
+  const [busy, setBusy] = useState(false);
 
   async function checkPin(pin: string): Promise<PinCheck | null> {
-    if (check) return check(pin);
-    const result = await withCode!(pin);
-    if (result.check.kind === "ok" && result.recoveryCode) {
-      setCode(result.recoveryCode);
-      return null;
+    setBusy(true);
+    try {
+      if (check) return await check(pin);
+      const result = await withCode!(pin);
+      if (result.check.kind === "ok" && result.recoveryCode) {
+        setCode(result.recoveryCode);
+        return null;
+      }
+      return result.check;
+    } finally {
+      setBusy(false);
     }
-    return result.check;
   }
 
   if (code) {
@@ -288,14 +296,14 @@ function PinDialog({
   }
 
   return (
-    <Dialog titleId={titleId} onEscape={onCancel} className="dn-pin-dialog">
+    <Dialog titleId={titleId} onEscape={busy ? undefined : onCancel} className="dn-pin-dialog">
       <div id={titleId} className="dn-modal-title">
         {title}
       </div>
       <div className="dn-modal-text">{text}</div>
       <PinPad variant="app" label="Your PIN" check={checkPin} onUnlocked={onDone} />
       <div className="dn-modal-actions">
-        <button type="button" className="dn-btn-outline is-large" onClick={onCancel}>
+        <button type="button" className="dn-btn-outline is-large" disabled={busy} onClick={onCancel}>
           Cancel
         </button>
       </div>

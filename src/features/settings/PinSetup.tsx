@@ -37,6 +37,8 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
   const [step, setStep] = useState<Step>("choose");
   const [notice, setNotice] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
+  /** `setup_pin` / `choose_new_pin` is running: it may issue a code, so the dialog cannot close. */
+  const [busy, setBusy] = useState(false);
   const first = useRef<string | null>(null);
 
   useEffect(
@@ -60,6 +62,7 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
   const confirm = useCallback(
     async (pin: string) => {
       if (pin !== first.current) throw new Error(PINS_DIFFER);
+      setBusy(true);
       try {
         const result = mode === "setup" ? await commands.setupPin(pin, method) : await commands.chooseNewPin(pin);
         first.current = null;
@@ -73,6 +76,8 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
         first.current = null;
         setNotice(e.message);
         setStep("choose");
+      } finally {
+        setBusy(false);
       }
       return null;
     },
@@ -84,7 +89,7 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
     onDone();
   };
 
-  const cancellable = step !== "code";
+  const cancellable = step !== "code" && !busy;
 
   return (
     <Dialog titleId={titleId} onEscape={cancellable ? onCancel : undefined} className="dn-pin-dialog">
@@ -125,7 +130,7 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
             </div>
           )}
           <div className="dn-modal-actions">
-            <button type="button" className="dn-btn-outline is-large" onClick={onCancel}>
+            <button type="button" className="dn-btn-outline is-large" disabled={busy} onClick={onCancel}>
               Cancel
             </button>
           </div>

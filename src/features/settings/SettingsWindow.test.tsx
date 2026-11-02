@@ -9,6 +9,7 @@ vi.mock("../../ipc/commands", () => ({
     setNewNoteColor: vi.fn().mockResolvedValue(undefined),
     setMinNoteSize: vi.fn(),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
+    setRecoveryMethod: vi.fn().mockResolvedValue({ check: { kind: "ok" }, recoveryCode: "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ" }),
     privacyStatus: vi.fn().mockResolvedValue({
       enabled: true,
       locked: false,
@@ -189,4 +190,24 @@ describe("SettingsWindow", () => {
     act(() => events.section!("nonsense"));
     expect(screen.getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "page");
   });
+
+  it("keeps a recovery code on screen when another window asks for a section, then goes there", async () => {
+    render(<SettingsWindow />);
+    await waitFor(() => expect(events.section).not.toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Privacy" }));
+    await userEvent.click(await screen.findByRole("button", { name: "New recovery code…" }));
+    await userEvent.keyboard("246810");
+    expect(await screen.findByText("Save your recovery code")).toBeInTheDocument();
+    // Neither a remount ("privacy-new-pin") nor another section drops the code.
+    act(() => events.section!("privacy-new-pin"));
+    act(() => events.section!("about"));
+    expect(screen.getByRole("group", { name: "Recovery code" })).toHaveTextContent("K7QD");
+    expect(screen.getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "page");
+    // Once it is closed, the last section asked for is shown.
+    await userEvent.click(screen.getByRole("checkbox", { name: "I've written it down" }));
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-current", "page"));
+    expect(screen.queryByText("Save your recovery code")).toBeNull();
+  });
 });
+

@@ -344,4 +344,84 @@ describe("PrivacyPane", () => {
     expect(await screen.findByText("Save your recovery code")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
   });
+
+  describe("while a call that may issue a code is running", () => {
+    function deferred<T>() {
+      let resolve!: (v: T) => void;
+      const promise = new Promise<T>((r) => (resolve = r));
+      return { promise, resolve };
+    }
+
+    it("set-up cannot be cancelled until setupPin answers", async () => {
+      status({ ...off, systemAvailable: false });
+      const call = deferred<{ recoveryCode: string | null }>();
+      vi.mocked(commands.setupPin).mockReturnValue(call.promise);
+      await turnOn();
+      await type(PIN);
+      await screen.findByText("Confirm your PIN");
+      await type(PIN);
+      await waitFor(() => expect(commands.setupPin).toHaveBeenCalled());
+      const cancel = within(dialog()).getByRole("button", { name: "Cancel" });
+      expect(cancel).toBeDisabled();
+      await userEvent.click(cancel);
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      call.resolve({ recoveryCode: CODE });
+      expect(await screen.findByText("Save your recovery code")).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Recovery code" })).toHaveTextContent("K7QD");
+    });
+
+    it("a new recovery code cannot be cancelled until setRecoveryMethod answers", async () => {
+      status(on({ recovery: "code", recoveryMethod: "code" }));
+      const call = deferred<{ check: { kind: "ok" }; recoveryCode: string | null }>();
+      vi.mocked(commands.setRecoveryMethod).mockReturnValue(call.promise);
+      render(<PrivacyPane />);
+      await userEvent.click(await screen.findByRole("button", { name: "New recovery code…" }));
+      await type(PIN);
+      await waitFor(() => expect(commands.setRecoveryMethod).toHaveBeenCalledWith(PIN, "code"));
+      const cancel = within(dialog()).getByRole("button", { name: "Cancel" });
+      expect(cancel).toBeDisabled();
+      await userEvent.click(cancel);
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      call.resolve({ check: { kind: "ok" }, recoveryCode: CODE });
+      expect(await screen.findByText("Save your recovery code")).toBeInTheDocument();
+      // The code view itself cannot be dismissed without "I've written it down".
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("group", { name: "Recovery code" })).toBeInTheDocument();
+    });
+
+    it("Cancel works again once a wrong PIN has been answered", async () => {
+      status(on({ recovery: "code", recoveryMethod: "code" }));
+      const call = deferred<{ check: { kind: "wrong"; waitSecs: number }; recoveryCode: null }>();
+      vi.mocked(commands.setRecoveryMethod).mockReturnValue(call.promise);
+      render(<PrivacyPane />);
+      await userEvent.click(await screen.findByRole("button", { name: "New recovery code…" }));
+      await type("111111");
+      expect(within(dialog()).getByRole("button", { name: "Cancel" })).toBeDisabled();
+      call.resolve({ check: { kind: "wrong", waitSecs: 0 }, recoveryCode: null });
+      expect(await within(dialog()).findByText("Wrong PIN. Try again.")).toBeInTheDocument();
+      await userEvent.click(within(dialog()).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("Change PIN cannot be cancelled until changePin answers", async () => {
+      status(on());
+      const call = deferred<{ kind: "ok" }>();
+      vi.mocked(commands.changePin).mockReturnValue(call.promise);
+      render(<PrivacyPane />);
+      await userEvent.click(await screen.findByRole("button", { name: "Change PIN…" }));
+      await type(PIN);
+      await screen.findByText("Change PIN · 2 of 3");
+      await type(NEW_PIN);
+      await screen.findByText("Change PIN · 3 of 3");
+      await type(NEW_PIN);
+      expect(within(dialog()).getByRole("button", { name: "Cancel" })).toBeDisabled();
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      call.resolve({ kind: "ok" });
+      expect(await screen.findByText("Your PIN was changed.")).toBeInTheDocument();
+    });
+  });
 });
+

@@ -25,6 +25,8 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
   const [notice, setNotice] = useState<PinCheck | string | null>(null);
   /** A wrong current PIN sent the person back to step one with the new PIN kept. */
   const [keepsNew, setKeepsNew] = useState(false);
+  /** `change_pin` is running: the dialog cannot close until it has answered. */
+  const [busy, setBusy] = useState(false);
   const current = useRef<string | null>(null);
   const first = useRef<string | null>(null);
   /** The confirmed new PIN, kept while the current one is typed again. */
@@ -46,6 +48,7 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
 
   async function change(currentPin: string, newPin: string): Promise<PinCheck | null> {
     let result: PinCheck;
+    setBusy(true);
     try {
       result = await commands.changePin(currentPin, newPin);
     } catch (e) {
@@ -57,6 +60,8 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
       current.current = currentPin;
       go(2, e.message);
       return null;
+    } finally {
+      setBusy(false);
     }
     if (result.kind === "ok") {
       current.current = null;
@@ -92,7 +97,7 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
   }
 
   return (
-    <Dialog titleId={titleId} onEscape={onCancel} className="dn-pin-dialog">
+    <Dialog titleId={titleId} onEscape={busy ? undefined : onCancel} className="dn-pin-dialog">
       <span className="dn-step-label">Change PIN · {step} of 3</span>
       <div id={titleId} className="dn-modal-title">
         {TITLES[step]}
@@ -107,7 +112,7 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
       />
       {step === 1 && !keepsNew && <div className="dn-step-hint">Then choose and confirm the new one.</div>}
       <div className="dn-modal-actions">
-        <button type="button" className="dn-btn-outline is-large" onClick={onCancel}>
+        <button type="button" className="dn-btn-outline is-large" disabled={busy} onClick={onCancel}>
           Cancel
         </button>
       </div>
