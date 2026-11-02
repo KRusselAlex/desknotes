@@ -7,6 +7,7 @@ import type {
   Note,
   NoteCounts,
   NoteFilter,
+  NoteSize,
   NoteSummary,
   RestorePreview,
   RestoreResult,
@@ -69,6 +70,9 @@ export const commands = {
   /** Returns the launcher state actually in effect afterwards. */
   setLaunchAtLogin: (enabled: boolean) => call<boolean>("set_launch_at_login", { enabled }),
   setNewNoteColor: (color: string) => call<void>("set_new_note_color", { color }),
+  /** Applies to open notes too. Returns the size that was saved. */
+  setMinNoteSize: (width: number, height: number) =>
+    call<NoteSize>("set_min_note_size", { width, height }),
   openDataFolder: () => call<void>("open_data_folder"),
   /** Opens a save dialog; null when cancelled. */
   exportBackup: () => call<ExportResult | null>("export_backup"),

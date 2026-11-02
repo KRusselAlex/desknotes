@@ -123,6 +123,26 @@
   box-shadow: 0 0 0 2px var(--dn-app-surface), 0 0 0 4px var(--dn-app-text);
 }
 
+/* "Minimum note size": pill fields from design S2. */
+.dn-size-fields {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+.dn-size-field {
+  box-sizing: border-box;
+  width: calc(3ch + 26px); /* three digits plus the pill's 12 px padding and border */
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--dn-app-line);
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  color: inherit;
+  font: inherit;
+  text-align: center;
+}
+
 .dn-about {
   display: flex;
   flex-direction: column;

@@ -4,7 +4,7 @@
 pub mod geometry;
 
 use desknotes_core::geometry::{Rect, keep_on_screen};
-use desknotes_core::{COLLAPSED_HEIGHT, MIN_HEIGHT, MIN_WIDTH, Note};
+use desknotes_core::{COLLAPSED_HEIGHT, Note, NoteSize};
 use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
@@ -219,20 +219,29 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
     let positioning = window_positioning_supported();
     let always_on_top = w.always_on_top;
     let collapsed = w.collapsed;
-    let (min_height, height) = if collapsed {
-        (COLLAPSED_HEIGHT, COLLAPSED_HEIGHT)
-    } else {
-        (MIN_HEIGHT, rect.height)
-    };
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
+    let note_id = note.id.clone();
     let build = move |related: Option<RelatedView>| -> tauri::Result<()> {
         // Requests are queued; a second one for the same note just focuses it.
         if let Some(existing) = handle.get_webview_window(&label) {
             existing.show()?;
             return existing.set_focus();
         }
+        // Read here, on the main thread like `set_min_note_size`, so a change made
+        // while this build was queued is not missed. A smaller note opens at the
+        // minimum; GTK's resize event then saves that size.
+        let min = min_note_size(&handle);
+        let width = rect.width.max(f64::from(min.width));
+        let (min_height, height) = if collapsed {
+            (COLLAPSED_HEIGHT, COLLAPSED_HEIGHT)
+        } else {
+            (
+                f64::from(min.height),
+                rect.height.max(f64::from(min.height)),
+            )
+        };
         let mut builder =
             WebviewWindowBuilder::new(&handle, &label, WebviewUrl::App("index.html".into()))
                 .title("DeskNotes") // never the note text: titles are visible to others
@@ -241,8 +250,8 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
                 // A double-click on the drag area would otherwise maximise the note,
                 // and that full-screen size would be saved as its normal size.
                 .maximizable(false)
-                .inner_size(rect.width, height)
-                .min_inner_size(MIN_WIDTH, min_height)
+                .inner_size(width, height)
+                .min_inner_size(f64::from(min.width), min_height)
                 .always_on_top(always_on_top)
                 // Created hidden, shown below. tao maps a visible window *before*
                 // removing its decorations, so Mutter first frames it with a 37 px
@@ -262,17 +271,19 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         #[cfg(not(target_os = "linux"))]
         let _ = related;
         let window = builder.build()?;
+        // Record where and how big it opened (no resize event fires for that).
+        // While collapsed, the core keeps the saved height.
+        let position = positioning.then_some((rect.x, rect.y));
+        let saved_height = rect.height.max(f64::from(min.height));
+        handle
+            .state::<AppState>()
+            .geometry
+            .update(&note_id, position, width, saved_height);
         window.show()?;
         window.set_focus()
     };
 
-    build_sharing_process(app, build)?;
-
-    let position = positioning.then_some((rect.x, rect.y));
-    app.state::<AppState>()
-        .geometry
-        .update(&note.id, position, rect.width, rect.height);
-    Ok(())
+    build_sharing_process(app, build)
 }
 
 /// Roll a note window up to its header strip, or back to `height`.
@@ -285,9 +296,11 @@ pub fn apply_collapsed(
     collapsed: bool,
     width: f64,
     height: f64,
+    min: NoteSize,
 ) -> tauri::Result<()> {
+    let (min_width, min_height) = (f64::from(min.width), f64::from(min.height));
     if collapsed {
-        window.set_min_size(Some(tauri::LogicalSize::new(MIN_WIDTH, COLLAPSED_HEIGHT)))?;
+        window.set_min_size(Some(tauri::LogicalSize::new(min_width, COLLAPSED_HEIGHT)))?;
         window.set_max_size(Some(tauri::LogicalSize::new(
             COLLAPSED_MAX_WIDTH,
             COLLAPSED_HEIGHT,
@@ -295,8 +308,44 @@ pub fn apply_collapsed(
         window.set_size(tauri::LogicalSize::new(width, COLLAPSED_HEIGHT))
     } else {
         window.set_max_size(None::<tauri::LogicalSize<f64>>)?;
-        window.set_size(tauri::LogicalSize::new(width, height))?;
-        window.set_min_size(Some(tauri::LogicalSize::new(MIN_WIDTH, MIN_HEIGHT)))
+        window.set_size(tauri::LogicalSize::new(
+            width.max(min_width),
+            height.max(min_height),
+        ))?;
+        window.set_min_size(Some(tauri::LogicalSize::new(min_width, min_height)))
+    }
+}
+
+/// The "Minimum note size" setting, or the floor if the database cannot be read.
+pub fn min_note_size(app: &AppHandle) -> NoteSize {
+    app.state::<AppState>()
+        .with_db(|db| db.min_note_size())
+        .unwrap_or(NoteSize::FLOOR)
+}
+
+/// Give every open note window a new minimum size. GTK grows windows that are
+/// smaller, and the resize is saved like any other. Collapsed notes keep their strip.
+/// Best effort: the setting is already saved, so one failing window (closing at
+/// that moment, say) is logged and skipped; it gets the minimum when reopened.
+pub fn apply_min_note_size(app: &AppHandle, min: NoteSize) {
+    let state = app.state::<AppState>();
+    for (label, window) in app.webview_windows() {
+        let Some(id) = label.strip_prefix(NOTE_PREFIX) else {
+            continue;
+        };
+        // Without the collapsed state, a minimum height could fight the strip's maximum.
+        let Ok(note) = state.with_db(|db| db.get_note(id)) else {
+            continue;
+        };
+        let height = if note.window.collapsed {
+            COLLAPSED_HEIGHT
+        } else {
+            f64::from(min.height)
+        };
+        let size = tauri::LogicalSize::new(f64::from(min.width), height);
+        if let Err(e) = window.set_min_size(Some(size)) {
+            eprintln!("DeskNotes: could not apply the minimum note size: {e}");
+        }
     }
 }
 

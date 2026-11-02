@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../ipc/commands", () => ({
@@ -6,6 +6,7 @@ vi.mock("../../ipc/commands", () => ({
     getSettings: vi.fn(),
     setLaunchAtLogin: vi.fn(),
     setNewNoteColor: vi.fn().mockResolvedValue(undefined),
+    setMinNoteSize: vi.fn(),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
   },
 }));
@@ -16,6 +17,7 @@ import { SettingsWindow } from "./SettingsWindow";
 const settings = {
   launchAtLogin: false,
   newNoteColor: "#fff4a3",
+  minNoteSize: { width: 180, height: 120 },
   version: "0.1.0",
   dataDir: "/home/me/.local/share/io.github.krusselalex.desknotes",
   lastBackupAt: null,
@@ -51,6 +53,65 @@ describe("SettingsWindow", () => {
     await userEvent.click(await screen.findByRole("radio", { name: "Mint" }));
     expect(commands.setNewNoteColor).toHaveBeenCalledWith("#c8f7c5");
     expect(screen.getByRole("radio", { name: "Mint" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("shows the minimum note size and saves a new width on Enter", async () => {
+    vi.mocked(commands.setMinNoteSize).mockResolvedValue({ width: 240, height: 120 });
+    render(<SettingsWindow />);
+    const width = await screen.findByRole("textbox", { name: "Minimum width" });
+    expect(width).toHaveValue("180");
+    expect(screen.getByRole("textbox", { name: "Minimum height" })).toHaveValue("120");
+    await userEvent.clear(width);
+    await userEvent.type(width, "240{Enter}");
+    expect(commands.setMinNoteSize).toHaveBeenCalledWith(240, 120);
+    expect(width).toHaveValue("240");
+  });
+
+  it("saves the minimum height when the field loses focus", async () => {
+    vi.mocked(commands.setMinNoteSize).mockResolvedValue({ width: 180, height: 200 });
+    render(<SettingsWindow />);
+    const height = await screen.findByRole("textbox", { name: "Minimum height" });
+    await userEvent.clear(height);
+    await userEvent.type(height, "200");
+    await userEvent.tab();
+    expect(commands.setMinNoteSize).toHaveBeenCalledWith(180, 200);
+  });
+
+  it("shows why a minimum size was refused and restores the saved one", async () => {
+    vi.mocked(commands.setMinNoteSize).mockRejectedValue(
+      new Error("invalid data: minimum note size must be 180–600 × 120–600 px"),
+    );
+    render(<SettingsWindow />);
+    const width = await screen.findByRole("textbox", { name: "Minimum width" });
+    await userEvent.clear(width);
+    await userEvent.type(width, "900{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("180–600");
+    expect(width).toHaveValue("180");
+  });
+
+  it("keeps what is being typed in one field when the other one's save returns", async () => {
+    let finish: (size: { width: number; height: number }) => void = () => undefined;
+    vi.mocked(commands.setMinNoteSize).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    render(<SettingsWindow />);
+    const width = await screen.findByRole("textbox", { name: "Minimum width" });
+    const height = screen.getByRole("textbox", { name: "Minimum height" });
+    await userEvent.clear(width);
+    await userEvent.type(width, "240");
+    await userEvent.tab(); // saves the width, focus moves to height
+    await userEvent.clear(height);
+    await userEvent.type(height, "2");
+    await act(async () => finish({ width: 240, height: 120 }));
+    expect(width).toHaveValue("240");
+    expect(height).toHaveValue("2");
+  });
+
+  it("never sends a minimum size that is not a number", async () => {
+    render(<SettingsWindow />);
+    const width = await screen.findByRole("textbox", { name: "Minimum width" });
+    await userEvent.clear(width);
+    await userEvent.type(width, "abc{Enter}");
+    expect(commands.setMinNoteSize).not.toHaveBeenCalled();
+    expect(width).toHaveValue("180");
   });
 
   it("shows version, data folder and the privacy statement in About", async () => {
