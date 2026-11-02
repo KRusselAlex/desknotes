@@ -164,7 +164,8 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
         </div>
       </header>
       <div className="dn-note-locked">
-        <PinPad onUnlocked={refresh} onForgot={() => setForgot(true)} />
+        {/* Paused under "Forgot your PIN?": digits typed there must never be sent as a PIN. */}
+        <PinPad onUnlocked={refresh} onForgot={() => setForgot(true)} paused={forgot} />
       </div>
       {/* Once proved, the lock is off: privacy-changed brings the note back unlocked. */}
       {forgot && <ForgotPin onClose={() => setForgot(false)} />}

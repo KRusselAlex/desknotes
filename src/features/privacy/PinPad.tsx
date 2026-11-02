@@ -1,19 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { commands } from "../../ipc/commands";
 import type { PinCheck } from "../../types/note";
+import { messageFromNotice, PinStatus, sentence, showsMessage, usePinMessage } from "./pinMessage";
 
 /** The PIN is exactly this many digits (Rust `PIN_DIGITS`). */
 export const PIN_LENGTH = 6;
 
 /** Keypad order from the design (L2): 1–9, a blank, 0, delete. */
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "back"] as const;
-
-type Message =
-  | { kind: "wrong" }
-  /** `wrong`: this attempt failed; otherwise a wait that was already running. */
-  | { kind: "wait"; wrong: boolean; until: number; secs: number }
-  | { kind: "error"; text: string };
 
 export interface PinPadProps {
   /** The check answered "ok" (with the default check: every private note is unlocked). */
@@ -35,25 +30,11 @@ export interface PinPadProps {
   variant?: "note" | "app";
   /** Accessible name of the pad. */
   label?: string;
-}
-
-function sentence(text: string): string {
-  const t = text.trim().replace(/\.$/, "");
-  return t ? `${t[0]!.toUpperCase()}${t.slice(1)}.` : "Something went wrong.";
-}
-
-/** The message for a check that was not "ok" (null for "ok"). */
-function fromCheck(result: PinCheck, now: number): Message | null {
-  if (result.kind === "ok") return null;
-  if (result.waitSecs > 0) {
-    return { kind: "wait", wrong: result.kind === "wrong", until: now + result.waitSecs * 1000, secs: result.waitSecs };
-  }
-  return { kind: "wrong" };
-}
-
-function fromNotice(notice: PinCheck | string | null | undefined, now: number): Message | null {
-  if (!notice) return null;
-  return typeof notice === "string" ? { kind: "error", text: sentence(notice) } : fromCheck(notice, now);
+  /**
+   * Another screen is over the pad (e.g. "Forgot your PIN?"): it ignores the keyboard, so
+   * digits typed there never reach this pad and are never sent as a PIN.
+   */
+  paused?: boolean;
 }
 
 /**
@@ -69,57 +50,39 @@ export function PinPad({
   notice,
   variant = "note",
   label = "Enter your PIN",
+  paused = false,
 }: PinPadProps) {
   const digits = useRef<string[]>([]);
   const [count, setCount] = useState(0);
   const [checking, setChecking] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [message, setMessage] = useState<Message | null>(() => fromNotice(notice, now));
-
-  // Never more than the wait the native side announced, even if the clock moves back.
-  const remaining =
-    message?.kind === "wait" ? Math.min(message.secs, Math.max(0, Math.ceil((message.until - now) / 1000))) : 0;
-  const waiting = remaining > 0;
-  const disabled = checking || waiting;
-
-  useEffect(() => {
-    if (message?.kind !== "wait") return;
-    const timer = setInterval(() => {
-      const t = Date.now();
-      setNow(t);
-      if (t >= message.until) setMessage(null);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [message]);
+  const { message, show, showCheck, remaining, waiting } = usePinMessage((now) => messageFromNotice(notice, now));
+  const disabled = checking || waiting || paused;
 
   const submit = useCallback(
     async (pin: string) => {
       setChecking(true);
-      let next: Message | null = null;
       let ok = false;
       try {
         const result = await check(pin);
-        if (result?.kind === "ok") ok = true;
-        else if (result) {
-          const t = Date.now();
-          setNow(t);
-          next = fromCheck(result, t);
-        }
+        if (result?.kind === "ok") {
+          ok = true;
+          show(null);
+        } else if (result) showCheck(result);
+        else show(null);
       } catch (e) {
-        next = { kind: "error", text: sentence(e instanceof Error ? e.message : String(e)) };
+        show({ kind: "error", text: sentence(e instanceof Error ? e.message : String(e)) });
       }
       setCount(0);
       setChecking(false);
-      setMessage(next);
       if (ok) onUnlocked();
     },
-    [check, onUnlocked],
+    [check, onUnlocked, show, showCheck],
   );
 
   const press = useCallback(
     (digit: string) => {
       if (disabled || digits.current.length >= PIN_LENGTH) return;
-      if (message) setMessage(null);
+      if (message) show(null);
       digits.current.push(digit);
       setCount(digits.current.length);
       if (digits.current.length === PIN_LENGTH) {
@@ -128,7 +91,7 @@ export function PinPad({
         void submit(pin);
       }
     },
-    [disabled, message, submit],
+    [disabled, message, show, submit],
   );
 
   const back = useCallback(() => {
@@ -138,6 +101,7 @@ export function PinPad({
   }, [disabled]);
 
   useEffect(() => {
+    if (paused) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable='true']")) return;
@@ -148,7 +112,7 @@ export function PinPad({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [press, back]);
+  }, [press, back, paused]);
 
   // Forget the digits if the pad goes away mid-entry.
   useEffect(
@@ -158,30 +122,7 @@ export function PinPad({
     [],
   );
 
-  let status: ReactNode = null;
-  if (message?.kind === "wait" && waiting) {
-    status = (
-      <>
-        <Icon name="clock" size={16} />
-        {message.wrong ? "Wrong PIN. " : ""}Try again in {remaining} s
-      </>
-    );
-  } else if (message?.kind === "wrong") {
-    status = (
-      <>
-        <Icon name="alert" size={variant === "app" ? 14 : 16} />
-        Wrong PIN. Try again.
-      </>
-    );
-  } else if (message?.kind === "error") {
-    status = (
-      <>
-        <Icon name="alert" size={variant === "app" ? 14 : 16} />
-        {message.text}
-      </>
-    );
-  }
-
+  const status = showsMessage(message, remaining);
   const failed = message?.kind === "wrong" || message?.kind === "error";
   const classes = ["dn-pinpad", `is-${variant}`];
   if (waiting) classes.push("is-waiting");
@@ -190,9 +131,7 @@ export function PinPad({
 
   return (
     <div className={classes.join(" ")} role="group" aria-label={label} aria-busy={checking}>
-      <div className="dn-pin-status" role="status">
-        {status && <span className="dn-pin-message">{status}</span>}
-      </div>
+      <PinStatus message={message} remaining={remaining} alertSize={variant === "app" ? 14 : 16} />
       <div className="dn-pin-dots" role="img" aria-label={`${count} of ${PIN_LENGTH} digits`}>
         {Array.from({ length: PIN_LENGTH }, (_, i) => (
           <span key={i} className={`dn-pin-dot${i < count ? " is-filled" : ""}`} />

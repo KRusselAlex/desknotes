@@ -184,5 +184,18 @@ describe("PinPad", () => {
       expect(screen.getByRole("status")).toBeEmptyDOMElement();
     });
   });
-});
 
+  it("a paused pad ignores the keyboard and keeps what it had", async () => {
+    const onUnlocked = vi.fn();
+    const { rerender } = render(<PinPad onUnlocked={onUnlocked} />);
+    await userEvent.keyboard("48");
+    rerender(<PinPad onUnlocked={onUnlocked} paused />);
+    await userEvent.keyboard("2915{Backspace}");
+    expect(dots()).toHaveAccessibleName("2 of 6 digits");
+    expect(commands.unlock).not.toHaveBeenCalled();
+    rerender(<PinPad onUnlocked={onUnlocked} />);
+    vi.mocked(commands.unlock).mockResolvedValue({ kind: "ok" });
+    await userEvent.keyboard("2915");
+    expect(commands.unlock).toHaveBeenCalledWith(PIN);
+  });
+});

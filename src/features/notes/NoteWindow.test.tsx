@@ -501,6 +501,41 @@ describe("NoteWindow", () => {
       expect(commands.unlock).not.toHaveBeenCalled();
     });
 
+    it("digits typed while Forgot your PIN? is open never reach the note's PIN pad", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      vi.mocked(commands.privacyStatus).mockResolvedValue(status({ locked: true, recovery: "system" }));
+      vi.mocked(commands.forgotPinSystem).mockResolvedValue(false);
+      render(<NoteWindow noteId={ID} />);
+      await userEvent.click(await screen.findByRole("button", { name: "Forgot your PIN?" }));
+      await screen.findByRole("dialog", { name: "Nothing was changed" });
+      await userEvent.keyboard("111111");
+      expect(commands.unlock).not.toHaveBeenCalled();
+      expect(screen.getByRole("img", { name: "0 of 6 digits" })).toBeInTheDocument();
+
+      // Back at the pad, typing works again.
+      vi.mocked(commands.unlock).mockResolvedValue({ kind: "wrong", waitSecs: 0 });
+      await userEvent.click(screen.getByRole("button", { name: "Back to PIN" }));
+      await userEvent.keyboard("222222");
+      expect(commands.unlock).toHaveBeenCalledTimes(1);
+      expect(commands.unlock).toHaveBeenCalledWith("222222");
+    });
+
+    it("retyping a recovery code after a wrong one stays in the code field", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      vi.mocked(commands.privacyStatus).mockResolvedValue(status({ locked: true, recovery: "code", recoveryMethod: "code" }));
+      vi.mocked(commands.recoverWithCode).mockResolvedValue({ kind: "wrong", waitSecs: 0 });
+      render(<NoteWindow noteId={ID} />);
+      await userEvent.click(await screen.findByRole("button", { name: "Forgot your PIN?" }));
+      const field = await screen.findByRole("textbox", { name: "Recovery code" });
+      await userEvent.type(field, "AAAABBBBCCCCDDDDEEEEFFFF");
+      await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+      expect(await screen.findByText("Wrong recovery code. Try again.")).toBeInTheDocument();
+      await waitFor(() => expect(field).toHaveFocus());
+      await userEvent.keyboard("{Backspace}{Backspace}{Backspace}{Backspace}{Backspace}{Backspace}234567");
+      expect(commands.unlock).not.toHaveBeenCalled();
+      expect(field).toHaveValue("AAAABBBBCCCCDDDDEE234567");
+    });
+
     it("Forgot your PIN? with a recovery code shows the code entry in the note", async () => {
       vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
       vi.mocked(commands.privacyStatus).mockResolvedValue(status({ locked: true, recovery: "code", recoveryMethod: "code" }));

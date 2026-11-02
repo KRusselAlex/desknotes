@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Icon } from "../../components/Icon";
 import { commands } from "../../ipc/commands";
-import type { PinCheck, PrivacyStatus } from "../../types/note";
+import type { PrivacyStatus } from "../../types/note";
 import { Dialog } from "../settings/Dialog";
+import { PinStatus, sentence, usePinMessage } from "./pinMessage";
 
 /** A recovery code: 24 letters and digits, shown in 6 groups of 4 (Rust `RECOVERY_LEN`). */
 export const RECOVERY_CODE_LENGTH = 24;
@@ -19,11 +20,6 @@ export function normalizeRecoveryCode(input: string): string {
 /** "K7QDM2XP…" → "K7QD-M2XP-…", the form the code was shown in. */
 function dashed(code: string): string {
   return (code.match(/.{1,4}/g) ?? []).join("-");
-}
-
-function sentence(text: string): string {
-  const t = text.trim().replace(/\.$/, "");
-  return t ? `${t[0]!.toUpperCase()}${t.slice(1)}.` : "Something went wrong.";
 }
 
 const messageOf = (e: unknown) => sentence(e instanceof Error ? e.message : String(e));
@@ -180,20 +176,6 @@ function SystemProof({ onClose, onProved }: { onClose: () => void; onProved: () 
   );
 }
 
-type CodeMessage =
-  | { kind: "wrong" }
-  /** `wrong`: this attempt failed; otherwise a wait that was already running. */
-  | { kind: "wait"; wrong: boolean; until: number; secs: number }
-  | { kind: "error"; text: string };
-
-function fromCheck(result: PinCheck, now: number): CodeMessage | null {
-  if (result.kind === "ok") return null;
-  if (result.waitSecs > 0) {
-    return { kind: "wait", wrong: result.kind === "wrong", until: now + result.waitSecs * 1000, secs: result.waitSecs };
-  }
-  return { kind: "wrong" };
-}
-
 /**
  * Design "Recovery code entry": the 24-character code in 6 groups of 4, dashes and
  * spaces added for you, not case-sensitive. A wrong code or a running wait is shown
@@ -205,14 +187,8 @@ function CodeEntry({ onClose, onProved }: { onClose: () => void; onProved: () =>
   const [code, setCode] = useState("");
   const [focused, setFocused] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [message, setMessage] = useState<CodeMessage | null>(null);
+  const { message, show, showCheck, remaining, waiting } = usePinMessage();
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Never more than the wait the native side announced, even if the clock moves back.
-  const remaining =
-    message?.kind === "wait" ? Math.min(message.secs, Math.max(0, Math.ceil((message.until - now) / 1000))) : 0;
-  const waiting = remaining > 0;
   const complete = code.length === RECOVERY_CODE_LENGTH;
 
   useEffect(() => {
@@ -220,16 +196,6 @@ function CodeEntry({ onClose, onProved }: { onClose: () => void; onProved: () =>
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, []);
-
-  useEffect(() => {
-    if (message?.kind !== "wait") return;
-    const timer = setInterval(() => {
-      const t = Date.now();
-      setNow(t);
-      if (t >= message.until) setMessage(null);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [message]);
 
   async function submit(e?: FormEvent) {
     e?.preventDefault();
@@ -242,38 +208,14 @@ function CodeEntry({ onClose, onProved }: { onClose: () => void; onProved: () =>
         await chooseNewPinInSettings(onProved);
         return;
       }
-      const t = Date.now();
-      setNow(t);
-      setMessage(fromCheck(result, t));
+      showCheck(result);
     } catch (err) {
-      setMessage({ kind: "error", text: messageOf(err) });
+      show({ kind: "error", text: messageOf(err) });
     } finally {
       setChecking(false);
     }
-  }
-
-  let status: ReactNode = null;
-  if (message?.kind === "wait" && waiting) {
-    status = (
-      <>
-        <Icon name="clock" size={16} />
-        {message.wrong ? "Wrong recovery code. " : ""}Try again in {remaining} s
-      </>
-    );
-  } else if (message?.kind === "wrong") {
-    status = (
-      <>
-        <Icon name="alert" size={16} />
-        Wrong recovery code. Try again.
-      </>
-    );
-  } else if (message?.kind === "error") {
-    status = (
-      <>
-        <Icon name="alert" size={16} />
-        {message.text}
-      </>
-    );
+    // Back in the field to correct the code (it stayed read-only, so focus never left it by itself).
+    inputRef.current?.focus();
   }
 
   const current = Math.min(Math.floor(code.length / GROUP), RECOVERY_CODE_LENGTH / GROUP - 1);
@@ -314,22 +256,21 @@ function CodeEntry({ onClose, onProved }: { onClose: () => void; onProved: () =>
             aria-label="Recovery code"
             aria-describedby={hintId}
             value={code}
-            disabled={checking}
+            // Read-only, not disabled, while checking: a disabled field drops focus to the page.
+            readOnly={checking}
             autoComplete="off"
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
             onChange={(e) => {
               setCode(normalizeRecoveryCode(e.target.value));
-              if (message && message.kind !== "wait") setMessage(null);
+              if (message && message.kind !== "wait") show(null);
             }}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
           />
         </div>
-        <div className="dn-pin-status" role="status">
-          {status && <span className="dn-pin-message">{status}</span>}
-        </div>
+        <PinStatus message={message} remaining={remaining} what="recovery code" />
         <div id={hintId} className="dn-code-hint">
           Dashes and spaces are added for you. Not case-sensitive.
         </div>
