@@ -1,18 +1,22 @@
 //! Privacy lock commands (design §4.1–4.6). The PIN is checked here, in Rust,
 //! before anything is unlocked or changed; there is no command that turns the
-//! lock off without a correct PIN. PINs and recovery codes are never logged,
-//! and a recovery code is only ever returned to the Settings window.
+//! lock off without a correct PIN, the Ubuntu password or the recovery code.
+//! PINs and recovery codes are never logged. A recovery code is only returned
+//! to the Settings window, or to the window where a forgotten PIN was just
+//! replaced after the Ubuntu password or the old recovery code (§4.6).
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use desknotes_core::db::PinCheck;
 use desknotes_core::privacy::{PIN_DIGITS, validate_new_pin};
 use desknotes_core::validation::parse_note_id;
-use desknotes_core::{CoreError, now_ms};
+use desknotes_core::{CoreError, CoreResult, Database, now_ms};
 use serde::Serialize;
 use tauri::{AppHandle, State, WebviewWindow};
 
 use super::settings::only_from_settings;
 use crate::error::{IpcError, IpcResult};
-use crate::platform::system_auth::system_auth_available;
+use crate::platform::system_auth::{ask_system_password, system_auth_available};
 use crate::privacy::{self, emit_privacy_changed, recovery_mode};
 use crate::state::AppState;
 use crate::tray;
@@ -41,6 +45,41 @@ pub struct PrivacyStatus {
 pub struct SetupResult {
     /// Shown once, where the Ubuntu password cannot be used (design D6).
     pub recovery_code: Option<String>,
+}
+
+/// Store a new PIN and, when `issue_code`, a new recovery code (replacing any
+/// earlier one). Either both are stored or neither: a PIN with no way back is
+/// never left (Ruling R8). Returns the code, to be shown once.
+fn store_pin_with_code(db: &Database, pin: &str, issue_code: bool) -> CoreResult<Option<String>> {
+    db.set_new_pin(pin)?;
+    if !issue_code {
+        return Ok(None);
+    }
+    match db.issue_recovery_code() {
+        Ok(code) => Ok(Some(code)),
+        Err(e) => {
+            if let Err(undo) = db.clear_pin() {
+                eprintln!("DeskNotes: the new PIN could not be removed: {undo}");
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Replace a forgotten PIN. Needs the one-shot permission given by the Ubuntu
+/// password or a recovery code; it is used up by this call, whatever happens.
+fn replace_forgotten_pin(
+    db: &Database,
+    allowed: &AtomicBool,
+    pin: &str,
+    issue_code: bool,
+) -> CoreResult<Option<String>> {
+    if !allowed.swap(false, Ordering::AcqRel) {
+        return Err(CoreError::NotAllowed(
+            "enter the Ubuntu password or the recovery code first".into(),
+        ));
+    }
+    store_pin_with_code(db, pin, issue_code)
 }
 
 /// A PIN is exactly 6 digits; anything else is refused without checking it.
@@ -115,22 +154,10 @@ pub async fn setup_pin(
         if db.pin_is_set()? {
             return Err(CoreError::NotAllowed("a PIN is already set".into()));
         }
-        db.set_new_pin(&pin)?;
+        let code = store_pin_with_code(db, &pin, !system)?;
         // Notes open now stay unlocked; the lock comes on at the next trigger.
         db.set_privacy_locked(false, &[]);
-        if system {
-            return Ok(None);
-        }
-        match db.issue_recovery_code() {
-            Ok(code) => Ok(Some(code)),
-            Err(e) => {
-                // Never leave a PIN with no way back (Ruling R8).
-                if let Err(undo) = db.clear_pin() {
-                    eprintln!("DeskNotes: the new PIN could not be removed: {undo}");
-                }
-                Err(e)
-            }
-        }
+        Ok(code)
     })?;
     tray::refresh(&app);
     emit_privacy_changed(&app, false);
@@ -199,6 +226,114 @@ pub async fn new_recovery_code(
     })
 }
 
+/// Only one Ubuntu password dialog at a time.
+static SYSTEM_PROMPT_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// A forgotten PIN was proven by the Ubuntu password or the recovery code:
+/// unlock every private note and allow one new PIN without the old one. Called
+/// with the database lock held, so a lock cannot slip in between (a lock
+/// clears the permission again).
+fn accept_proof(db: &Database, state: &AppState) {
+    db.set_privacy_locked(false, &[]);
+    state.new_pin_allowed.store(true, Ordering::Release);
+}
+
+/// "Forgot your PIN?" where the Ubuntu password can be used (design D5): the
+/// system's own password dialog. `true`: private notes are unlocked and
+/// `choose_new_pin` may be called once. `false` (wrong password, cancelled):
+/// nothing changed. Any window.
+#[tauri::command]
+pub async fn forgot_pin_system(app: AppHandle, state: State<'_, AppState>) -> IpcResult<bool> {
+    if !system_auth_available() {
+        return Err(IpcError::new(
+            "not_allowed",
+            "The Ubuntu password cannot be used here. Use the recovery code.",
+        ));
+    }
+    if !state.with_db(|db| db.pin_is_set())? {
+        return Err(IpcError::new("not_allowed", "No PIN is set."));
+    }
+    if SYSTEM_PROMPT_OPEN.swap(true, Ordering::AcqRel) {
+        return Err(IpcError::new(
+            "not_allowed",
+            "The Ubuntu password is already being asked for.",
+        ));
+    }
+    // The dialog blocks until it closes: off the main thread, no database lock held.
+    let asked = tauri::async_runtime::spawn_blocking(ask_system_password).await;
+    SYSTEM_PROMPT_OPEN.store(false, Ordering::Release);
+    let accepted = asked.map_err(|e| IpcError::new("internal", e.to_string()))?;
+    if !accepted {
+        return Ok(false);
+    }
+    // The PIN may have been removed while the dialog was open.
+    if !state.with_db(|db| {
+        let pin_set = db.pin_is_set()?;
+        if pin_set {
+            accept_proof(db, &state);
+        }
+        Ok(pin_set)
+    })? {
+        return Ok(false);
+    }
+    state.touch_activity();
+    emit_privacy_changed(&app, false);
+    Ok(true)
+}
+
+/// Longest recovery-code entry looked at: 24 characters with spaces or dashes.
+const MAX_RECOVERY_INPUT: usize = 64;
+
+/// "Forgot your PIN?" with the recovery code (design D6). Spacing, dashes and
+/// case do not matter; wrong codes share the wrong-PIN waits. On `ok`: private
+/// notes are unlocked and `choose_new_pin` may be called once. Any window.
+#[tauri::command]
+pub async fn recover_with_code(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    code: String,
+) -> IpcResult<PinCheck> {
+    if code.len() > MAX_RECOVERY_INPUT {
+        return Err(IpcError::new(
+            "validation",
+            "The recovery code is 24 letters and digits.",
+        ));
+    }
+    let check = state.with_db(|db| {
+        let check = db.check_recovery_code(&code, now_ms())?;
+        if check == PinCheck::Ok {
+            accept_proof(db, &state);
+        }
+        Ok(check)
+    })?;
+    if check == PinCheck::Ok {
+        state.touch_activity();
+        emit_privacy_changed(&app, false);
+    }
+    Ok(check)
+}
+
+/// Choose a new PIN after `forgot_pin_system` or `recover_with_code` succeeded
+/// (one new PIN per proof; a lock in between cancels it → `not_allowed`). Where
+/// the Ubuntu password cannot be used, a new recovery code replaces the old one
+/// and is returned, shown once. A weak PIN is refused without using up the proof.
+#[tauri::command]
+pub async fn choose_new_pin(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    pin: String,
+) -> IpcResult<SetupResult> {
+    validate_new_pin(&pin)?;
+    let issue_code = !system_auth_available();
+    let result =
+        state.with_db(|db| replace_forgotten_pin(db, &state.new_pin_allowed, &pin, issue_code));
+    // The R8 rollback may have removed the PIN: the tray follows either way.
+    tray::refresh(&app);
+    let recovery_code = result?;
+    emit_privacy_changed(&app, false);
+    Ok(SetupResult { recovery_code })
+}
+
 /// Minutes of inactivity before private notes lock: 1, 5, 10 or 15.
 #[tauri::command]
 pub fn set_lock_after(
@@ -255,7 +390,56 @@ pub fn acknowledge_pin_reset(state: State<'_, AppState>) -> IpcResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{needs_pin_first, plausible_pin};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use desknotes_core::db::PinCheck;
+    use desknotes_core::{CoreError, Database};
+
+    use super::{needs_pin_first, plausible_pin, replace_forgotten_pin};
+
+    #[test]
+    fn choose_new_pin_needs_a_proof() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_new_pin("482915").unwrap();
+        let allowed = AtomicBool::new(false);
+
+        let refused = replace_forgotten_pin(&db, &allowed, "730518", false).unwrap_err();
+        assert!(matches!(refused, CoreError::NotAllowed(_)), "{refused:?}");
+        assert_eq!(
+            db.check_pin("482915", 0).unwrap(),
+            PinCheck::Ok,
+            "unchanged"
+        );
+
+        // After the Ubuntu password or a recovery code: one new PIN, once.
+        allowed.store(true, Ordering::SeqCst);
+        assert_eq!(
+            replace_forgotten_pin(&db, &allowed, "730518", false).unwrap(),
+            None
+        );
+        assert!(!allowed.load(Ordering::SeqCst), "the proof is used up");
+        assert_eq!(db.check_pin("730518", 0).unwrap(), PinCheck::Ok);
+        let again = replace_forgotten_pin(&db, &allowed, "264093", false).unwrap_err();
+        assert!(matches!(again, CoreError::NotAllowed(_)), "{again:?}");
+    }
+
+    #[test]
+    fn a_new_pin_comes_with_a_new_code_where_the_code_is_the_way_back() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_new_pin("482915").unwrap();
+        let old = db.issue_recovery_code().unwrap();
+        let allowed = AtomicBool::new(true);
+
+        let new = replace_forgotten_pin(&db, &allowed, "730518", true)
+            .unwrap()
+            .expect("a new recovery code");
+        assert_ne!(new, old);
+        assert_eq!(db.check_recovery_code(&new, 0).unwrap(), PinCheck::Ok);
+        assert!(matches!(
+            db.check_recovery_code(&old, 0).unwrap(),
+            PinCheck::Wrong { .. }
+        ));
+    }
 
     #[test]
     fn only_making_private_needs_a_pin() {

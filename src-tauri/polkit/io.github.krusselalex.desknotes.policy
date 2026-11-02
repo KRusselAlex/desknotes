@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  DeskNotes: the Ubuntu password replaces a forgotten PIN (design D5).
+  auth_self, not auth_self_keep: the password is asked every time, never cached.
+  Installed by the .deb package to /usr/share/polkit-1/actions/.
+-->
+<policyconfig>
+  <vendor>DeskNotes</vendor>
+  <vendor_url>https://github.com/KRusselAlex/desknotes</vendor_url>
+  <action id="io.github.krusselalex.desknotes.reset-pin">
+    <description>Choose a new DeskNotes PIN</description>
+    <message>Authenticate to choose a new DeskNotes PIN</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

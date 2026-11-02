@@ -6,6 +6,7 @@ mod error;
 pub mod platform;
 mod privacy;
 mod quit;
+mod reset_pin;
 mod state;
 mod tray;
 mod windows;
@@ -29,6 +30,11 @@ fn start_lock_triggers(app: &tauri::AppHandle) {
 }
 
 pub fn run() {
+    // `desknotes --reset-pin` (design D11) works in the terminal only: it must
+    // not start the app, open a window or reach a running DeskNotes.
+    if reset_pin::requested(std::env::args_os()) {
+        std::process::exit(reset_pin::run());
+    }
     let app = tauri::Builder::default()
         // Must be registered first. A second launch hands its arguments to this
         // one: `--toggle-notes` (the show / hide all shortcut) hides or shows the
@@ -105,6 +111,9 @@ pub fn run() {
             commands::privacy::set_note_private,
             commands::privacy::report_activity,
             commands::privacy::acknowledge_pin_reset,
+            commands::privacy::forgot_pin_system,
+            commands::privacy::recover_with_code,
+            commands::privacy::choose_new_pin,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");

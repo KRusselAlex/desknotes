@@ -28,6 +28,11 @@ pub struct AppState {
     pub new_pin_allowed: AtomicBool,
 }
 
+/// The notes database inside the app data folder.
+pub const DB_FILE: &str = "desknotes.db";
+/// Pre-migration backups, next to the database.
+pub const BACKUP_DIR: &str = "backups";
+
 pub struct PendingRestore {
     pub backup: desknotes_core::backup::Backup,
 }
@@ -36,7 +41,7 @@ impl AppState {
     pub fn open(app: &AppHandle) -> Self {
         let mut errors = Vec::new();
         let db = match app.path().app_data_dir() {
-            Ok(dir) => match Database::open(&dir.join("desknotes.db"), &dir.join("backups")) {
+            Ok(dir) => match Database::open(&dir.join(DB_FILE), &dir.join(BACKUP_DIR)) {
                 Ok(db) => Some(db),
                 Err(e) => {
                     errors.push(format!("The notes database could not be opened: {e}"));

@@ -43,7 +43,8 @@
         "section": "utils",
         "priority": "optional",
         "files": {
-          "/usr/share/doc/desk-notes/copyright": "../LICENSE"
+          "/usr/share/doc/desk-notes/copyright": "../LICENSE",
+          "/usr/share/polkit-1/actions/io.github.krusselalex.desknotes.policy": "polkit/io.github.krusselalex.desknotes.policy"
         },
         "depends": [
           "libayatana-appindicator3-1"
