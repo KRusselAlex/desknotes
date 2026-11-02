@@ -169,8 +169,9 @@ impl Database {
     }
 
     /// Refuse whole-collection actions (export, restore) while locked if any
-    /// private note exists, wherever it is (design D12, §4.4).
-    fn refuse_if_any_private_locked(&self) -> CoreResult<()> {
+    /// private note exists, wherever it is (design D12, §4.4). Public so the
+    /// shell can ask before opening a file dialog; export and restore check again.
+    pub fn refuse_if_any_private_locked(&self) -> CoreResult<()> {
         if !self.lock_active()? {
             return Ok(());
         }

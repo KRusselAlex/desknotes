@@ -4,4 +4,5 @@
 pub mod app;
 pub mod backup;
 pub mod notes;
+pub mod privacy;
 pub mod settings;

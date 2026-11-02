@@ -8,14 +8,22 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::{app as app_cmd, notes};
 use crate::error::IpcResult;
+use crate::privacy;
 use crate::state::AppState;
 use crate::windows;
 
 /// Sent to the manager when an action started from the tray failed.
 pub const ACTION_FAILED: &str = "action-failed";
 
-pub fn create(app: &AppHandle) -> tauri::Result<()> {
+const TRAY_ID: &str = "main";
+
+/// The tray menu. "Lock now" is there only while a PIN is set.
+fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let item = |id: &str, label: &str| MenuItem::with_id(app, id, label, true, None::<&str>);
+    let pin_set = app
+        .state::<AppState>()
+        .with_db(|db| db.pin_is_set())
+        .unwrap_or(false);
     let menu = Menu::with_items(
         app,
         &[
@@ -29,7 +37,25 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &item("quit", "Quit DeskNotes")?,
         ],
     )?;
-    let mut builder = TrayIconBuilder::with_id("main")
+    if pin_set {
+        menu.insert(&item("lock", "Lock now")?, 3)?;
+    }
+    Ok(menu)
+}
+
+/// Rebuild the tray menu after the PIN was set up or removed.
+pub fn refresh(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    if let Err(e) = build_menu(app).and_then(|menu| tray.set_menu(Some(menu))) {
+        eprintln!("DeskNotes: could not update the tray menu: {e}");
+    }
+}
+
+pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    let menu = build_menu(app)?;
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("DeskNotes")
         .menu(&menu)
         .show_menu_on_left_click(true)
@@ -41,7 +67,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn report(app: &AppHandle, message: String) {
+pub fn report(app: &AppHandle, message: String) {
     let _ = windows::show_manager(app);
     let _ = app.emit(ACTION_FAILED, message);
 }
@@ -72,6 +98,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         }
         "hide_all" => spawn_notes_action(app, notes::hide_all),
         "show_hidden" => spawn_notes_action(app, notes::show_hidden),
+        "lock" => privacy::spawn_lock(app),
         "manager" => {
             let _ = windows::show_manager(app);
         }

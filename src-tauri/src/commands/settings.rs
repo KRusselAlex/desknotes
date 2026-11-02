@@ -117,18 +117,21 @@ fn toggle_shortcut_view() -> ToggleShortcut {
     }
 }
 
-/// The desktop's keyboard settings are changed only from the Settings window,
-/// where the person confirms it; note windows cannot do it.
-fn only_from_settings(window: &tauri::WebviewWindow) -> IpcResult<()> {
+/// Some changes are made only from the Settings window, where the person
+/// confirms them: the desktop's keyboard settings and the privacy lock. Note
+/// windows and the manager cannot make them.
+pub(crate) fn only_from_settings(window: &tauri::WebviewWindow, what: &str) -> IpcResult<()> {
     if window.label() == windows::SETTINGS {
         Ok(())
     } else {
         Err(IpcError::new(
             "not_allowed",
-            "The keyboard shortcut can only be changed in Settings.",
+            format!("{what} can only be changed in Settings."),
         ))
     }
 }
+
+const SHORTCUT: &str = "The keyboard shortcut";
 
 #[tauri::command]
 pub fn get_toggle_shortcut() -> ToggleShortcut {
@@ -142,7 +145,7 @@ pub fn set_toggle_shortcut(
     window: tauri::WebviewWindow,
     binding: String,
 ) -> IpcResult<ToggleShortcut> {
-    only_from_settings(&window)?;
+    only_from_settings(&window, SHORTCUT)?;
     #[cfg(target_os = "linux")]
     {
         use crate::platform::gnome_shortcut::{self as gnome, Accel};
@@ -184,7 +187,7 @@ pub fn set_toggle_shortcut(
 /// Remove DeskNotes' GNOME custom shortcut (other shortcuts are kept).
 #[tauri::command]
 pub fn remove_toggle_shortcut(window: tauri::WebviewWindow) -> IpcResult<ToggleShortcut> {
-    only_from_settings(&window)?;
+    only_from_settings(&window, SHORTCUT)?;
     #[cfg(target_os = "linux")]
     if crate::platform::gnome_shortcut::available() {
         crate::platform::gnome_shortcut::remove().map_err(|e| IpcError::new("shortcut", e))?;

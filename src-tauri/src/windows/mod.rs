@@ -87,18 +87,51 @@ fn geometry_of(
     Some(Rect::new(pos.x, pos.y, size.width, size.height))
 }
 
+/// Note ids after a save-all round.
+#[derive(Debug, Default)]
+pub struct SaveAllOutcome {
+    /// Windows that answered that their text could not be saved.
+    pub unsaved: Vec<String>,
+    /// Windows that did not answer in time.
+    pub silent: Vec<String>,
+}
+
 /// Ask every open note window to save and wait (blocking, at most `timeout`)
-/// for their answers. Returns how many still hold unsaved text. Never call it
-/// on the main thread.
-pub fn save_all_open_notes(app: &AppHandle, timeout: std::time::Duration) -> usize {
+/// for their answers. Never call it on the main thread.
+pub fn save_all_open_notes_detailed(
+    app: &AppHandle,
+    timeout: std::time::Duration,
+) -> SaveAllOutcome {
     let labels = open_note_labels(app);
     if labels.is_empty() {
-        return 0;
+        return SaveAllOutcome::default();
     }
-    let state = app.state::<AppState>();
-    state.quit.begin(labels);
-    let _ = app.emit(SAVE_ALL_NOTES, ());
-    state.quit.wait(timeout)
+    let outcome = app.state::<AppState>().quit.run(
+        labels,
+        || {
+            let _ = app.emit(SAVE_ALL_NOTES, ());
+        },
+        timeout,
+    );
+    let ids = |labels: Vec<String>| -> Vec<String> {
+        labels
+            .iter()
+            .filter_map(|l| note_id_from_label(l).map(str::to_owned))
+            .collect()
+    };
+    SaveAllOutcome {
+        unsaved: ids(outcome.unsaved),
+        silent: ids(outcome.silent),
+    }
+}
+
+/// Ask every open note window to save and wait (blocking, at most `timeout`).
+/// Returns the ids of the notes that answered that their text is not saved.
+/// Windows that never answer are not included: an unresponsive webview cannot
+/// save anyway, and it must not block quitting forever. Never call it on the
+/// main thread.
+pub fn save_all_open_notes(app: &AppHandle, timeout: std::time::Duration) -> Vec<String> {
+    save_all_open_notes_detailed(app, timeout).unsaved
 }
 
 /// Labels of all open note windows.
@@ -461,6 +494,13 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                     .state::<AppState>()
                     .geometry
                     .update(id, position, r.width, r.height);
+            }
+        }
+        WindowEvent::Destroyed => {
+            // A note kept open at the last lock no longer has an editor that
+            // could save it: lock it now (design §4.3).
+            if let Some(id) = note_id_from_label(window.label()) {
+                crate::privacy::release_kept_open(window.app_handle(), id);
             }
         }
         WindowEvent::CloseRequested { api, .. } if window.label() == MANAGER => {

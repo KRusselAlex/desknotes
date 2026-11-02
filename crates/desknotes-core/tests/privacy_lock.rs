@@ -163,12 +163,17 @@ fn export_and_restore_need_unlock_when_private_notes_exist() {
 
     // Locked with no private notes: both still work.
     db.set_privacy_locked(true, &[]);
+    db.refuse_if_any_private_locked().unwrap();
     db.export_backup("0.1.0").unwrap();
     db.restore_backup(&backup, &dir.path().join("b1")).unwrap();
 
     // A private note anywhere (even in the trash) makes both ask for the PIN.
     let id = private_note(&db, "secret", "");
     db.trash_note(&id).unwrap();
+    assert_eq!(
+        db.refuse_if_any_private_locked().unwrap_err().code(),
+        "not_allowed"
+    );
     assert_eq!(
         db.export_backup("0.1.0").err().unwrap().code(),
         "not_allowed"
@@ -182,6 +187,7 @@ fn export_and_restore_need_unlock_when_private_notes_exist() {
     assert_eq!(db.count_all_notes().unwrap(), 2);
 
     db.set_privacy_locked(false, &[]);
+    db.refuse_if_any_private_locked().unwrap();
     let export = db.export_backup("0.1.0").unwrap();
     assert_eq!(export.backup.notes.len(), 2);
 }

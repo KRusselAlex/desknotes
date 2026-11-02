@@ -51,8 +51,8 @@ pub fn new_note(app: &AppHandle) -> IpcResult<Note> {
 /// the main thread.
 pub fn hide_all(app: &AppHandle) -> IpcResult<usize> {
     let unsaved = windows::save_all_open_notes(app, SAVE_TIMEOUT);
-    if unsaved > 0 {
-        return Err(unsaved_error(unsaved));
+    if !unsaved.is_empty() {
+        return Err(unsaved_error(unsaved.len()));
     }
     let state = app.state::<AppState>();
     let ids: Vec<String> = windows::open_note_labels(app)
@@ -147,6 +147,9 @@ pub fn save_note_content(
                 e.code, e.message
             )
         })?;
+    // A private note kept open at the last lock (its text was not saved then)
+    // is saved now: lock it, before the manager reloads its row.
+    crate::privacy::release_kept_open(&app, &id);
     emit_changed(&app, Some(&id), "content");
     Ok(result)
 }

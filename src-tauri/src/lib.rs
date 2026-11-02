@@ -4,6 +4,7 @@
 mod commands;
 mod error;
 pub mod platform;
+mod privacy;
 mod quit;
 mod state;
 mod tray;
@@ -36,6 +37,8 @@ pub fn run() {
         ))
         .setup(|app| {
             let handle = app.handle().clone();
+            // Opening the state also turns the privacy lock on when a PIN is set,
+            // before any note window can ask for its text.
             app.manage(AppState::open(&handle));
             windows::restore_on_startup(&handle);
             tray::install(&handle);
@@ -79,6 +82,17 @@ pub fn run() {
             commands::backup::choose_backup,
             commands::backup::cancel_restore,
             commands::backup::restore_backup,
+            commands::privacy::privacy_status,
+            commands::privacy::unlock,
+            commands::privacy::lock_now,
+            commands::privacy::setup_pin,
+            commands::privacy::change_pin,
+            commands::privacy::turn_off_lock,
+            commands::privacy::new_recovery_code,
+            commands::privacy::set_lock_after,
+            commands::privacy::set_note_private,
+            commands::privacy::report_activity,
+            commands::privacy::acknowledge_pin_reset,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");

@@ -1,7 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use desknotes_core::{CoreResult, Database};
+use desknotes_core::{CoreResult, Database, now_ms};
 use tauri::{AppHandle, Manager};
 
 use crate::error::{IpcError, IpcResult};
@@ -20,6 +20,12 @@ pub struct AppState {
     tray: AtomicBool,
     /// A hide / show of all notes is running (tray or shortcut).
     notes_action: AtomicBool,
+    /// Last input reported by any DeskNotes window (Unix ms), for the
+    /// inactivity lock. Refreshed by `report_activity` and `unlock`.
+    pub last_activity_ms: AtomicI64,
+    /// One-shot permission to choose a new PIN without the current one, set
+    /// only after the Ubuntu password or a recovery code was accepted (Task 7).
+    pub new_pin_allowed: AtomicBool,
 }
 
 pub struct PendingRestore {
@@ -45,6 +51,12 @@ impl AppState {
         for e in &errors {
             eprintln!("DeskNotes: {e}");
         }
+        // DeskNotes starts locked whenever a PIN is set, before any window
+        // can ask for a note (design §4.3). If the PIN setting cannot be read,
+        // lock anyway: the core only applies the lock while a PIN exists.
+        if let Some(db) = &db {
+            db.set_privacy_locked(db.pin_is_set().unwrap_or(true), &[]);
+        }
         let db = Arc::new(Mutex::new(db));
         Self {
             geometry: GeometryWriter::spawn(db.clone()),
@@ -54,6 +66,8 @@ impl AppState {
             pending_restore: Mutex::new(None),
             tray: AtomicBool::new(false),
             notes_action: AtomicBool::new(false),
+            last_activity_ms: AtomicI64::new(now_ms()),
+            new_pin_allowed: AtomicBool::new(false),
         }
     }
 
@@ -81,6 +95,11 @@ impl AppState {
     /// already running: two at once could forget which notes were hidden.
     pub fn begin_notes_action(&self) -> bool {
         !self.notes_action.swap(true, Ordering::AcqRel)
+    }
+
+    /// Remember that the person used DeskNotes just now.
+    pub fn touch_activity(&self) {
+        self.last_activity_ms.store(now_ms(), Ordering::Relaxed);
     }
 
     pub fn end_notes_action(&self) {
