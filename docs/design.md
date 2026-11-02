@@ -225,9 +225,11 @@ stack (`system-ui, "Ubuntu", "Cantarell", "Segoe UI", sans-serif`) for portabili
    single instance, XWayland selection.
 5. Build and **manually verify** on this Ubuntu session; record results in `docs/testing/`.
 
-**M2 — Desktop reliability**: always-on-top toggle, show/hide all, reset size, minimum
-size setting, launch at login, backup/restore (JSON export + SQLite copy), tray
-(AppIndicator), `.deb`/AppImage packaging, CI.
+**M2 — Desktop reliability** (done, 0.2.0): always-on-top toggle, show/hide all (tray,
+manager and a GNOME keyboard shortcut), minimum size setting, keeping notes on screen
+when monitors change, launch at login, backup/restore (JSON export + SQLite copy), tray
+(AppIndicator), `.deb`/AppImage packaging, CI. "Reset size" moved to the per-note Size
+card (M3, DES-19).
 
 **M3 — Customization and privacy**: fonts, size, weight, text/highlight colours,
 alignment, case transform, high-contrast + compact layouts, reset appearance; privacy lock
