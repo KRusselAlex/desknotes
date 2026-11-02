@@ -47,11 +47,17 @@ fn report(app: &AppHandle, message: String) {
 }
 
 /// Run a hide/show action off the main thread (it waits for the notes to save).
-/// A failure opens the manager with the reason.
+/// One at a time: a second press while one runs is ignored. A failure opens the
+/// manager with the reason.
 pub fn spawn_notes_action<T: 'static>(app: &AppHandle, action: fn(&AppHandle) -> IpcResult<T>) {
+    if !app.state::<AppState>().begin_notes_action() {
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Err(e) = action(&app) {
+        let result = action(&app);
+        app.state::<AppState>().end_notes_action();
+        if let Err(e) = result {
             report(&app, e.message);
         }
     });

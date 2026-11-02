@@ -5,6 +5,8 @@
 //! that runs `desknotes --toggle-notes`, only after the person confirms it in
 //! Settings. It touches nothing but its own entry: other custom shortcuts are kept.
 
+use std::path::{Path, PathBuf};
+
 use gio::prelude::*;
 
 const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
@@ -22,6 +24,9 @@ const BINDING_SCHEMAS: &[&str] = &[
     "org.gnome.mutter.keybindings",
     "org.gnome.mutter.wayland.keybindings",
     MEDIA_KEYS,
+    // Ubuntu's dock and tiling extensions (skipped when not installed).
+    "org.gnome.shell.extensions.dash-to-dock",
+    "org.gnome.shell.extensions.tiling-assistant",
 ];
 
 /// A key combination, e.g. Ctrl+Alt+N. Parsed from and written as GTK
@@ -32,7 +37,8 @@ pub struct Accel {
     alt: bool,
     shift: bool,
     superkey: bool,
-    /// Lower case: a letter or digit, `f1`–`f12`, or `space`.
+    /// GTK's key name: a lower-case letter or a digit, `F1`–`F12`, or `space`.
+    /// GTK cannot read `f5`, so the case matters (GNOME Settings must show it).
     key: String,
 }
 
@@ -58,16 +64,19 @@ impl Accel {
             }
             rest = tail;
         }
-        let key = rest.to_ascii_lowercase();
-        let valid = match key.as_str() {
-            k if k.len() == 1 => k.chars().all(|c| c.is_ascii_alphanumeric()),
-            "space" => true,
-            k => k
-                .strip_prefix('f')
-                .and_then(|n| n.parse::<u8>().ok())
-                .is_some_and(|n| (1..=12).contains(&n)),
+        let lower = rest.to_ascii_lowercase();
+        let key = match lower.as_str() {
+            k if k.len() == 1 && k.chars().all(|c| c.is_ascii_alphanumeric()) => lower.clone(),
+            "space" => lower.clone(),
+            k => {
+                let n = k.strip_prefix('f')?.parse::<u8>().ok()?;
+                if !(1..=12).contains(&n) {
+                    return None;
+                }
+                format!("F{n}")
+            }
         };
-        valid.then_some(Accel { key, ..accel })
+        Some(Accel { key, ..accel })
     }
 
     /// Needs Ctrl, Alt or Super: a plain or Shift-only key would take over typing.
@@ -125,13 +134,24 @@ fn without_ours(list: &[String]) -> Vec<String> {
     list.iter().filter(|p| *p != OUR_PATH).cloned().collect()
 }
 
+/// The check GLib applies to a settings path; it returns NULL (and gio-rs then
+/// crashes) for anything else, and the list may hold entries other tools wrote.
+fn is_valid_path(path: &str) -> bool {
+    path.starts_with('/') && path.ends_with('/') && !path.contains("//")
+}
+
 fn schema_installed(id: &str) -> bool {
     gio::SettingsSchemaSource::default().is_some_and(|source| source.lookup(id, true).is_some())
 }
 
-/// Whether this desktop has GNOME's custom keyboard shortcuts.
+/// Whether this desktop has GNOME's custom keyboard shortcuts. A memory or null
+/// settings backend (e.g. an AppImage without dconf) would accept changes and
+/// lose them, so it counts as unavailable.
 pub fn available() -> bool {
-    schema_installed(MEDIA_KEYS) && schema_installed(CUSTOM)
+    let backend = gio::SettingsBackend::default().type_().name();
+    schema_installed(MEDIA_KEYS)
+        && schema_installed(CUSTOM)
+        && !matches!(backend, "GMemorySettingsBackend" | "GNullSettingsBackend")
 }
 
 fn custom_list(media_keys: &gio::Settings) -> Vec<String> {
@@ -142,8 +162,15 @@ fn custom_list(media_keys: &gio::Settings) -> Vec<String> {
         .collect()
 }
 
+/// DeskNotes' shortcut as GNOME has it. `accel` is `None` when the person changed
+/// it in GNOME Settings to a key DeskNotes does not handle; it can still be removed.
+pub struct Current {
+    pub binding: String,
+    pub accel: Option<Accel>,
+}
+
 /// The shortcut DeskNotes set up, if any (and if the person did not remove it).
-pub fn current() -> Option<Accel> {
+pub fn current() -> Option<Current> {
     if !available() {
         return None;
     }
@@ -153,7 +180,11 @@ pub fn current() -> Option<Accel> {
     {
         return None;
     }
-    Accel::parse(&gio::Settings::with_path(CUSTOM, OUR_PATH).string("binding"))
+    let binding = gio::Settings::with_path(CUSTOM, OUR_PATH)
+        .string("binding")
+        .to_string();
+    let accel = Accel::parse(&binding);
+    Some(Current { binding, accel })
 }
 
 /// Names of GNOME shortcuts (or other custom shortcuts) already using `accel`.
@@ -184,6 +215,9 @@ pub fn conflicts(accel: &Accel) -> Vec<String> {
     }
     if available() {
         for path in without_ours(&custom_list(&gio::Settings::new(MEDIA_KEYS))) {
+            if !is_valid_path(&path) {
+                continue;
+            }
             let entry = gio::Settings::with_path(CUSTOM, &path);
             if Accel::parse(&entry.string("binding")).as_ref() == Some(accel) {
                 found.push(entry.string("name").to_string());
@@ -193,18 +227,46 @@ pub fn conflicts(accel: &Accel) -> Vec<String> {
     found
 }
 
-/// The command GNOME runs: this executable (or the AppImage file) with `--toggle-notes`.
-pub fn toggle_command() -> Result<String, String> {
-    let exe = match std::env::var_os("APPIMAGE") {
-        Some(path) => std::path::PathBuf::from(path),
-        None => std::env::current_exe().map_err(|e| e.to_string())?,
+/// The program GNOME should start: this executable, or the AppImage file when
+/// DeskNotes really runs from one. `APPIMAGE` alone is not trusted: it is inherited,
+/// so DeskNotes started from a terminal inside another AppImage would see that one's.
+fn program() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // Linux names a replaced executable "… (deleted)", e.g. after a package upgrade.
+    let exe = match exe.to_str().and_then(|s| s.strip_suffix(" (deleted)")) {
+        Some(s) => PathBuf::from(s),
+        None => exe,
     };
-    let quoted = gio::glib::shell_quote(exe);
+    if let (Some(image), Some(dir)) = (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR")) {
+        let image = PathBuf::from(image);
+        if image.is_absolute() && image.is_file() && exe.starts_with(dir) {
+            return Ok(image);
+        }
+    }
+    Ok(exe)
+}
+
+/// The command line for `program`. GNOME runs custom shortcuts through
+/// `g_app_info_create_from_commandline`, which reads `%x` as a field code, so a
+/// `%` in the path must be doubled after shell quoting.
+fn command_for(program: &Path) -> Result<String, String> {
+    let path = program
+        .to_str()
+        .ok_or("The DeskNotes program path cannot be used in a shortcut.")?;
+    let quoted = gio::glib::shell_quote(path);
+    let quoted = quoted
+        .to_str()
+        .ok_or("The DeskNotes program path cannot be used in a shortcut.")?;
     Ok(format!(
         "{} {}",
-        quoted.to_string_lossy(),
+        quoted.replace('%', "%%"),
         crate::TOGGLE_NOTES_ARG
     ))
+}
+
+/// The command GNOME runs: DeskNotes with `--toggle-notes`.
+pub fn toggle_command() -> Result<String, String> {
+    command_for(&program()?)
 }
 
 /// Add or update DeskNotes' custom shortcut. Call only after the person agreed.
@@ -255,6 +317,47 @@ mod tests {
         assert_eq!(
             Accel::parse("<Shift><Super>space").unwrap().to_gsettings(),
             "<Shift><Super>space"
+        );
+    }
+
+    #[test]
+    fn writes_f_keys_the_way_gtk_reads_them() {
+        // GTK (and so GNOME Settings) cannot read "f5".
+        assert_eq!(
+            Accel::parse("<Super>f5").unwrap().to_gsettings(),
+            "<Super>F5"
+        );
+        assert_eq!(
+            Accel::parse("<Super>F12").unwrap().to_gsettings(),
+            "<Super>F12"
+        );
+        assert_eq!(Accel::parse("<Super>f5"), Accel::parse("<Super>F5"));
+        assert_eq!(Accel::parse("<Alt>N").unwrap().to_gsettings(), "<Alt>n");
+    }
+
+    #[test]
+    fn skips_settings_paths_glib_would_refuse() {
+        assert!(is_valid_path(OUR_PATH));
+        assert!(!is_valid_path(
+            "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0"
+        ));
+        assert!(!is_valid_path("org/gnome/x/"));
+        assert!(!is_valid_path("/org//gnome/x/"));
+    }
+
+    #[test]
+    fn quotes_the_program_and_doubles_percent_signs() {
+        assert_eq!(
+            command_for(Path::new("/usr/bin/desknotes")).unwrap(),
+            "'/usr/bin/desknotes' --toggle-notes"
+        );
+        assert_eq!(
+            command_for(Path::new("/home/me/My Apps/Desk%20Notes.AppImage")).unwrap(),
+            "'/home/me/My Apps/Desk%%20Notes.AppImage' --toggle-notes"
+        );
+        assert_eq!(
+            command_for(Path::new("/home/me/it's/desknotes")).unwrap(),
+            "'/home/me/it'\\''s/desknotes' --toggle-notes"
         );
     }
 
@@ -319,7 +422,7 @@ mod tests {
             vec!["terminal"]
         );
         install(&accel, "/usr/bin/desknotes --toggle-notes").unwrap();
-        assert_eq!(current(), Some(accel.clone()));
+        assert_eq!(current().and_then(|c| c.accel), Some(accel.clone()));
         assert_eq!(
             custom_list(&media_keys),
             vec![other.to_string(), OUR_PATH.to_string()]
@@ -329,7 +432,7 @@ mod tests {
         assert_eq!(ours.string("name"), NAME);
 
         remove().unwrap();
-        assert_eq!(current(), None);
+        assert!(current().is_none());
         assert_eq!(custom_list(&media_keys), vec![other.to_string()]);
         assert_eq!(
             other_entry.string("binding"),

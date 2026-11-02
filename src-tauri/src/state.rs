@@ -18,6 +18,8 @@ pub struct AppState {
     pub pending_restore: Mutex<Option<PendingRestore>>,
     /// Whether the tray icon was created (the desktop may not support one).
     tray: AtomicBool,
+    /// A hide / show of all notes is running (tray or shortcut).
+    notes_action: AtomicBool,
 }
 
 pub struct PendingRestore {
@@ -51,6 +53,7 @@ impl AppState {
             quit: QuitCoordinator::default(),
             pending_restore: Mutex::new(None),
             tray: AtomicBool::new(false),
+            notes_action: AtomicBool::new(false),
         }
     }
 
@@ -72,6 +75,16 @@ impl AppState {
 
     pub fn tray_available(&self) -> bool {
         self.tray.load(Ordering::Relaxed)
+    }
+
+    /// Claim the single slot for a hide / show of all notes. False when one is
+    /// already running: two at once could forget which notes were hidden.
+    pub fn begin_notes_action(&self) -> bool {
+        !self.notes_action.swap(true, Ordering::AcqRel)
+    }
+
+    pub fn end_notes_action(&self) {
+        self.notes_action.store(false, Ordering::Release);
     }
 
     pub fn push_error(&self, message: String) {

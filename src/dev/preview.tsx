@@ -79,6 +79,11 @@ const noteId = params.get("id") ?? "a2";
 if (params.get("locked")) find(noteId).editLocked = true;
 const label = which === "note" ? `note-${noteId}` : which;
 mockWindows(label);
+let shortcut: { available: boolean; binding: string | null; label: string | null } = {
+  available: params.get("noshortcut") === null,
+  binding: null,
+  label: null,
+};
 
 mockIPC(
   (cmd, args) => {
@@ -114,6 +119,17 @@ mockIPC(
         return 0;
       case "get_settings":
         return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+      case "get_toggle_shortcut":
+        return { ...shortcut };
+      case "set_toggle_shortcut": {
+        if (a.binding === "<Control><Alt>t") throw { code: "shortcut_taken", message: "Ctrl+Alt+T is already used by terminal." };
+        const label = String(a.binding).replace("<Control>", "Ctrl+").replace("<Alt>", "Alt+").replace("<Shift>", "Shift+").replace("<Super>", "Super+");
+        shortcut = { available: true, binding: String(a.binding), label: label.slice(0, -1) + label.slice(-1).toUpperCase() };
+        return { ...shortcut };
+      }
+      case "remove_toggle_shortcut":
+        shortcut = { available: true, binding: null, label: null };
+        return { ...shortcut };
       case "set_launch_at_login":
         return Boolean(a.enabled);
       case "set_min_note_size":

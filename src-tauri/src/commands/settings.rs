@@ -97,8 +97,14 @@ fn toggle_shortcut_view() -> ToggleShortcut {
         let current = gnome::current();
         ToggleShortcut {
             available: gnome::available(),
-            binding: current.as_ref().map(|a| a.to_gsettings()),
-            label: current.as_ref().map(|a| a.label()),
+            // A key changed by hand in GNOME Settings that DeskNotes cannot read is
+            // shown as GNOME stores it, and can still be removed.
+            label: current.as_ref().map(|c| {
+                c.accel
+                    .as_ref()
+                    .map_or_else(|| c.binding.clone(), |a| a.label())
+            }),
+            binding: current.map(|c| c.accel.map_or(c.binding, |a| a.to_gsettings())),
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -111,6 +117,19 @@ fn toggle_shortcut_view() -> ToggleShortcut {
     }
 }
 
+/// The desktop's keyboard settings are changed only from the Settings window,
+/// where the person confirms it; note windows cannot do it.
+fn only_from_settings(window: &tauri::WebviewWindow) -> IpcResult<()> {
+    if window.label() == windows::SETTINGS {
+        Ok(())
+    } else {
+        Err(IpcError::new(
+            "not_allowed",
+            "The keyboard shortcut can only be changed in Settings.",
+        ))
+    }
+}
+
 #[tauri::command]
 pub fn get_toggle_shortcut() -> ToggleShortcut {
     toggle_shortcut_view()
@@ -119,7 +138,11 @@ pub fn get_toggle_shortcut() -> ToggleShortcut {
 /// Add or change the GNOME custom shortcut that runs `desknotes --toggle-notes`.
 /// The Settings window calls this only after the person confirmed it.
 #[tauri::command]
-pub fn set_toggle_shortcut(binding: String) -> IpcResult<ToggleShortcut> {
+pub fn set_toggle_shortcut(
+    window: tauri::WebviewWindow,
+    binding: String,
+) -> IpcResult<ToggleShortcut> {
+    only_from_settings(&window)?;
     #[cfg(target_os = "linux")]
     {
         use crate::platform::gnome_shortcut::{self as gnome, Accel};
@@ -160,7 +183,8 @@ pub fn set_toggle_shortcut(binding: String) -> IpcResult<ToggleShortcut> {
 
 /// Remove DeskNotes' GNOME custom shortcut (other shortcuts are kept).
 #[tauri::command]
-pub fn remove_toggle_shortcut() -> IpcResult<ToggleShortcut> {
+pub fn remove_toggle_shortcut(window: tauri::WebviewWindow) -> IpcResult<ToggleShortcut> {
+    only_from_settings(&window)?;
     #[cfg(target_os = "linux")]
     if crate::platform::gnome_shortcut::available() {
         crate::platform::gnome_shortcut::remove().map_err(|e| IpcError::new("shortcut", e))?;

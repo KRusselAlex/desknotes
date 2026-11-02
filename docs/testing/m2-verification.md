@@ -253,5 +253,33 @@ against a **scratch keyfile backend** (`GSETTINGS_BACKEND=keyfile`, scratch
 | Remove | Only DeskNotes' entry goes; the other shortcut keeps its name, key and place |
 | The owner's own GNOME settings | `dconf dump` of media-keys identical before and after |
 
-Not checked yet: DeskNotes adding the shortcut itself on a real desktop (waits for the
-Settings dialog design; the owner's hand-made shortcut shows the key press works).
+**Part 3, the Settings row and dialog.** No design existed; the owner asked DeskNotes to
+draw it from the existing designs: the S2 row (mono key pill, "Change" link), the S3
+confirmation modal, tokens only. Checked in the preview (light and dark: not set up,
+dialog, conflict, set up, change with "Remove shortcut") and in the real app, release
+build, with GNOME settings pointed at a scratch keyfile (`GSETTINGS_BACKEND=keyfile`):
+
+| Step | Result |
+|---|---|
+| Settings → General | "Show / hide all notes — Not set up — Set up…" |
+| Set up… | Dialog explains what will be added; field focused, suggests Ctrl+Alt+N |
+| Set shortcut | Scratch settings get one entry: name, `'…/desknotes' --toggle-notes`, `<Control><Alt>n`, added to the list; row shows the key and "Change" |
+| Change → Remove shortcut | List emptied; row back to "Not set up" |
+| The owner's own GNOME shortcuts | `dconf dump` identical before and after |
+
+**Pre-merge review (desknotes-reviewer), all fixed:** a stray `APPIMAGE` from another
+AppImage could have been written as the command (now only trusted when DeskNotes runs from
+it; " (deleted)" stripped after upgrades); `%` in the path is doubled for GNOME's launcher;
+malformed entries in the custom-shortcut list are skipped (GLib returns NULL for them, which
+crashed); F-keys are written as `F5` (GTK cannot read `f5`); a second hide / show while one
+runs is ignored (two at once could forget hidden notes); Shift+Tab leaves the key field,
+focus stays in the dialog and returns to the button; only the Settings window may change the
+desktop shortcut; a key changed by hand in GNOME Settings is shown as stored and can still be
+removed; memory/null settings backends count as unavailable; Ubuntu's dock and tiling keys
+are checked for conflicts; numpad keys are refused. The real-app run above was repeated
+after the fixes with the same results.
+
+Not checked: DeskNotes writing the shortcut into the owner's real settings (they already
+have a hand-made Ctrl+Alt+N, which the conflict check would report). Removing DeskNotes
+does not remove its GNOME shortcut; use "Remove shortcut" first, or GNOME Settings →
+Keyboard afterwards.

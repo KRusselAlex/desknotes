@@ -7,6 +7,7 @@ import type { SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
 import { BackupPane } from "./BackupPane";
 import { MinNoteSize } from "./MinNoteSize";
+import { ShortcutRow } from "./ShortcutRow";
 
 type Section = "general" | "backup" | "about";
 
@@ -110,6 +111,7 @@ export function SettingsWindow() {
                   }
                 />
               </div>
+              <ShortcutRow />
             </div>
           </>
         )}

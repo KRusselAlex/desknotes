@@ -277,3 +277,62 @@
   padding: 0 16px;
   font-size: 14px;
 }
+
+/* "Show / hide all notes" row (design S2) and its set-up dialog (built on S3). */
+.dn-key-pill {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  border: 1px solid var(--dn-app-line);
+  display: flex;
+  align-items: center;
+  font-family: var(--dn-font-mono);
+  font-size: 13px;
+}
+/* Text button, as "Change" (S2) and "Reset appearance" (S4). */
+.dn-btn-link {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: var(--dn-accent-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dn-btn-link.is-danger {
+  margin-right: auto;
+  padding: 0;
+  color: var(--dn-danger);
+}
+.dn-key-capture {
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--dn-app-line);
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-bg);
+  color: var(--dn-app-text);
+  font-family: var(--dn-font-mono);
+  font-size: 15px;
+  text-align: center;
+  caret-color: transparent;
+}
+.dn-key-capture[aria-invalid="true"] {
+  border-color: var(--dn-danger);
+}
+.dn-field-error {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--dn-danger);
+}
+.dn-modal-actions .dn-btn-accent.is-large {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+.dn-modal-actions button:disabled {
+  opacity: 0.5;
+}

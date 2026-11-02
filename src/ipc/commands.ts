@@ -13,6 +13,7 @@ import type {
   RestoreResult,
   SaveResult,
   SettingsView,
+  ToggleShortcut,
 } from "../types/note";
 
 /** Error shape produced by the Rust side (`IpcError`). */
@@ -73,6 +74,10 @@ export const commands = {
   /** Applies to open notes too. Returns the size that was saved. */
   setMinNoteSize: (width: number, height: number) =>
     call<NoteSize>("set_min_note_size", { width, height }),
+  getToggleShortcut: () => call<ToggleShortcut>("get_toggle_shortcut"),
+  /** Adds or changes DeskNotes' GNOME shortcut. Call only after the person confirmed. */
+  setToggleShortcut: (binding: string) => call<ToggleShortcut>("set_toggle_shortcut", { binding }),
+  removeToggleShortcut: () => call<ToggleShortcut>("remove_toggle_shortcut"),
   openDataFolder: () => call<void>("open_data_folder"),
   /** Opens a save dialog; null when cancelled. */
   exportBackup: () => call<ExportResult | null>("export_backup"),
