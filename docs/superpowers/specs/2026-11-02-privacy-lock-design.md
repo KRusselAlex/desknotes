@@ -55,6 +55,7 @@ Anti-goals (would be a failure even if it "works")
 | D11 | Last resort when neither the Ubuntu password nor a recovery code works (e.g. the polkit file was removed, or the AppImage runs on data set up by the `.deb`): `desknotes --reset-pin`, with DeskNotes closed. Where polkit is available it asks for the Ubuntu password first, so it does not weaken D5; otherwise it resets, and the next start shows "The PIN was reset on <date>", which must be acknowledged (`docs/design.md` §7 option 2). | builder's call (owner had approved the terminal reset before choosing option C) |
 | D12 | Locked private notes cannot be destroyed or copied either: Duplicate, Delete permanently, Empty trash (when it holds private notes), Restore from backup (when private notes exist) and turning the lock off ask for the PIN first. Moving, resizing, colour, hide and show stay allowed. | builder's call |
 | D13 | Unlocking from the manager: clicking a locked private note opens its window at the PIN field (L2). No separate manager lock screen. "Lock now" is also in the manager ⋯ menu and the tray. | builder's call |
+| D14 | Settings → Privacy offers "If I forget my PIN: ◉ Use my computer password ○ Use a recovery code", chosen when the PIN is set up and changeable any time with the current PIN. "Use my computer password" is offered only where D5 can work. It covers machines without a password (where polkit would accept an empty password and protect nothing) and a password added later. Choosing a recovery code shows a new one once and turns the D5 route off; choosing the computer password makes the old recovery code stop working. PINs set before D14 keep the D5/D6 rule. Refines D5 and D6. | owner (2026-11-02) |
 
 ## 4. How it behaves
 
@@ -106,12 +107,19 @@ Anti-goals (would be a failure even if it "works")
   `docs/design.md`); salt per hash; parameters chosen so one check takes roughly
   0.3–0.5 s on the owner's laptop. Constant-time comparison is provided by the crate.
 
-### 4.6 Forgotten PIN (D5, D6)
+### 4.6 Forgotten PIN (D5, D6, D14)
 - "Forgot your PIN?" → system password prompt via polkit, using a policy installed by the
   `.deb` (`/usr/share/polkit-1/actions/…desknotes…policy`, `auth_self`, every time, no
   caching). Success → choose and confirm a new PIN. Failure/cancel → nothing changes.
 - Where the policy or a polkit agent is missing: the recovery code entry (design L4),
   then choose a new PIN and receive a new recovery code.
+- Which of the two is used follows the owner's choice (D14): "Use my computer password"
+  (only where the policy and a polkit agent are present) or "Use a recovery code". With a
+  recovery code chosen, the Ubuntu-password route is refused even where polkit works, and
+  a new PIN chosen after recovering comes with a new recovery code. The choice is made at
+  setup and changed in Settings → Privacy with the current PIN (shared wrong-PIN waits):
+  switching to the code shows a new code once; switching to the computer password removes
+  the stored code. Turning the lock off or `--reset-pin` forgets the choice with the PIN.
 - If neither works: `desknotes --reset-pin` (D11).
 - Changing the PIN (Settings, design "Change PIN · 1 of 3"): current PIN, new, confirm.
 

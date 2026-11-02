@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use desknotes_core::db::RecoveryMethod;
 use desknotes_core::now_ms;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -26,9 +27,20 @@ pub struct PrivacyChanged {
     pub locked: bool,
 }
 
-/// How a forgotten PIN can be replaced here (design D5, D6).
-pub fn recovery_mode(system_auth: bool, has_recovery_code: bool) -> &'static str {
-    if system_auth {
+/// Whether the computer password may replace a forgotten PIN (design D5, D14):
+/// it can be used here, and the owner did not choose a recovery code instead.
+/// `None` (PINs set before D14) keeps the earlier rule.
+pub fn system_route_allowed(method: Option<RecoveryMethod>, system_auth: bool) -> bool {
+    system_auth && method != Some(RecoveryMethod::Code)
+}
+
+/// How a forgotten PIN can be replaced here (design D5, D6, D14).
+pub fn recovery_mode(
+    method: Option<RecoveryMethod>,
+    system_auth: bool,
+    has_recovery_code: bool,
+) -> &'static str {
+    if system_route_allowed(method, system_auth) {
         "system"
     } else if has_recovery_code {
         "code"
@@ -341,10 +353,22 @@ mod tests {
     }
 
     #[test]
-    fn status_reports_recovery_mode() {
-        assert_eq!(recovery_mode(true, true), "system");
-        assert_eq!(recovery_mode(true, false), "system");
-        assert_eq!(recovery_mode(false, true), "code");
-        assert_eq!(recovery_mode(false, false), "none");
+    fn status_recovery_follows_the_chosen_method() {
+        use desknotes_core::db::RecoveryMethod::{Code, System};
+        // Chosen and usable here: the computer password, even with a code stored.
+        assert_eq!(recovery_mode(Some(System), true, false), "system");
+        assert_eq!(recovery_mode(Some(System), true, true), "system");
+        // Chosen but not usable here (e.g. the AppImage): the code, if any.
+        assert_eq!(recovery_mode(Some(System), false, true), "code");
+        assert_eq!(recovery_mode(Some(System), false, false), "none");
+        // A recovery code was chosen: never the computer password.
+        assert_eq!(recovery_mode(Some(Code), true, true), "code");
+        assert_eq!(recovery_mode(Some(Code), false, true), "code");
+        assert_eq!(recovery_mode(Some(Code), true, false), "none");
+        // PINs set before D14 keep the earlier rule.
+        assert_eq!(recovery_mode(None, true, true), "system");
+        assert_eq!(recovery_mode(None, true, false), "system");
+        assert_eq!(recovery_mode(None, false, true), "code");
+        assert_eq!(recovery_mode(None, false, false), "none");
     }
 }

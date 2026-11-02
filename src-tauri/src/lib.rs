@@ -107,6 +107,7 @@ pub fn run() {
             commands::privacy::change_pin,
             commands::privacy::turn_off_lock,
             commands::privacy::new_recovery_code,
+            commands::privacy::set_recovery_method,
             commands::privacy::set_lock_after,
             commands::privacy::set_note_private,
             commands::privacy::report_activity,

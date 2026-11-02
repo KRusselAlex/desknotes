@@ -6,7 +6,8 @@
 // Privacy lock: ?w=note&id=a2&locked=private makes the note private (label from
 // &label=, default "Bank"; &label= with nothing shows "Private note") and starts
 // locked. The right PIN is 246810. &failures=4 makes the next wrong PIN start the
-// 30 s wait (L3); &nopin previews "Make private" without a PIN. In the console,
+// 30 s wait (L3); &nopin previews "Make private" without a PIN; &nosystem previews a
+// machine where the Ubuntu password cannot be used (the recovery code only). In the console,
 // previewLock() locks and previewUnlock() unlocks as the native side would.
 
 import { StrictMode } from "react";
@@ -16,7 +17,14 @@ import { emit } from "@tauri-apps/api/event";
 import fixture from "../../tests/fixtures/rich-doc.json";
 import { App } from "../app/App";
 import { followSystemTheme } from "../app/theme";
-import { PRIVATE_FALLBACK_LABEL, type Note, type NoteFilter, type PinCheck } from "../types/note";
+import {
+  PRIVATE_FALLBACK_LABEL,
+  type Note,
+  type NoteFilter,
+  type PinCheck,
+  type PrivacyStatus,
+  type RecoveryMethod,
+} from "../types/note";
 import "../styles/tokens.css";
 import "../styles/global.css";
 import "../styles/components.css";
@@ -100,12 +108,30 @@ if (lockParam === "private") {
 
 // Fake privacy lock, following the native rules (crates/desknotes-core/src/db/privacy.rs).
 const PREVIEW_PIN = "246810";
+const systemAvailable = params.get("nosystem") === null;
 const privacy = {
   pinSet: params.get("nopin") === null,
   locked: lockParam === "private",
   failures: Number(params.get("failures") ?? 0),
   waitUntil: 0,
+  method: (params.get("nopin") === null ? (systemAvailable ? "system" : "code") : null) as RecoveryMethod | null,
+  hasCode: params.get("nopin") === null && !systemAvailable,
 };
+const PREVIEW_CODE = "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ";
+const systemRefused = () => ({ code: "not_allowed", message: "the Ubuntu password cannot be used here; choose a recovery code" });
+function privacyStatus(): PrivacyStatus {
+  const recovery =
+    systemAvailable && privacy.method !== "code" ? "system" : privacy.hasCode ? "code" : "none";
+  return {
+    enabled: privacy.pinSet,
+    locked: privacy.pinSet && privacy.locked,
+    lockAfterMinutes: 5,
+    recovery,
+    recoveryMethod: privacy.method,
+    systemAvailable,
+    resetAt: null,
+  };
+}
 const isWithheld = (n: Note) => privacy.pinSet && privacy.locked && n.private;
 const redact = (n: Note): Note => ({
   ...n,
@@ -200,7 +226,26 @@ mockIPC(
         find(a.id).editLocked = Boolean(a.locked);
         return null;
       case "privacy_status":
-        return { enabled: privacy.pinSet, locked: privacy.pinSet && privacy.locked, lockAfterMinutes: 5, recovery: "system", resetAt: null };
+        return privacyStatus();
+      case "setup_pin": {
+        if (a.method === "system" && !systemAvailable) throw systemRefused();
+        if (privacy.pinSet) throw { code: "not_allowed", message: "a PIN is already set" };
+        privacy.pinSet = true;
+        privacy.locked = false;
+        privacy.method = a.method as RecoveryMethod;
+        privacy.hasCode = a.method === "code";
+        announce(false);
+        return { recoveryCode: privacy.hasCode ? PREVIEW_CODE : null };
+      }
+      case "set_recovery_method": {
+        if (a.method === "system" && !systemAvailable) throw systemRefused();
+        if (!privacy.pinSet) throw { code: "not_allowed", message: "nothing is set to check" };
+        const check = checkPin(String(a.pin));
+        if (check.kind !== "ok") return { check, recoveryCode: null };
+        privacy.method = a.method as RecoveryMethod;
+        privacy.hasCode = a.method === "code";
+        return { check, recoveryCode: privacy.hasCode ? PREVIEW_CODE : null };
+      }
       case "unlock": {
         if (!privacy.pinSet) throw { code: "not_allowed", message: "nothing is set to check" };
         // Like Argon2 in a release build: about a third of a second.

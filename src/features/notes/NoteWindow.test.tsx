@@ -90,6 +90,8 @@ const status = (over: Partial<PrivacyStatus> = {}): PrivacyStatus => ({
   locked: false,
   lockAfterMinutes: 5,
   recovery: "system",
+  recoveryMethod: "system",
+  systemAvailable: true,
   resetAt: null,
   ...over,
 });

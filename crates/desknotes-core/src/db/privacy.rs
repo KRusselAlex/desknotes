@@ -1,10 +1,11 @@
 //! Storage for the privacy lock: PIN hash, recovery-code hash, wrong-PIN throttle,
-//! the "PIN was reset" marker and the lock-after setting (design D6, D8, D11, §4.5-4.6).
+//! the "PIN was reset" marker, the lock-after setting and how a forgotten PIN is
+//! replaced (design D6, D8, D11, D14, §4.5-4.6).
 //!
 //! Callers authorise before changing anything here. PINs, hashes and codes are never
 //! logged or put into error messages.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::Database;
 use crate::error::{CoreError, CoreResult};
@@ -21,6 +22,8 @@ pub const PIN_THROTTLE: &str = "pin_throttle";
 /// Unix ms of the last `desknotes --reset-pin` (D11), until the owner acknowledges it.
 pub const PIN_RESET_AT: &str = "pin_reset_at";
 pub const LOCK_AFTER_MINUTES: &str = "lock_after_minutes";
+/// "system" or "code" (design D14). Missing for PINs set before D14.
+pub const RECOVERY_METHOD: &str = "recovery_method";
 
 /// Minutes of inactivity offered for auto-lock; the first is not special.
 pub const LOCK_AFTER_CHOICES: [u32; 4] = [1, 5, 10, 15];
@@ -43,6 +46,32 @@ pub enum PinCheck {
     Waiting {
         wait_secs: u64,
     },
+}
+
+/// How a forgotten PIN is replaced, as chosen by the owner (design D14): the
+/// computer's own password (polkit, D5) or a recovery code (D6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecoveryMethod {
+    System,
+    Code,
+}
+
+impl RecoveryMethod {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Code => "code",
+        }
+    }
+
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "system" => Some(Self::System),
+            "code" => Some(Self::Code),
+            _ => None,
+        }
+    }
 }
 
 impl Database {
@@ -128,19 +157,38 @@ impl Database {
         Ok(self.get_setting(PIN_RECOVERY_HASH)?.is_some())
     }
 
+    /// Removes only the recovery code, so it stops working (D14: the owner chose
+    /// the computer password instead). The PIN, method and wait are kept.
+    pub fn clear_recovery_code(&self) -> CoreResult<()> {
+        self.delete_setting(PIN_RECOVERY_HASH)
+    }
+
+    /// The chosen way back; `None` when never chosen (PINs set before D14) or damaged.
+    pub fn recovery_method(&self) -> CoreResult<Option<RecoveryMethod>> {
+        Ok(self
+            .get_setting(RECOVERY_METHOD)?
+            .and_then(|raw| RecoveryMethod::parse(&raw)))
+    }
+
+    /// Callers check the PIN and that the method can be used here first.
+    pub fn set_recovery_method(&self, method: RecoveryMethod) -> CoreResult<()> {
+        self.set_setting(RECOVERY_METHOD, method.as_str())
+    }
+
     /// Spacing, dashes and case do not matter. Shares the wrong-PIN throttle.
     pub fn check_recovery_code(&self, code: &str, now_ms: i64) -> CoreResult<PinCheck> {
         let normalized = normalize_recovery_code(code);
         self.check_secret(PIN_RECOVERY_HASH, normalized.as_deref(), now_ms)
     }
 
-    /// Removes the PIN, recovery code and wait. Private flags and labels stay.
+    /// Removes the PIN, recovery code, recovery method and wait. Private flags and
+    /// labels stay.
     /// The privacy lock is turned off too, so a PIN set later does not suddenly
     /// lock notes whose editors are open; the shell locks again explicitly.
     pub fn clear_pin(&self) -> CoreResult<()> {
         self.conn.execute(
-            "DELETE FROM settings WHERE key IN (?1, ?2, ?3)",
-            [PIN_HASH, PIN_RECOVERY_HASH, PIN_THROTTLE],
+            "DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4)",
+            [PIN_HASH, PIN_RECOVERY_HASH, PIN_THROTTLE, RECOVERY_METHOD],
         )?;
         self.set_privacy_locked(false, &[]);
         Ok(())
@@ -351,6 +399,81 @@ mod tests {
         let note = db.get_note(&id).unwrap();
         assert!(note.private);
         assert_eq!(note.private_label, "Work");
+    }
+
+    #[test]
+    fn recovery_method_round_trips_and_damaged_reads_none() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.recovery_method().unwrap(), None);
+        db.set_recovery_method(RecoveryMethod::Code).unwrap();
+        assert_eq!(
+            db.get_setting(RECOVERY_METHOD).unwrap().as_deref(),
+            Some("code")
+        );
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::Code));
+        db.set_recovery_method(RecoveryMethod::System).unwrap();
+        assert_eq!(
+            db.get_setting(RECOVERY_METHOD).unwrap().as_deref(),
+            Some("system")
+        );
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+        for raw in ["", "junk", "System", "CODE", " code"] {
+            db.set_setting(RECOVERY_METHOD, raw).unwrap();
+            assert_eq!(db.recovery_method().unwrap(), None, "{raw:?}");
+        }
+
+        // The wire format the UI reads and sends.
+        assert_eq!(
+            serde_json::to_string(&Some(RecoveryMethod::System)).unwrap(),
+            r#""system""#
+        );
+        assert_eq!(
+            serde_json::to_string(&None::<RecoveryMethod>).unwrap(),
+            "null"
+        );
+        assert_eq!(
+            serde_json::from_str::<RecoveryMethod>(r#""code""#).unwrap(),
+            RecoveryMethod::Code
+        );
+        assert!(serde_json::from_str::<RecoveryMethod>(r#""none""#).is_err());
+    }
+
+    #[test]
+    fn clear_recovery_code_removes_only_the_code() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.set_setting(PIN_RECOVERY_HASH, &recovery().1).unwrap();
+        db.set_recovery_method(RecoveryMethod::System).unwrap();
+        db.save_throttle(&Throttle {
+            failures: 2,
+            wait_until_ms: 0,
+        })
+        .unwrap();
+
+        db.clear_recovery_code().unwrap();
+        assert!(!db.has_recovery_code().unwrap());
+        assert!(db.pin_is_set().unwrap());
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+        assert_eq!(throttle_of(&db).failures, 2);
+        assert_eq!(
+            db.check_recovery_code(&recovery().0, NOW)
+                .unwrap_err()
+                .code(),
+            "not_allowed",
+            "the old code no longer works"
+        );
+        // Nothing to clear is fine.
+        db.clear_recovery_code().unwrap();
+    }
+
+    #[test]
+    fn clear_pin_forgets_the_method() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.set_recovery_method(RecoveryMethod::Code).unwrap();
+        db.clear_pin().unwrap();
+        assert_eq!(db.recovery_method().unwrap(), None);
+        assert_eq!(db.get_setting(RECOVERY_METHOD).unwrap(), None);
     }
 
     #[test]

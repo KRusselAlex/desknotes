@@ -16,7 +16,7 @@ use crate::error::{CoreError, CoreResult};
 
 pub use backup::{Export, LAST_BACKUP_AT};
 pub use migrations::LATEST_VERSION;
-pub use privacy::{LOCK_AFTER_CHOICES, PinCheck};
+pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};
 
 /// Message of the error returned when a locked private note is asked to change.
 const PRIVATE_LOCKED: &str = "private notes are locked";

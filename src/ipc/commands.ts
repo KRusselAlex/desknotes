@@ -11,6 +11,8 @@ import type {
   NoteSummary,
   PinCheck,
   PrivacyStatus,
+  RecoveryChange,
+  RecoveryMethod,
   RestorePreview,
   RestoreResult,
   SaveResult,
@@ -98,14 +100,17 @@ export const commands = {
   unlock: (pin: string) => call<PinCheck>("unlock", { pin }),
   /** Saves every open note, then locks private notes. */
   lockNow: () => call<void>("lock_now"),
-  /** Settings only. */
-  setupPin: (pin: string) => call<SetupResult>("setup_pin", { pin }),
+  /** Settings only. "system" is refused where the Ubuntu password cannot be used. */
+  setupPin: (pin: string, method: RecoveryMethod) => call<SetupResult>("setup_pin", { pin, method }),
   /** Settings only. */
   changePin: (current: string, next: string) => call<PinCheck>("change_pin", { current, new: next }),
   /** Settings only. Private flags and labels are kept. */
   turnOffLock: (pin: string) => call<PinCheck>("turn_off_lock", { pin }),
   /** Settings only. Null when the PIN was not accepted. */
   newRecoveryCode: (pin: string) => call<string | null>("new_recovery_code", { pin }),
+  /** Settings only. Switching to "code" returns the new recovery code, shown once. */
+  setRecoveryMethod: (pin: string, method: RecoveryMethod) =>
+    call<RecoveryChange>("set_recovery_method", { pin, method }),
   /** Settings only: 1, 5, 10 or 15. */
   setLockAfter: (minutes: number) => call<void>("set_lock_after", { minutes }),
   /** Making a note private needs a PIN; `label` replaces the stored one ("" or null clears it). */

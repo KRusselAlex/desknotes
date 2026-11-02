@@ -7,12 +7,16 @@
 //! Forgotten PIN (§4.6, Ruling R17): `forgot_pin_system` or `recover_with_code`,
 //! from any window, only prove who is asking (they return success or a
 //! `PinCheck`, never a code). On success the UI opens Settings → Privacy, where
-//! `choose_new_pin` (Settings only) stores the new PIN and, where the Ubuntu
-//! password cannot be used, returns the new recovery code.
+//! `choose_new_pin` (Settings only) stores the new PIN and, where the recovery
+//! code is the way back, returns the new recovery code.
+//!
+//! The way back is the owner's choice (design D14): "Use my computer password"
+//! (only where the Ubuntu password can be used) or "Use a recovery code", made
+//! with `setup_pin` and changed with `set_recovery_method` (current PIN needed).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use desknotes_core::db::PinCheck;
+use desknotes_core::db::{PinCheck, RecoveryMethod};
 use desknotes_core::privacy::{PIN_DIGITS, validate_new_pin};
 use desknotes_core::validation::parse_note_id;
 use desknotes_core::{CoreError, CoreResult, Database, now_ms};
@@ -22,7 +26,7 @@ use tauri::{AppHandle, State, WebviewWindow};
 use super::settings::{only_from_settings, only_from_settings_label};
 use crate::error::{IpcError, IpcResult};
 use crate::platform::system_auth::{ask_system_password, system_auth_available};
-use crate::privacy::{self, emit_privacy_changed, recovery_mode};
+use crate::privacy::{self, emit_privacy_changed, recovery_mode, system_route_allowed};
 use crate::state::AppState;
 use crate::tray;
 use crate::windows::emit_changed;
@@ -38,8 +42,15 @@ pub struct PrivacyStatus {
     /// Private notes are locked now.
     pub locked: bool,
     pub lock_after_minutes: u32,
-    /// "system" (Ubuntu password), "code" (recovery code) or "none".
+    /// What "Forgot your PIN?" uses here: "system" (Ubuntu password), "code"
+    /// (recovery code) or "none".
     pub recovery: &'static str,
+    /// The owner's choice (D14); `null` when none is stored (no PIN, or a PIN
+    /// set before D14).
+    pub recovery_method: Option<RecoveryMethod>,
+    /// The Ubuntu password can be used here, so "Use my computer password" may
+    /// be offered.
+    pub system_available: bool,
     /// When `desknotes --reset-pin` reset the PIN (Unix ms), until acknowledged.
     pub reset_at: Option<i64>,
 }
@@ -48,7 +59,17 @@ pub struct PrivacyStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupResult {
-    /// Shown once, where the Ubuntu password cannot be used (design D6).
+    /// Shown once, where the recovery code is the way back (design D6, D14).
+    pub recovery_code: Option<String>,
+}
+
+/// Result of changing how a forgotten PIN is replaced (design D14).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryChange {
+    /// Anything but `ok`: nothing changed (a wait may have started).
+    pub check: PinCheck,
+    /// The new recovery code when switching to "code", shown once.
     pub recovery_code: Option<String>,
 }
 
@@ -69,6 +90,79 @@ fn store_pin_with_code(db: &Database, pin: &str, issue_code: bool) -> CoreResult
             Err(e)
         }
     }
+}
+
+/// "Use my computer password" only where the Ubuntu password can be used (D14):
+/// elsewhere, or with no password set, polkit would protect nothing.
+fn method_usable(method: RecoveryMethod, system_auth: bool) -> CoreResult<()> {
+    if method == RecoveryMethod::System && !system_auth {
+        return Err(CoreError::NotAllowed(
+            "the Ubuntu password cannot be used here; choose a recovery code".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// A new PIN after forgetting the old one comes with a new recovery code
+/// unless the Ubuntu password is the way back.
+fn issue_code_with_new_pin(method: Option<RecoveryMethod>, system_auth: bool) -> bool {
+    !system_route_allowed(method, system_auth)
+}
+
+/// The first PIN with the chosen way back: a recovery code only for "code";
+/// for "system" any stray code is removed so only the chosen way works. Either
+/// all is stored or nothing (Ruling R8). Callers check `method_usable` first.
+fn store_first_pin(db: &Database, pin: &str, method: RecoveryMethod) -> CoreResult<Option<String>> {
+    if db.pin_is_set()? {
+        return Err(CoreError::NotAllowed("a PIN is already set".into()));
+    }
+    let code = store_pin_with_code(db, pin, method == RecoveryMethod::Code)?;
+    let rest = db.set_recovery_method(method).and_then(|()| match method {
+        RecoveryMethod::System => db.clear_recovery_code(),
+        RecoveryMethod::Code => Ok(()),
+    });
+    if let Err(e) = rest {
+        if let Err(undo) = db.clear_pin() {
+            eprintln!("DeskNotes: the new PIN could not be removed: {undo}");
+        }
+        return Err(e);
+    }
+    Ok(code)
+}
+
+/// Settings → "If I forget my PIN" (D14), after the current PIN (shared
+/// throttle; anything but `ok` changes nothing). Callers check `method_usable`.
+fn change_recovery_method(
+    db: &Database,
+    pin: &str,
+    method: RecoveryMethod,
+    now_ms: i64,
+) -> CoreResult<RecoveryChange> {
+    let check = db.check_pin(pin, now_ms)?;
+    if check != PinCheck::Ok {
+        return Ok(RecoveryChange {
+            check,
+            recovery_code: None,
+        });
+    }
+    let recovery_code = match method {
+        RecoveryMethod::Code => {
+            // The code first: if it cannot be made, the earlier choice stays.
+            let code = db.issue_recovery_code()?;
+            db.set_recovery_method(RecoveryMethod::Code)?;
+            Some(code)
+        }
+        RecoveryMethod::System => {
+            // The choice first: never "code" chosen with no code stored.
+            db.set_recovery_method(RecoveryMethod::System)?;
+            db.clear_recovery_code()?;
+            None
+        }
+    };
+    Ok(RecoveryChange {
+        check,
+        recovery_code,
+    })
 }
 
 /// Replace a forgotten PIN. Needs the one-shot permission given by the Ubuntu
@@ -103,11 +197,14 @@ fn plausible_pin(pin: &str) -> IpcResult<()> {
 pub fn privacy_status(state: State<'_, AppState>) -> IpcResult<PrivacyStatus> {
     let system = system_auth_available();
     state.with_db(|db| {
+        let method = db.recovery_method()?;
         Ok(PrivacyStatus {
             enabled: db.pin_is_set()?,
             locked: db.privacy_locked(),
             lock_after_minutes: db.lock_after_minutes()?,
-            recovery: recovery_mode(system, db.has_recovery_code()?),
+            recovery: recovery_mode(method, system, db.has_recovery_code()?),
+            recovery_method: method,
+            system_available: system,
             reset_at: db.pin_reset_at()?,
         })
     })
@@ -144,22 +241,22 @@ pub async fn lock_now(app: AppHandle) -> IpcResult<()> {
         .map_err(|e| IpcError::new("internal", e.to_string()))?
 }
 
-/// Turn the lock on with a first PIN. Where the Ubuntu password cannot be used,
-/// also makes the recovery code, shown once. Either both are stored or neither.
+/// Turn the lock on with a first PIN and the way back if it is forgotten
+/// (D14): "system" (refused where the Ubuntu password cannot be used) or
+/// "code", which also makes the recovery code, shown once. Either all is
+/// stored or nothing.
 #[tauri::command]
 pub async fn setup_pin(
     app: AppHandle,
     window: WebviewWindow,
     state: State<'_, AppState>,
     pin: String,
+    method: RecoveryMethod,
 ) -> IpcResult<SetupResult> {
     only_from_settings(&window, PRIVACY)?;
-    let system = system_auth_available();
+    method_usable(method, system_auth_available())?;
     let recovery_code = state.with_db(|db| {
-        if db.pin_is_set()? {
-            return Err(CoreError::NotAllowed("a PIN is already set".into()));
-        }
-        let code = store_pin_with_code(db, &pin, !system)?;
+        let code = store_first_pin(db, &pin, method)?;
         // Notes open now stay unlocked; the lock comes on at the next trigger.
         db.set_privacy_locked(false, &[]);
         Ok(code)
@@ -231,6 +328,22 @@ pub async fn new_recovery_code(
     })
 }
 
+/// Settings → "If I forget my PIN" (D14): needs the current PIN. To "code":
+/// a new recovery code, returned once. To "system" (only where the Ubuntu
+/// password can be used): the old recovery code stops working.
+#[tauri::command]
+pub async fn set_recovery_method(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    pin: String,
+    method: RecoveryMethod,
+) -> IpcResult<RecoveryChange> {
+    only_from_settings(&window, PRIVACY)?;
+    plausible_pin(&pin)?;
+    method_usable(method, system_auth_available())?;
+    state.with_db(|db| change_recovery_method(db, &pin, method, now_ms()))
+}
+
 /// Only one Ubuntu password dialog at a time.
 static SYSTEM_PROMPT_OPEN: AtomicBool = AtomicBool::new(false);
 
@@ -243,7 +356,8 @@ fn accept_proof(db: &Database, state: &AppState) {
     state.new_pin_allowed.store(true, Ordering::Release);
 }
 
-/// "Forgot your PIN?" where the Ubuntu password can be used (design D5): the
+/// "Forgot your PIN?" where the Ubuntu password can be used and the owner did
+/// not choose a recovery code instead (design D5, D14): the
 /// system's own password dialog. `true`: private notes are unlocked and
 /// `choose_new_pin` may be called once. `false` (wrong password, cancelled):
 /// nothing changed. Any window.
@@ -255,8 +369,15 @@ pub async fn forgot_pin_system(app: AppHandle, state: State<'_, AppState>) -> Ip
             "The Ubuntu password cannot be used here. Use the recovery code.",
         ));
     }
-    if !state.with_db(|db| db.pin_is_set())? {
+    let (pin_set, method) = state.with_db(|db| Ok((db.pin_is_set()?, db.recovery_method()?)))?;
+    if !pin_set {
         return Err(IpcError::new("not_allowed", "No PIN is set."));
+    }
+    if !system_route_allowed(method, true) {
+        return Err(IpcError::new(
+            "not_allowed",
+            "A recovery code was chosen for a forgotten PIN. Use the recovery code.",
+        ));
     }
     if SYSTEM_PROMPT_OPEN.swap(true, Ordering::AcqRel) {
         return Err(IpcError::new(
@@ -271,13 +392,14 @@ pub async fn forgot_pin_system(app: AppHandle, state: State<'_, AppState>) -> Ip
     if !accepted {
         return Ok(false);
     }
-    // The PIN may have been removed while the dialog was open.
+    // The PIN may have been removed, or a recovery code chosen, while the
+    // dialog was open.
     if !state.with_db(|db| {
-        let pin_set = db.pin_is_set()?;
-        if pin_set {
+        let still = db.pin_is_set()? && system_route_allowed(db.recovery_method()?, true);
+        if still {
             accept_proof(db, &state);
         }
-        Ok(pin_set)
+        Ok(still)
     })? {
         return Ok(false);
     }
@@ -326,8 +448,9 @@ fn choose_new_pin_window(label: &str) -> IpcResult<()> {
 
 /// Settings only. Choose a new PIN after `forgot_pin_system` or
 /// `recover_with_code` succeeded (one new PIN per proof; a lock in between
-/// cancels it → `not_allowed`). Where the Ubuntu password cannot be used, a new
-/// recovery code replaces the old one and is returned, shown once. Another
+/// cancels it → `not_allowed`). Where the recovery code is the way back (chosen,
+/// or the Ubuntu password cannot be used), a new recovery code replaces the old
+/// one and is returned, shown once. Another
 /// window or a weak PIN is refused without using up the proof.
 #[tauri::command]
 pub async fn choose_new_pin(
@@ -338,9 +461,11 @@ pub async fn choose_new_pin(
 ) -> IpcResult<SetupResult> {
     choose_new_pin_window(window.label())?;
     validate_new_pin(&pin)?;
-    let issue_code = !system_auth_available();
-    let result =
-        state.with_db(|db| replace_forgotten_pin(db, &state.new_pin_allowed, &pin, issue_code));
+    let system = system_auth_available();
+    let result = state.with_db(|db| {
+        let issue_code = issue_code_with_new_pin(db.recovery_method()?, system);
+        replace_forgotten_pin(db, &state.new_pin_allowed, &pin, issue_code)
+    });
     // The R8 rollback may have removed the PIN: the tray follows either way.
     tray::refresh(&app);
     let recovery_code = result?;
@@ -409,7 +534,13 @@ mod tests {
     use desknotes_core::db::PinCheck;
     use desknotes_core::{CoreError, Database};
 
-    use super::{choose_new_pin_window, needs_pin_first, plausible_pin, replace_forgotten_pin};
+    use desknotes_core::db::RecoveryMethod;
+
+    use super::{
+        RecoveryChange, change_recovery_method, choose_new_pin_window, issue_code_with_new_pin,
+        method_usable, needs_pin_first, plausible_pin, replace_forgotten_pin, store_first_pin,
+        system_route_allowed,
+    };
 
     #[test]
     fn choose_new_pin_only_from_settings() {
@@ -471,6 +602,102 @@ mod tests {
             db.check_recovery_code(&old, 0).unwrap(),
             PinCheck::Wrong { .. }
         ));
+    }
+
+    #[test]
+    fn system_method_needs_system_auth() {
+        assert!(method_usable(RecoveryMethod::System, true).is_ok());
+        let refused = method_usable(RecoveryMethod::System, false).unwrap_err();
+        assert!(matches!(refused, CoreError::NotAllowed(_)), "{refused:?}");
+        assert_eq!(refused.code(), "not_allowed");
+        assert!(method_usable(RecoveryMethod::Code, true).is_ok());
+        assert!(method_usable(RecoveryMethod::Code, false).is_ok());
+    }
+
+    #[test]
+    fn the_system_route_follows_the_chosen_method() {
+        assert!(system_route_allowed(Some(RecoveryMethod::System), true));
+        assert!(system_route_allowed(None, true), "PINs set before D14");
+        assert!(!system_route_allowed(Some(RecoveryMethod::Code), true));
+        assert!(!system_route_allowed(Some(RecoveryMethod::System), false));
+        assert!(!system_route_allowed(None, false));
+    }
+
+    #[test]
+    fn a_new_pin_after_forgetting_gets_a_code_where_the_code_is_the_way_back() {
+        assert!(issue_code_with_new_pin(Some(RecoveryMethod::Code), true));
+        assert!(issue_code_with_new_pin(Some(RecoveryMethod::Code), false));
+        assert!(issue_code_with_new_pin(Some(RecoveryMethod::System), false));
+        assert!(issue_code_with_new_pin(None, false));
+        assert!(!issue_code_with_new_pin(Some(RecoveryMethod::System), true));
+        assert!(!issue_code_with_new_pin(None, true));
+    }
+
+    #[test]
+    fn first_pin_stores_the_method_and_a_code_only_for_code() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(
+            store_first_pin(&db, "482915", RecoveryMethod::System).unwrap(),
+            None
+        );
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+        assert!(!db.has_recovery_code().unwrap());
+        let again = store_first_pin(&db, "730518", RecoveryMethod::Code).unwrap_err();
+        assert!(matches!(again, CoreError::NotAllowed(_)), "{again:?}");
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+
+        let db = Database::open_in_memory().unwrap();
+        let code = store_first_pin(&db, "482915", RecoveryMethod::Code)
+            .unwrap()
+            .expect("a recovery code");
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::Code));
+        assert_eq!(db.check_recovery_code(&code, 0).unwrap(), PinCheck::Ok);
+
+        // A weak PIN stores nothing.
+        let db = Database::open_in_memory().unwrap();
+        let weak = store_first_pin(&db, "123456", RecoveryMethod::Code).unwrap_err();
+        assert_eq!(weak.code(), "validation");
+        assert!(!db.pin_is_set().unwrap());
+        assert_eq!(db.recovery_method().unwrap(), None);
+        assert!(!db.has_recovery_code().unwrap());
+    }
+
+    #[test]
+    fn changing_the_method_needs_the_pin_and_retires_the_old_code() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_new_pin("482915").unwrap();
+        db.set_recovery_method(RecoveryMethod::System).unwrap();
+
+        // Wrong PIN: nothing changes, the wait counter grows.
+        let wrong = change_recovery_method(&db, "000000", RecoveryMethod::Code, 0).unwrap();
+        assert_eq!(wrong.check, PinCheck::Wrong { wait_secs: 0 });
+        assert_eq!(wrong.recovery_code, None);
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+        assert!(!db.has_recovery_code().unwrap());
+
+        // To a code: a new one, returned once.
+        let to_code = change_recovery_method(&db, "482915", RecoveryMethod::Code, 0).unwrap();
+        assert_eq!(to_code.check, PinCheck::Ok);
+        let code = to_code.recovery_code.expect("a recovery code");
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::Code));
+        assert_eq!(db.check_recovery_code(&code, 0).unwrap(), PinCheck::Ok);
+
+        // Back to the computer password: the code stops working.
+        let to_system = change_recovery_method(&db, "482915", RecoveryMethod::System, 0).unwrap();
+        assert_eq!(to_system.check, PinCheck::Ok);
+        assert_eq!(to_system.recovery_code, None);
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+        assert!(!db.has_recovery_code().unwrap());
+
+        // The wire format the UI reads.
+        let shape = RecoveryChange {
+            check: PinCheck::Wrong { wait_secs: 30 },
+            recovery_code: Some("ABCD".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(shape).unwrap(),
+            serde_json::json!({ "check": { "kind": "wrong", "waitSecs": 30 }, "recoveryCode": "ABCD" })
+        );
     }
 
     #[test]

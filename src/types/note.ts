@@ -122,8 +122,12 @@ export interface PrivacyStatus {
   /** Private notes are locked now. */
   locked: boolean;
   lockAfterMinutes: number;
-  /** How a forgotten PIN is replaced: Ubuntu password, recovery code, or neither. */
+  /** What "Forgot your PIN?" uses here: Ubuntu password, recovery code, or neither. */
   recovery: "system" | "code" | "none";
+  /** The owner's "If I forget my PIN" choice; null with no PIN or a PIN set before it existed. */
+  recoveryMethod: RecoveryMethod | null;
+  /** The Ubuntu password can be used here, so "Use my computer password" may be offered. */
+  systemAvailable: boolean;
   /** When `desknotes --reset-pin` removed the PIN (Unix ms), until acknowledged. */
   resetAt: number | null;
 }
@@ -136,5 +140,16 @@ export type PinCheck =
 
 /** Result of choosing a PIN: a recovery code only where it is the way back. */
 export interface SetupResult {
+  recoveryCode: string | null;
+}
+
+/** "If I forget my PIN": the computer (Ubuntu) password or a recovery code (Rust `RecoveryMethod`). */
+export type RecoveryMethod = "system" | "code";
+
+/** Result of changing the recovery method (Rust `RecoveryChange`). */
+export interface RecoveryChange {
+  /** Anything but "ok": nothing changed. */
+  check: PinCheck;
+  /** The new recovery code when switching to "code", shown once. */
   recoveryCode: string | null;
 }
