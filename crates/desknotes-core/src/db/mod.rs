@@ -3,6 +3,7 @@
 mod backup;
 mod migrations;
 mod notes;
+mod privacy;
 mod settings;
 
 use std::path::{Path, PathBuf};
