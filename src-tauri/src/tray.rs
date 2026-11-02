@@ -7,6 +7,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::{app as app_cmd, notes};
+use crate::error::IpcResult;
 use crate::state::AppState;
 use crate::windows;
 
@@ -45,6 +46,17 @@ fn report(app: &AppHandle, message: String) {
     let _ = app.emit(ACTION_FAILED, message);
 }
 
+/// Run a hide/show action off the main thread (it waits for the notes to save).
+/// A failure opens the manager with the reason.
+pub fn spawn_notes_action<T: 'static>(app: &AppHandle, action: fn(&AppHandle) -> IpcResult<T>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = action(&app) {
+            report(&app, e.message);
+        }
+    });
+}
+
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "new" => {
@@ -52,20 +64,8 @@ fn on_menu(app: &AppHandle, id: &str) {
                 report(app, e.message);
             }
         }
-        "hide_all" | "show_hidden" => {
-            let app = app.clone();
-            let hide = id == "hide_all";
-            std::thread::spawn(move || {
-                let result = if hide {
-                    notes::hide_all(&app)
-                } else {
-                    notes::show_hidden(&app)
-                };
-                if let Err(e) = result {
-                    report(&app, e.message);
-                }
-            });
-        }
+        "hide_all" => spawn_notes_action(app, notes::hide_all),
+        "show_hidden" => spawn_notes_action(app, notes::show_hidden),
         "manager" => {
             let _ = windows::show_manager(app);
         }

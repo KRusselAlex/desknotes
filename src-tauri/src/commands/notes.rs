@@ -100,6 +100,20 @@ pub fn show_hidden(app: &AppHandle) -> IpcResult<usize> {
     Ok(shown)
 }
 
+/// The "Show / hide all notes" shortcut: hide every open note, or bring back the
+/// hidden ones. With nothing to bring back the manager opens, so the key always
+/// shows something.
+pub fn toggle_notes(app: &AppHandle) -> IpcResult<()> {
+    if windows::open_note_labels(app).is_empty() {
+        if show_hidden(app)? == 0 {
+            windows::show_manager(app)?;
+        }
+    } else {
+        hide_all(app)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn hide_all_notes(app: AppHandle) -> IpcResult<usize> {
     hide_all(&app)

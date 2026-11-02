@@ -166,3 +166,26 @@ screen (XWayland refuses root captures and GNOME restricts its screenshot servic
 Outcome for DES-19 (per-note background opacity): feasible. Make only the background
 translucent, keep text and controls opaque, set a minimum opacity that keeps text readable,
 and create a note window transparent only when its opacity is below 100 %.
+
+## Show / hide all shortcut (DES-27) — 2026-11-02
+
+**Platform facts (Ubuntu 24.04, GNOME Shell 46.0, xdg-desktop-portal-gnome 46.2):**
+- The XDG GlobalShortcuts portal is not offered (the desktop portal exposes only Background
+  and Settings); it arrives with GNOME 48.
+- An X11 key grab from XWayland only sees keys while one of DeskNotes' own windows has
+  focus, so it cannot be a global shortcut.
+- A GNOME custom keyboard shortcut can run any command globally. Ctrl+Alt+N is not used by
+  GNOME here (read-only check of the window manager, shell and media-keys bindings).
+
+**Part 1, the command:** `desknotes --toggle-notes`. A second launch hands it to the running
+DeskNotes (single instance). Release build, isolated data:
+
+| Situation | Result |
+|---|---|
+| Two notes on screen | Second launch exits in ~135 ms (code 0); both notes hidden (saved first) |
+| Run again | Both notes back |
+| DeskNotes not running | It starts DeskNotes |
+| No notes on screen and none remembered (the manager is then on screen) | Manager stays; no error |
+
+Not checked: a real key press through a GNOME custom shortcut (needs a change to the
+owner's keyboard settings).
