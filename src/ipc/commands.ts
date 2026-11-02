@@ -17,6 +17,7 @@ import type {
   RestoreResult,
   SaveResult,
   SettingsView,
+  SettingsSection,
   SetupResult,
   ToggleShortcut,
 } from "../types/note";
@@ -71,7 +72,8 @@ export const commands = {
   hiddenNoteCount: () => call<number>("hidden_note_count"),
   startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
-  openSettings: () => call<void>("open_settings"),
+  /** Opens (or focuses) Settings, at `section` when given. */
+  openSettings: (section?: SettingsSection) => call<void>("open_settings", { section: section ?? null }),
   getSettings: () => call<SettingsView>("get_settings"),
   /** Returns the launcher state actually in effect afterwards. */
   setLaunchAtLogin: (enabled: boolean) => call<boolean>("set_launch_at_login", { enabled }),

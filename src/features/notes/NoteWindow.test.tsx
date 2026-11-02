@@ -415,7 +415,7 @@ describe("NoteWindow", () => {
       await openNote();
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
-      await waitFor(() => expect(commands.openSettings).toHaveBeenCalled());
+      await waitFor(() => expect(commands.openSettings).toHaveBeenCalledWith("privacy"));
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(commands.setNotePrivate).not.toHaveBeenCalled();
     });

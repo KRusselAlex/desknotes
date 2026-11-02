@@ -1,25 +1,57 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
 import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
-import type { SettingsView } from "../../types/note";
+import { onSettingsSection } from "../../ipc/events";
+import type { SettingsSection, SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
 import { BackupPane } from "./BackupPane";
 import { MinNoteSize } from "./MinNoteSize";
+import { PrivacyPane } from "./PrivacyPane";
 import { ShortcutRow } from "./ShortcutRow";
 
-type Section = "general" | "backup" | "about";
+type Section = "general" | "privacy" | "backup" | "about";
 
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "general", label: "General", icon: "settings" },
+  { id: "privacy", label: "Privacy", icon: "lock" },
   { id: "backup", label: "Backup", icon: "download" },
   { id: "about", label: "About", icon: "info" },
 ];
 
-/** Settings window (design S1–S4). Sections appear as their features are built. */
+const SECTION_NAMES: readonly SettingsSection[] = ["general", "privacy", "privacy-new-pin", "backup", "about"];
+
+/** The section another window asked for (`open_settings(section)`), or null if unknown. */
+export function parseSection(name: string | null | undefined): { section: Section; newPin: boolean } | null {
+  const known = SECTION_NAMES.find((s) => s === name);
+  if (!known) return null;
+  return known === "privacy-new-pin" ? { section: "privacy", newPin: true } : { section: known, newPin: false };
+}
+
+/** Settings window (design S1–S4). Sections appear as their features are built.
+ * A new window opens at `?section=…`; an open one switches on `settings-section`. */
 export function SettingsWindow() {
-  const [section, setSection] = useState<Section>("general");
+  const [initial] = useState(() => parseSection(new URLSearchParams(window.location.search).get("section")));
+  const [section, setSection] = useState<Section>(initial?.section ?? "general");
+  /** Counts requests for "choose a new PIN"; the Privacy pane opens it once per request. */
+  const [newPinRequest, setNewPinRequest] = useState(initial?.newPin ? 1 : 0);
+  const [newPinPending, setNewPinPending] = useState(initial?.newPin ?? false);
+  const newPinStarted = useCallback(() => setNewPinPending(false), []);
+
+  useEffect(() => {
+    // Outside the app (tests, preview without events) there is nothing to listen to.
+    const unlisten = onSettingsSection((name) => {
+      const asked = parseSection(name);
+      if (!asked) return;
+      setSection(asked.section);
+      if (asked.newPin) {
+        setNewPinRequest((n) => n + 1);
+        setNewPinPending(true);
+      }
+    }).catch(() => null);
+    return () => void unlisten.then((f) => f?.());
+  }, []);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,6 +146,9 @@ export function SettingsWindow() {
               <ShortcutRow />
             </div>
           </>
+        )}
+        {section === "privacy" && (
+          <PrivacyPane key={newPinRequest} startNewPin={newPinPending} onNewPinStarted={newPinStarted} />
         )}
         {settings && section === "backup" && (
           <BackupPane

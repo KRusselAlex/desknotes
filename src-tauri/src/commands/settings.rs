@@ -21,9 +21,21 @@ pub struct SettingsView {
     pub last_backup_at: Option<i64>,
 }
 
+/// Opens Settings, at `section` when given ("general", "privacy",
+/// "privacy-new-pin", "backup" or "about"; anything else is refused).
 #[tauri::command]
-pub async fn open_settings(app: AppHandle) -> IpcResult<()> {
-    Ok(windows::open_settings(&app)?)
+pub async fn open_settings(app: AppHandle, section: Option<String>) -> IpcResult<()> {
+    let section = parse_section(section.as_deref())?;
+    Ok(windows::open_settings(&app, section)?)
+}
+
+fn parse_section(name: Option<&str>) -> IpcResult<Option<&'static str>> {
+    match name {
+        None => Ok(None),
+        Some(name) => windows::settings_section(name)
+            .map(Some)
+            .ok_or_else(|| IpcError::new("validation", "There is no such Settings section.")),
+    }
 }
 
 #[tauri::command]
@@ -224,4 +236,21 @@ pub fn open_data_folder(app: AppHandle) -> IpcResult<()> {
     app.opener()
         .open_path(dir.display().to_string(), None::<&str>)
         .map_err(|e| IpcError::new("opener", e.to_string()))
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::parse_section;
+
+    #[test]
+    fn open_settings_accepts_known_sections_only() {
+        assert_eq!(parse_section(None).unwrap(), None);
+        assert_eq!(parse_section(Some("privacy")).unwrap(), Some("privacy"));
+        assert_eq!(
+            parse_section(Some("privacy-new-pin")).unwrap(),
+            Some("privacy-new-pin")
+        );
+        let err = parse_section(Some("index.html")).unwrap_err();
+        assert_eq!(err.code, "validation");
+    }
 }

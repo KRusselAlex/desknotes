@@ -336,3 +336,213 @@
 .dn-modal-actions button:disabled {
   opacity: 0.5;
 }
+
+/* Privacy (design S1 "Privacy"; D10 wording, D14 "If I forget my PIN"). */
+.dn-card-text {
+  flex: 1;
+  min-width: 0;
+}
+.dn-card-sub {
+  font-size: 12.5px;
+  color: var(--dn-app-muted);
+}
+.dn-card-row.is-wrap {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+.dn-card-row.is-wrap > .dn-card-label {
+  flex: 1 0 auto;
+}
+.dn-privacy-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dn-privacy-actions .dn-btn-outline.is-medium {
+  padding: 0 14px;
+}
+.dn-privacy-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--dn-accent-tint);
+  color: var(--dn-accent-press);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Segmented control (S1 "Lock after inactivity", S4 "Layout"). */
+.dn-segmented {
+  display: flex;
+  flex: none;
+  padding: 3px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-bg);
+  font-size: 13px;
+}
+.dn-segmented > button {
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: var(--dn-app-text);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.dn-segmented > button:hover:not([aria-checked="true"]) {
+  background: var(--dn-app-hover);
+}
+.dn-segmented > button[aria-checked="true"] {
+  background: var(--dn-app-raised);
+  box-shadow: var(--dn-shadow-sm);
+  font-weight: 650;
+}
+
+/* PIN dialogs (S3 modal holding S1 "Set up lock · 2 of 3" / "Change PIN · 1 of 3"). */
+.dn-modal:focus {
+  outline: none;
+}
+.dn-pin-dialog {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+.dn-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dn-app-muted);
+}
+.dn-step-hint {
+  font-size: 13px;
+  color: var(--dn-app-muted);
+}
+.dn-pin-method {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 6px;
+}
+.dn-pin-method .dn-segmented {
+  background: var(--dn-app-bg);
+}
+
+/* Recovery code shown once (design "Set up PIN · step 3, recovery code"). */
+.dn-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dn-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.dn-step {
+  padding: 3px 10px;
+  border-radius: var(--dn-radius-pill);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.dn-step.is-done {
+  background: var(--dn-sage-tint);
+  color: var(--dn-sage-ink);
+}
+.dn-step.is-current {
+  background: var(--dn-app-text);
+  color: var(--dn-app-bg);
+}
+.dn-recovery-title {
+  font-size: var(--dn-text-window);
+  font-weight: 700;
+}
+.dn-recovery-code {
+  padding: 16px;
+  border-radius: var(--dn-radius-lg);
+  background: var(--dn-app-bg);
+  border: 1px dashed var(--dn-app-muted);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px 12px;
+  font-family: var(--dn-font-mono);
+  font-size: 17px;
+  letter-spacing: 0.12em;
+  text-align: center;
+  user-select: text;
+}
+.dn-btn-outline.is-code {
+  height: 32px;
+  padding: 0 14px 0 10px;
+}
+.dn-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+}
+.dn-check > input {
+  position: absolute;
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+.dn-check-box {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 6px;
+  border: 2px solid var(--dn-app-muted);
+  display: grid;
+  place-items: center;
+}
+.dn-check > input:checked + .dn-check-box {
+  border: 0;
+  background: var(--dn-app-text);
+  color: var(--dn-app-bg);
+}
+.dn-check > input:focus-visible + .dn-check-box {
+  outline: 2px solid var(--dn-focus);
+  outline-offset: 2px;
+}
+.dn-recovery .dn-modal-actions {
+  padding-top: 0;
+}
+.dn-recovery .dn-btn-accent.is-large {
+  padding: 0 18px;
+}
+.dn-recovery .dn-btn-accent:disabled {
+  opacity: 0.45;
+}
+
+/* Print only the recovery code, nothing else of the window. */
+.dn-print-only {
+  display: none;
+}
+@media print {
+  body > :not(.dn-print-only) {
+    display: none !important;
+  }
+  .dn-print-only {
+    display: block;
+    padding: 24px;
+    color: var(--dn-ink);
+    font-family: var(--dn-font);
+    font-size: 14px;
+  }
+  .dn-print-code {
+    margin-top: 12px;
+    font-family: var(--dn-font-mono);
+    font-size: 20px;
+    letter-spacing: 0.12em;
+  }
+}

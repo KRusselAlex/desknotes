@@ -9,6 +9,10 @@
 // 30 s wait (L3); &nopin previews "Make private" without a PIN; &nosystem previews a
 // machine where the Ubuntu password cannot be used (the recovery code only). In the console,
 // previewLock() locks and previewUnlock() unlocks as the native side would.
+//
+// Settings: ?w=settings&section=privacy opens at Privacy (&nopin: lock off, &nosystem: no
+// computer-password route, &method=code: recovery code chosen); &section=privacy-new-pin opens
+// "choose a new PIN" as after a forgotten-PIN proof. 123456 is refused as too easy.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -114,10 +118,17 @@ const privacy = {
   locked: lockParam === "private",
   failures: Number(params.get("failures") ?? 0),
   waitUntil: 0,
-  method: (params.get("nopin") === null ? (systemAvailable ? "system" : "code") : null) as RecoveryMethod | null,
-  hasCode: params.get("nopin") === null && !systemAvailable,
+  method: (params.get("nopin") === null
+    ? params.get("method") === "code" || !systemAvailable
+      ? "code"
+      : "system"
+    : null) as RecoveryMethod | null,
+  hasCode: params.get("nopin") === null && (!systemAvailable || params.get("method") === "code"),
+  lockAfter: 5,
 };
 const PREVIEW_CODE = "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ";
+const tooEasy = (pin: unknown) => pin === "123456" || pin === "000000";
+const tooEasyError = { code: "validation", message: "PIN must be 6 digits and not obvious (such as 000000 or 123456)" };
 const systemRefused = () => ({ code: "not_allowed", message: "the Ubuntu password cannot be used here; choose a recovery code" });
 function privacyStatus(): PrivacyStatus {
   const recovery =
@@ -125,7 +136,7 @@ function privacyStatus(): PrivacyStatus {
   return {
     enabled: privacy.pinSet,
     locked: privacy.pinSet && privacy.locked,
-    lockAfterMinutes: 5,
+    lockAfterMinutes: privacy.lockAfter,
     recovery,
     recoveryMethod: privacy.method,
     systemAvailable,
@@ -230,6 +241,7 @@ mockIPC(
       case "setup_pin": {
         if (a.method === "system" && !systemAvailable) throw systemRefused();
         if (privacy.pinSet) throw { code: "not_allowed", message: "a PIN is already set" };
+        if (tooEasy(a.pin)) throw tooEasyError;
         privacy.pinSet = true;
         privacy.locked = false;
         privacy.method = a.method as RecoveryMethod;
@@ -246,6 +258,29 @@ mockIPC(
         privacy.hasCode = a.method === "code";
         return { check, recoveryCode: privacy.hasCode ? PREVIEW_CODE : null };
       }
+      case "choose_new_pin": {
+        if (tooEasy(a.pin)) throw tooEasyError;
+        privacy.locked = false;
+        announce(false);
+        return { recoveryCode: privacyStatus().recovery === "system" ? null : PREVIEW_CODE };
+      }
+      case "change_pin": {
+        if (tooEasy(a.new)) throw tooEasyError;
+        return checkPin(String(a.current));
+      }
+      case "turn_off_lock": {
+        const check = checkPin(String(a.pin));
+        if (check.kind === "ok") {
+          privacy.pinSet = false;
+          privacy.method = null;
+          privacy.hasCode = false;
+          announce(false);
+        }
+        return check;
+      }
+      case "set_lock_after":
+        privacy.lockAfter = Number(a.minutes);
+        return null;
       case "unlock": {
         if (!privacy.pinSet) throw { code: "not_allowed", message: "nothing is set to check" };
         // Like Argon2 in a release build: about a third of a second.
@@ -273,7 +308,7 @@ mockIPC(
       case "report_activity":
         return null;
       case "open_settings":
-        console.info("preview: open_settings (the Settings window opens in the app)");
+        console.info("preview: open_settings", a.section ?? "", "(the Settings window opens in the app)");
         return null;
       default:
         console.info("preview: ignored command", cmd, a);

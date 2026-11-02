@@ -153,3 +153,7 @@ export interface RecoveryChange {
   /** The new recovery code when switching to "code", shown once. */
   recoveryCode: string | null;
 }
+
+/** Settings sections another window may open Settings at (Rust `SETTINGS_SECTIONS`).
+ * "privacy-new-pin" opens Privacy at "choose a new PIN", after a forgotten-PIN proof. */
+export type SettingsSection = "general" | "privacy" | "privacy-new-pin" | "backup" | "about";

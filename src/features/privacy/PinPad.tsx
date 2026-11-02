@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "../../components/Icon";
 import { commands } from "../../ipc/commands";
+import type { PinCheck } from "../../types/note";
 
 /** The PIN is exactly this many digits (Rust `PIN_DIGITS`). */
 export const PIN_LENGTH = 6;
@@ -15,10 +16,25 @@ type Message =
   | { kind: "error"; text: string };
 
 export interface PinPadProps {
-  /** The PIN was right: every private note is unlocked. */
+  /** The check answered "ok" (with the default check: every private note is unlocked). */
   onUnlocked: () => void;
-  /** "Forgot your PIN?" was chosen. */
-  onForgot: () => void;
+  /** "Forgot your PIN?" was chosen. Without it the link is not shown. */
+  onForgot?: () => void;
+  /**
+   * Checks the six digits, sent once. Default: `commands.unlock`. Answer `null` when the
+   * caller moved on by itself (e.g. to the next step); a thrown error's message is shown.
+   */
+  check?: (pin: string) => Promise<PinCheck | null>;
+  /** Shown when the pad appears, until the next digit (a wrong PIN, a wait or a sentence). */
+  notice?: PinCheck | string | null;
+  /**
+   * "note": inside a note (design "PIN inside a note"), with its keypad.
+   * "app": in a Settings dialog (design "Confirm PIN mismatch · Change PIN"): app colours,
+   * larger dots, the message under them, typed on the keyboard (no keypad drawn there).
+   */
+  variant?: "note" | "app";
+  /** Accessible name of the pad. */
+  label?: string;
 }
 
 function sentence(text: string): string {
@@ -26,18 +42,39 @@ function sentence(text: string): string {
   return t ? `${t[0]!.toUpperCase()}${t.slice(1)}.` : "Something went wrong.";
 }
 
+/** The message for a check that was not "ok" (null for "ok"). */
+function fromCheck(result: PinCheck, now: number): Message | null {
+  if (result.kind === "ok") return null;
+  if (result.waitSecs > 0) {
+    return { kind: "wait", wrong: result.kind === "wrong", until: now + result.waitSecs * 1000, secs: result.waitSecs };
+  }
+  return { kind: "wrong" };
+}
+
+function fromNotice(notice: PinCheck | string | null | undefined, now: number): Message | null {
+  if (!notice) return null;
+  return typeof notice === "string" ? { kind: "error", text: sentence(notice) } : fromCheck(notice, now);
+}
+
 /**
  * Six-digit PIN entry (design "PIN inside a note" and "Wrong PIN · slowed down").
- * The digits typed live only in a ref until they are sent once to `unlock`;
- * the page shows filled dots, never the digits. Keyboard digits and Backspace
- * work anywhere in the window except inside text fields.
+ * The digits typed live only in a ref until they are sent once to `check`
+ * (`unlock` by default); the page shows filled dots, never the digits. Keyboard
+ * digits and Backspace work anywhere in the window except inside text fields.
  */
-export function PinPad({ onUnlocked, onForgot }: PinPadProps) {
+export function PinPad({
+  onUnlocked,
+  onForgot,
+  check = commands.unlock,
+  notice,
+  variant = "note",
+  label = "Enter your PIN",
+}: PinPadProps) {
   const digits = useRef<string[]>([]);
   const [count, setCount] = useState(0);
   const [checking, setChecking] = useState(false);
-  const [message, setMessage] = useState<Message | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [message, setMessage] = useState<Message | null>(() => fromNotice(notice, now));
 
   // Never more than the wait the native side announced, even if the clock moves back.
   const remaining =
@@ -61,13 +98,13 @@ export function PinPad({ onUnlocked, onForgot }: PinPadProps) {
       let next: Message | null = null;
       let ok = false;
       try {
-        const result = await commands.unlock(pin);
-        if (result.kind === "ok") ok = true;
-        else if (result.waitSecs > 0) {
+        const result = await check(pin);
+        if (result?.kind === "ok") ok = true;
+        else if (result) {
           const t = Date.now();
           setNow(t);
-          next = { kind: "wait", wrong: result.kind === "wrong", until: t + result.waitSecs * 1000, secs: result.waitSecs };
-        } else next = { kind: "wrong" };
+          next = fromCheck(result, t);
+        }
       } catch (e) {
         next = { kind: "error", text: sentence(e instanceof Error ? e.message : String(e)) };
       }
@@ -76,7 +113,7 @@ export function PinPad({ onUnlocked, onForgot }: PinPadProps) {
       setMessage(next);
       if (ok) onUnlocked();
     },
-    [onUnlocked],
+    [check, onUnlocked],
   );
 
   const press = useCallback(
@@ -132,26 +169,27 @@ export function PinPad({ onUnlocked, onForgot }: PinPadProps) {
   } else if (message?.kind === "wrong") {
     status = (
       <>
-        <Icon name="alert" size={16} />
+        <Icon name="alert" size={variant === "app" ? 14 : 16} />
         Wrong PIN. Try again.
       </>
     );
   } else if (message?.kind === "error") {
     status = (
       <>
-        <Icon name="alert" size={16} />
+        <Icon name="alert" size={variant === "app" ? 14 : 16} />
         {message.text}
       </>
     );
   }
 
+  const failed = message?.kind === "wrong" || message?.kind === "error";
+  const classes = ["dn-pinpad", `is-${variant}`];
+  if (waiting) classes.push("is-waiting");
+  if (status) classes.push("has-status");
+  if (failed) classes.push("has-error");
+
   return (
-    <div
-      className={`dn-pinpad${waiting ? " is-waiting" : ""}${status ? " has-status" : ""}`}
-      role="group"
-      aria-label="Enter your PIN"
-      aria-busy={checking}
-    >
+    <div className={classes.join(" ")} role="group" aria-label={label} aria-busy={checking}>
       <div className="dn-pin-status" role="status">
         {status && <span className="dn-pin-message">{status}</span>}
       </div>
@@ -160,31 +198,35 @@ export function PinPad({ onUnlocked, onForgot }: PinPadProps) {
           <span key={i} className={`dn-pin-dot${i < count ? " is-filled" : ""}`} />
         ))}
       </div>
-      <div className="dn-pin-keys" aria-disabled={disabled || undefined}>
-        {KEYS.map((k, i) =>
-          k === "" ? (
-            <span key={i} aria-hidden="true" />
-          ) : k === "back" ? (
-            <button
-              key={i}
-              type="button"
-              className="dn-pin-key is-plain"
-              aria-label="Delete digit"
-              disabled={disabled}
-              onClick={back}
-            >
-              <Icon name="backspace" size={17} />
-            </button>
-          ) : (
-            <button key={i} type="button" className="dn-pin-key" disabled={disabled} onClick={() => press(k)}>
-              {k}
-            </button>
-          ),
-        )}
-      </div>
-      <button type="button" className="dn-pin-forgot" onClick={onForgot}>
-        Forgot your PIN?
-      </button>
+      {variant === "note" && (
+        <div className="dn-pin-keys" aria-disabled={disabled || undefined}>
+          {KEYS.map((k, i) =>
+            k === "" ? (
+              <span key={i} aria-hidden="true" />
+            ) : k === "back" ? (
+              <button
+                key={i}
+                type="button"
+                className="dn-pin-key is-plain"
+                aria-label="Delete digit"
+                disabled={disabled}
+                onClick={back}
+              >
+                <Icon name="backspace" size={17} />
+              </button>
+            ) : (
+              <button key={i} type="button" className="dn-pin-key" disabled={disabled} onClick={() => press(k)}>
+                {k}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+      {onForgot && (
+        <button type="button" className="dn-pin-forgot" onClick={onForgot}>
+          Forgot your PIN?
+        </button>
+      )}
     </div>
   );
 }

@@ -9,11 +9,28 @@ vi.mock("../../ipc/commands", () => ({
     setNewNoteColor: vi.fn().mockResolvedValue(undefined),
     setMinNoteSize: vi.fn(),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
+    privacyStatus: vi.fn().mockResolvedValue({
+      enabled: true,
+      locked: false,
+      lockAfterMinutes: 5,
+      recovery: "code",
+      recoveryMethod: "code",
+      systemAvailable: false,
+      resetAt: null,
+    }),
+  },
+}));
+const events = vi.hoisted(() => ({ section: null as ((name: string) => void) | null }));
+vi.mock("../../ipc/events", () => ({
+  onPrivacyChanged: () => Promise.resolve(() => undefined),
+  onSettingsSection: (h: (name: string) => void) => {
+    events.section = h;
+    return Promise.resolve(() => undefined);
   },
 }));
 
 import { commands } from "../../ipc/commands";
-import { SettingsWindow } from "./SettingsWindow";
+import { parseSection, SettingsWindow } from "./SettingsWindow";
 
 const settings = {
   launchAtLogin: false,
@@ -123,5 +140,53 @@ describe("SettingsWindow", () => {
     expect(screen.getByText("No data leaves this computer.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open folder" }));
     expect(commands.openDataFolder).toHaveBeenCalled();
+  });
+
+  it("has Privacy between General and Backup", async () => {
+    render(<SettingsWindow />);
+    const nav = screen.getByRole("navigation", { name: "Settings sections" });
+    expect([...nav.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "General",
+      "Privacy",
+      "Backup",
+      "About",
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "Privacy" }));
+    expect(await screen.findByText("Lock private notes with a PIN")).toBeInTheDocument();
+  });
+
+  it("knows the sections other windows may open", () => {
+    expect(parseSection("privacy")).toEqual({ section: "privacy", newPin: false });
+    expect(parseSection("privacy-new-pin")).toEqual({ section: "privacy", newPin: true });
+    expect(parseSection("about")).toEqual({ section: "about", newPin: false });
+    for (const bad of [null, undefined, "", "Privacy", "lock", "privacy "]) expect(parseSection(bad)).toBeNull();
+  });
+
+  it("opens at the section in its address", async () => {
+    window.history.replaceState(null, "", "/?section=privacy");
+    try {
+      render(<SettingsWindow />);
+      expect(screen.getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "page");
+      expect(await screen.findByText("Lock private notes with a PIN")).toBeInTheDocument();
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("switches section when another window asks, and opens choose-a-new-PIN once", async () => {
+    render(<SettingsWindow />);
+    await waitFor(() => expect(events.section).not.toBeNull());
+    act(() => events.section!("privacy-new-pin"));
+    expect(screen.getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByText("Choose a new PIN")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Leaving and coming back does not ask again.
+    await userEvent.click(screen.getByRole("button", { name: "General" }));
+    await userEvent.click(screen.getByRole("button", { name: "Privacy" }));
+    expect(await screen.findByText("Lock private notes with a PIN")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    act(() => events.section!("nonsense"));
+    expect(screen.getByRole("button", { name: "Privacy" })).toHaveAttribute("aria-current", "page");
   });
 });

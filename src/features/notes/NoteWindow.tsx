@@ -480,12 +480,12 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
     await saveThen(action);
   }
 
-  /** "Make private" needs a PIN: without one, Settings opens to set it up first. */
+  /** "Make private" needs a PIN: without one, Settings opens at Privacy to set it up first. */
   async function makePrivate() {
     const status = await commands.privacyStatus().catch(() => null);
     if (!status) return;
     if (!status.enabled) {
-      await commands.openSettings().catch(() => undefined);
+      await commands.openSettings("privacy").catch(() => undefined);
       return;
     }
     setLabelDialog("make");

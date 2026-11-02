@@ -160,3 +160,38 @@
 .dn-note-locked::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* PIN typed in a Settings dialog (design "Confirm PIN mismatch · Change PIN"): app
+   colours, 14 px dots 12 apart, the message under the dots, no keypad drawn. */
+.dn-pinpad.is-app {
+  align-items: flex-start;
+}
+.dn-pinpad.is-app > .dn-pin-status {
+  order: 1;
+  justify-content: flex-start;
+}
+.dn-pinpad.is-app .dn-pin-dots {
+  gap: 12px;
+}
+.dn-pinpad.is-app .dn-pin-dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--dn-app-muted);
+}
+.dn-pinpad.is-app .dn-pin-dot.is-filled {
+  border: 0;
+  background: var(--dn-app-text);
+}
+.dn-pinpad.is-app.has-error .dn-pin-dot {
+  border-color: var(--dn-danger);
+}
+/* "The PINs don't match. Enter it again." is a line, not the wait pill. */
+.dn-pinpad.is-app.has-error .dn-pin-message {
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 400;
+}

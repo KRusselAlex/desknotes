@@ -140,4 +140,49 @@ describe("PinPad", () => {
     await userEvent.click(screen.getByRole("button", { name: "Forgot your PIN?" }));
     expect(onForgot).toHaveBeenCalledTimes(1);
   });
+
+  describe("in a Settings dialog", () => {
+    it("is typed on the keyboard, checked by the caller and never calls unlock", async () => {
+      const check = vi.fn().mockResolvedValue({ kind: "ok" });
+      const onUnlocked = vi.fn();
+      const { container } = render(<PinPad variant="app" label="Your PIN" check={check} onUnlocked={onUnlocked} />);
+      expect(screen.getByRole("group", { name: "Your PIN" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "5" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Forgot your PIN?" })).toBeNull();
+      await userEvent.keyboard(PIN);
+      expect(check).toHaveBeenCalledWith(PIN);
+      expect(commands.unlock).not.toHaveBeenCalled();
+      expect(onUnlocked).toHaveBeenCalledTimes(1);
+      expect(container.innerHTML).not.toContain(PIN);
+    });
+
+    it("shows a notice it was opened with and marks the dots after an error", async () => {
+      const { container } = render(
+        <PinPad variant="app" notice="The PINs don't match. Enter it again." check={vi.fn()} onUnlocked={vi.fn()} />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent("The PINs don't match. Enter it again.");
+      expect(container.querySelector(".dn-pinpad")).toHaveClass("has-error");
+      await userEvent.keyboard("1");
+      expect(screen.queryByText(/don't match/)).toBeNull();
+      expect(container.querySelector(".dn-pinpad")).not.toHaveClass("has-error");
+    });
+
+    it("starts a wait it was opened with", () => {
+      render(<PinPad variant="app" notice={{ kind: "wrong", waitSecs: 60 }} check={vi.fn()} onUnlocked={vi.fn()} />);
+      expect(screen.getByRole("status")).toHaveTextContent("Wrong PIN. Try again in 60 s");
+      fireEvent.keyDown(window, { key: "1" });
+      expect(dots()).toHaveAccessibleName("0 of 6 digits");
+    });
+
+    it("just clears the entry when the caller moved on", async () => {
+      const check = vi.fn().mockResolvedValue(null);
+      const onUnlocked = vi.fn();
+      render(<PinPad variant="app" check={check} onUnlocked={onUnlocked} />);
+      await userEvent.keyboard(PIN);
+      expect(dots()).toHaveAccessibleName("0 of 6 digits");
+      expect(onUnlocked).not.toHaveBeenCalled();
+      expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    });
+  });
 });
+

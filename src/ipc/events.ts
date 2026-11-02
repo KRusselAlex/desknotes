@@ -52,3 +52,10 @@ export interface PrivacyChanged {
 export function onPrivacyChanged(handler: (e: PrivacyChanged) => void): Promise<UnlistenFn> {
   return listen<PrivacyChanged>(PRIVACY_CHANGED, (event) => handler(event.payload));
 }
+
+export const SETTINGS_SECTION = "settings-section";
+
+/** Another window asked the open Settings window to show a section. */
+export function onSettingsSection(handler: (section: string) => void): Promise<UnlistenFn> {
+  return listen<string>(SETTINGS_SECTION, (event) => handler(event.payload));
+}

@@ -103,7 +103,7 @@ fn on_menu(app: &AppHandle, id: &str) {
             let _ = windows::show_manager(app);
         }
         "settings" => {
-            let _ = windows::open_settings(app);
+            let _ = windows::open_settings(app, None);
         }
         "quit" => app_cmd::request_quit(app.clone()),
         _ => {}

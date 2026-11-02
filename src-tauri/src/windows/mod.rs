@@ -198,25 +198,53 @@ where
 }
 
 pub const SETTINGS: &str = "settings";
+/// Sent to an open Settings window: show the section named in the payload.
+pub const SETTINGS_SECTION: &str = "settings-section";
 
-/// Open (or focus) the Settings window (design S1–S4, 680 × 520).
-pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
+/// Sections Settings can be opened at (R19). "privacy-new-pin" opens Privacy at
+/// "choose a new PIN" after a forgotten-PIN proof; `choose_new_pin` still
+/// refuses without that proof, so the name grants nothing by itself.
+pub const SETTINGS_SECTIONS: [&str; 5] =
+    ["general", "privacy", "privacy-new-pin", "backup", "about"];
+
+/// The known section called `name`, or `None`.
+pub fn settings_section(name: &str) -> Option<&'static str> {
+    SETTINGS_SECTIONS.iter().copied().find(|s| *s == name)
+}
+
+/// Page loaded by a new Settings window; the webview reads `section` from it.
+fn settings_url(section: Option<&'static str>) -> String {
+    match section {
+        Some(s) => format!("index.html?section={s}"),
+        None => "index.html".into(),
+    }
+}
+
+/// Open (or focus) the Settings window (design S1–S4, 680 × 520), at `section`
+/// when given (one of [`SETTINGS_SECTIONS`]).
+pub fn open_settings(app: &AppHandle, section: Option<&'static str>) -> tauri::Result<()> {
     if let Some(existing) = app.get_webview_window(SETTINGS) {
         existing.show()?;
         existing.unminimize()?;
+        if let Some(s) = section {
+            app.emit_to(SETTINGS, SETTINGS_SECTION, s)?;
+        }
         return existing.set_focus();
     }
     let handle = app.clone();
     build_sharing_process(app, move |related| {
         if let Some(existing) = handle.get_webview_window(SETTINGS) {
+            if let Some(s) = section {
+                handle.emit_to(SETTINGS, SETTINGS_SECTION, s)?;
+            }
             return existing.set_focus();
         }
-        let mut builder =
-            WebviewWindowBuilder::new(&handle, SETTINGS, WebviewUrl::App("index.html".into()))
-                .title("Settings")
-                .inner_size(680.0, 520.0)
-                .min_inner_size(560.0, 420.0)
-                .center();
+        let url = WebviewUrl::App(settings_url(section).into());
+        let mut builder = WebviewWindowBuilder::new(&handle, SETTINGS, url)
+            .title("Settings")
+            .inner_size(680.0, 520.0)
+            .min_inner_size(560.0, 420.0)
+            .center();
         #[cfg(target_os = "linux")]
         if let Some(view) = related {
             builder = builder.with_related_view(view);
@@ -515,5 +543,37 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_known_settings_sections_are_accepted() {
+        for name in SETTINGS_SECTIONS {
+            assert_eq!(settings_section(name), Some(name));
+        }
+        for bad in [
+            "",
+            "Privacy",
+            "privacy ",
+            "privacy&x=1",
+            "../privacy",
+            "lock",
+        ] {
+            assert_eq!(settings_section(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_new_settings_window_loads_its_section_from_the_url() {
+        assert_eq!(settings_url(None), "index.html");
+        assert_eq!(settings_url(Some("privacy")), "index.html?section=privacy");
+        assert_eq!(
+            settings_url(settings_section("privacy-new-pin")),
+            "index.html?section=privacy-new-pin"
+        );
     }
 }
