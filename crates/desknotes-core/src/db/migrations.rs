@@ -46,6 +46,11 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE note_windows ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0;
     "#,
+    // v4 — private flag and the neutral label shown instead of the title
+    r#"
+    ALTER TABLE notes ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE notes ADD COLUMN private_label TEXT NOT NULL DEFAULT '';
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;

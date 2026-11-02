@@ -188,4 +188,32 @@ mod tests {
             "must not overwrite an existing backup"
         );
     }
+
+    #[test]
+    fn migration_v4_adds_private_columns_and_keeps_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply_until(&mut conn, 0, 3).unwrap();
+            conn.execute_batch(
+                "INSERT INTO notes (id, title, content_json, color, created_at, updated_at)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 'v3 note',
+                         '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}',
+                         '#fff4a3', 1, 1);
+                 INSERT INTO note_windows (note_id, width, height)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 300, 280);",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path, &backups).unwrap();
+        assert_eq!(db.schema_version().unwrap(), LATEST_VERSION);
+        let note = db.get_note("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d").unwrap();
+        assert_eq!(note.title, "v3 note");
+        assert!(!note.private);
+        assert_eq!(note.private_label, "");
+        assert!(!note.locked);
+    }
 }

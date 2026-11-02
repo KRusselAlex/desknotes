@@ -10,11 +10,12 @@ use crate::model::*;
 use crate::now_ms;
 use crate::validation::{
     derive_search_text, derive_snippet, derive_title, empty_doc, parse_content, validate_color,
+    validate_private_label,
 };
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
      n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top,
-     n.edit_locked, w.collapsed";
+     n.edit_locked, w.collapsed, n.private, n.private_label";
 
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
@@ -32,6 +33,9 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
             archived_at: row.get(6)?,
             deleted_at: row.get(7)?,
             edit_locked: row.get(14)?,
+            private: row.get(16)?,
+            private_label: row.get(17)?,
+            locked: false,
             window: NoteWindow {
                 x: row.get(8)?,
                 y: row.get(9)?,
@@ -167,6 +171,7 @@ impl Database {
         let needle = query.map(|q| q.trim().to_lowercase()).unwrap_or_default();
         let sql = format!(
             "SELECT n.id, n.title, n.color, n.updated_at, n.archived_at, n.deleted_at, w.visible,
+                    n.private, n.private_label,
                     CASE WHEN ?1 = '' THEN NULL ELSE n.content_json END
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              WHERE {condition} AND (?1 = '' OR instr(n.search_text, ?1) > 0)
@@ -174,7 +179,7 @@ impl Database {
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([&needle], |r| {
-            let content: Option<String> = r.get(7)?;
+            let content: Option<String> = r.get(9)?;
             Ok((
                 NoteSummary {
                     id: r.get(0)?,
@@ -184,6 +189,9 @@ impl Database {
                     archived_at: r.get(4)?,
                     deleted_at: r.get(5)?,
                     visible: r.get(6)?,
+                    private: r.get(7)?,
+                    private_label: r.get(8)?,
+                    locked: false,
                     snippet: None,
                 },
                 content,
@@ -252,6 +260,17 @@ impl Database {
         let changed = self.conn.execute(
             "UPDATE notes SET edit_locked = ?2 WHERE id = ?1",
             params![id, locked],
+        )?;
+        self.expect_one(changed, id)
+    }
+
+    /// Mark a note private or not, with its neutral label. The label is stored
+    /// validated; clearing `private` keeps the label for next time.
+    pub fn set_private(&self, id: &str, private: bool, label: &str) -> CoreResult<()> {
+        let label = validate_private_label(label)?;
+        let changed = self.conn.execute(
+            "UPDATE notes SET private = ?2, private_label = ?3 WHERE id = ?1",
+            params![id, private, label],
         )?;
         self.expect_one(changed, id)
     }
@@ -723,5 +742,40 @@ mod tests {
             })
             .unwrap();
         assert_eq!(raw, "{oops");
+    }
+
+    #[test]
+    fn set_private_round_trips_with_label() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        let note = db.get_note(&id).unwrap();
+        assert!(!note.private);
+        assert_eq!(note.private_label, "");
+
+        db.set_private(&id, true, "  Bank ").unwrap();
+        let note = db.get_note(&id).unwrap();
+        assert!(note.private);
+        assert_eq!(note.private_label, "Bank");
+        let summary = &db.list_notes(NoteFilter::Active, None).unwrap()[0];
+        assert!(summary.private);
+        assert_eq!(summary.private_label, "Bank");
+        assert!(!summary.locked);
+
+        // Clearing the flag keeps the label.
+        db.set_private(&id, false, "Bank").unwrap();
+        let note = db.get_note(&id).unwrap();
+        assert!(!note.private);
+        assert_eq!(note.private_label, "Bank");
+
+        assert_eq!(
+            db.set_private(&id, true, &"x".repeat(41))
+                .unwrap_err()
+                .code(),
+            "validation"
+        );
+        assert_eq!(
+            db.set_private("missing", true, "").unwrap_err().code(),
+            "not_found"
+        );
     }
 }
