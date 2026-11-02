@@ -3,6 +3,7 @@ import { CommandError, commands } from "../../ipc/commands";
 import type { PinCheck } from "../../types/note";
 import { PinPad } from "../privacy/PinPad";
 import { Dialog } from "./Dialog";
+import { holding, useSettingsHold } from "./hold";
 import { PINS_DIFFER } from "./PinSetup";
 
 type Step = 1 | 2 | 3;
@@ -27,6 +28,7 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
   const [keepsNew, setKeepsNew] = useState(false);
   /** `change_pin` is running: the dialog cannot close until it has answered. */
   const [busy, setBusy] = useState(false);
+  const hold = useSettingsHold();
   const current = useRef<string | null>(null);
   const first = useRef<string | null>(null);
   /** The confirmed new PIN, kept while the current one is typed again. */
@@ -50,7 +52,7 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
     let result: PinCheck;
     setBusy(true);
     try {
-      result = await commands.changePin(currentPin, newPin);
+      result = await holding(hold, () => commands.changePin(currentPin, newPin));
     } catch (e) {
       if (!(e instanceof CommandError && e.code === "validation")) throw e;
       // A new PIN that is too easy: choose it again (the current one is kept).

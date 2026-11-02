@@ -8,6 +8,7 @@ import type { PinCheck, PrivacyStatus, RecoveryMethod } from "../../types/note";
 import { PinPad } from "../privacy/PinPad";
 import { ChangePin } from "./ChangePin";
 import { Dialog } from "./Dialog";
+import { holding, useIssuingHold, useSettingsHold } from "./hold";
 import { PinSetup, RECOVERY_OPTIONS } from "./PinSetup";
 import { RecoveryCode } from "./RecoveryCode";
 
@@ -262,12 +263,17 @@ function PinDialog({
   /** The PIN is being checked: the change (and any new code) may already be committed,
    * so the dialog cannot close until the answer is in. */
   const [busy, setBusy] = useState(false);
+  const hold = useSettingsHold();
+  const issuing = useIssuingHold(code);
 
   async function checkPin(pin: string): Promise<PinCheck | null> {
     setBusy(true);
     try {
-      if (check) return await check(pin);
-      const result = await withCode!(pin);
+      if (check) return await holding(hold, () => check(pin));
+      const result = await issuing(
+        () => withCode!(pin),
+        (r) => r.check.kind === "ok" && r.recoveryCode !== null,
+      );
       if (result.check.kind === "ok" && result.recoveryCode) {
         setCode(result.recoveryCode);
         return null;

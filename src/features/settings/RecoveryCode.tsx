@@ -1,10 +1,7 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../../components/Icon";
-
-/** Told when a recovery code goes on screen (true) and off it (false), so Settings
- * does not switch section, or remount the pane, while one is shown (R25). */
-export const RecoveryCodeShown = createContext<(shown: boolean) => void>(() => undefined);
+import { useHoldWhile } from "./hold";
 
 /**
  * A recovery code shown once (design "Set up PIN · step 3, recovery code"): the six
@@ -34,12 +31,8 @@ export function RecoveryCode({
   const [writtenDown, setWrittenDown] = useState(false);
   const [copied, setCopied] = useState<"no" | "yes" | "failed">("no");
   const groups = code.split("-");
-  const shown = useContext(RecoveryCodeShown);
-
-  useEffect(() => {
-    shown(true);
-    return () => shown(false);
-  }, [shown]);
+  // Settings must not switch section or remount the pane while the code is shown (R25).
+  useHoldWhile(true);
 
   useEffect(() => {
     if (copied !== "yes") return;

@@ -9,7 +9,7 @@ import { COLOR_PRESETS } from "../appearance/colors";
 import { BackupPane } from "./BackupPane";
 import { MinNoteSize } from "./MinNoteSize";
 import { PrivacyPane } from "./PrivacyPane";
-import { RecoveryCodeShown } from "./RecoveryCode";
+import { SettingsHold } from "./hold";
 import { ShortcutRow } from "./ShortcutRow";
 
 type Section = "general" | "privacy" | "backup" | "about";
@@ -50,13 +50,16 @@ export function SettingsWindow() {
     }
   }, []);
 
-  // A recovery code on screen is shown once: a section asked for meanwhile waits until it is closed.
-  const codesShown = useRef(0);
+  // While a recovery code is on screen (shown once) or a call that may issue one runs,
+  // the nav is inert and a section asked for meanwhile waits until the hold ends (R25).
+  const holds = useRef(0);
+  const [held, setHeld] = useState(false);
   const waitingSection = useRef<string | null>(null);
-  const codeShown = useCallback(
-    (shown: boolean) => {
-      codesShown.current += shown ? 1 : -1;
-      if (codesShown.current > 0 || waitingSection.current === null) return;
+  const hold = useCallback(
+    (on: boolean) => {
+      holds.current += on ? 1 : -1;
+      setHeld(holds.current > 0);
+      if (holds.current > 0 || waitingSection.current === null) return;
       const name = waitingSection.current;
       waitingSection.current = null;
       showSection(name);
@@ -67,7 +70,7 @@ export function SettingsWindow() {
   useEffect(() => {
     // Outside the app (tests, preview without events) there is nothing to listen to.
     const unlisten = onSettingsSection((name) => {
-      if (codesShown.current > 0) waitingSection.current = name;
+      if (holds.current > 0) waitingSection.current = name;
       else showSection(name);
     }).catch(() => null);
     return () => void unlisten.then((f) => f?.());
@@ -93,15 +96,18 @@ export function SettingsWindow() {
   }
 
   return (
-    <RecoveryCodeShown.Provider value={codeShown}>
+    <SettingsHold.Provider value={hold}>
       <div className="dn-settings">
-        <nav className="dn-settings-nav" aria-label="Settings sections">
+        <nav className="dn-settings-nav" aria-label="Settings sections" inert={held}>
           {SECTIONS.map((s) => (
             <button
               key={s.id}
               type="button"
               aria-current={section === s.id ? "page" : undefined}
-              onClick={() => setSection(s.id)}
+              disabled={held}
+              onClick={() => {
+                if (holds.current === 0) setSection(s.id);
+              }}
             >
               <Icon name={s.icon} />
               {s.label}
@@ -204,6 +210,6 @@ export function SettingsWindow() {
           )}
         </main>
       </div>
-    </RecoveryCodeShown.Provider>
+    </SettingsHold.Provider>
   );
 }

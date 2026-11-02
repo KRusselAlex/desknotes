@@ -4,6 +4,7 @@ import { CommandError, commands } from "../../ipc/commands";
 import type { PrivacyStatus, RecoveryMethod } from "../../types/note";
 import { PinPad } from "../privacy/PinPad";
 import { Dialog } from "./Dialog";
+import { useIssuingHold } from "./hold";
 import { RecoveryCode } from "./RecoveryCode";
 
 export const PINS_DIFFER = "The PINs don't match. Enter it again.";
@@ -40,6 +41,7 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
   /** `setup_pin` / `choose_new_pin` is running: it may issue a code, so the dialog cannot close. */
   const [busy, setBusy] = useState(false);
   const first = useRef<string | null>(null);
+  const issuing = useIssuingHold(code);
 
   useEffect(
     () => () => {
@@ -64,7 +66,10 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
       if (pin !== first.current) throw new Error(PINS_DIFFER);
       setBusy(true);
       try {
-        const result = mode === "setup" ? await commands.setupPin(pin, method) : await commands.chooseNewPin(pin);
+        const result = await issuing(
+          () => (mode === "setup" ? commands.setupPin(pin, method) : commands.chooseNewPin(pin)),
+          (r) => r.recoveryCode !== null,
+        );
         first.current = null;
         if (result.recoveryCode) {
           setCode(result.recoveryCode);
@@ -81,7 +86,7 @@ export function PinSetup({ mode, status, onDone, onCancel }: PinSetupProps) {
       }
       return null;
     },
-    [method, mode, onDone],
+    [issuing, method, mode, onDone],
   );
 
   const finish = () => {

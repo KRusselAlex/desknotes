@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../ipc/commands", () => ({
@@ -208,6 +208,74 @@ describe("SettingsWindow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByText("Save your recovery code")).toBeNull();
+  });
+
+  describe("while a recovery code or a call that may issue one is up", () => {
+    const CODE = "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ";
+    const nav = () => screen.getByRole("navigation", { name: "Settings sections" });
+
+    async function openNewCode() {
+      render(<SettingsWindow />);
+      await waitFor(() => expect(events.section).not.toBeNull());
+      await userEvent.click(screen.getByRole("button", { name: "Privacy" }));
+      await userEvent.click(await screen.findByRole("button", { name: "New recovery code…" }));
+    }
+
+    it("keeps Tab inside the dialog and gives focus back on close", async () => {
+      await openNewCode();
+      const dialog = screen.getByRole("dialog");
+      expect(dialog).toHaveFocus();
+      const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+      await userEvent.tab();
+      expect(cancel).toHaveFocus();
+      await userEvent.tab();
+      expect(cancel).toHaveFocus();
+      await userEvent.tab({ shift: true });
+      expect(cancel).toHaveFocus();
+      await userEvent.click(cancel);
+      expect(screen.getByRole("button", { name: "New recovery code…" })).toHaveFocus();
+    });
+
+    it("Tab from the last control of the code view wraps inside it, and the nav is inert", async () => {
+      await openNewCode();
+      await userEvent.keyboard("246810");
+      expect(await screen.findByText("Save your recovery code")).toBeInTheDocument();
+      expect(nav()).toHaveAttribute("inert");
+      for (const b of within(nav()).getAllByRole("button", { hidden: true })) expect(b).toBeDisabled();
+      await userEvent.click(screen.getByRole("checkbox", { name: "I've written it down" }));
+      const done = screen.getByRole("button", { name: "Done" });
+      done.focus();
+      await userEvent.tab();
+      expect(screen.getByRole("button", { name: "Copy" })).toHaveFocus();
+      await userEvent.tab({ shift: true });
+      expect(done).toHaveFocus();
+      for (let i = 0; i < 6; i++) {
+        await userEvent.tab();
+        expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+      }
+      await userEvent.click(done);
+      await waitFor(() => expect(nav()).not.toHaveAttribute("inert"));
+      expect(screen.getByRole("button", { name: "General" })).toBeEnabled();
+    });
+
+    it("defers a section asked for while setRecoveryMethod is running", async () => {
+      let answer!: (v: { check: { kind: "ok" }; recoveryCode: string | null }) => void;
+      vi.mocked(commands.setRecoveryMethod).mockReturnValueOnce(new Promise((r) => (answer = r)));
+      await openNewCode();
+      await userEvent.keyboard("246810");
+      await waitFor(() => expect(commands.setRecoveryMethod).toHaveBeenCalled());
+      expect(nav()).toHaveAttribute("inert");
+      act(() => events.section!("about"));
+      expect(screen.getByRole("button", { name: "Privacy", hidden: true })).toHaveAttribute("aria-current", "page");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      await act(async () => answer({ check: { kind: "ok" }, recoveryCode: CODE }));
+      // The code arrives and stays: the hold passes from the call to the code view.
+      expect(await screen.findByText("Save your recovery code")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Privacy", hidden: true })).toHaveAttribute("aria-current", "page");
+      await userEvent.click(screen.getByRole("checkbox", { name: "I've written it down" }));
+      await userEvent.click(screen.getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-current", "page"));
+    });
   });
 });
 
