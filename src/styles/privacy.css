@@ -195,3 +195,111 @@
   font-size: 13px;
   font-weight: 400;
 }
+
+/* "Forgot your PIN?" (design "Recovery code entry"), in an S3-style dialog in any window. */
+.dn-forgot {
+  color: var(--dn-app-text);
+}
+/* A command to type: never broken at its dashes. */
+.dn-forgot strong {
+  white-space: nowrap;
+}
+.dn-code-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dn-back-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dn-accent-ink);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dn-back-link:hover:not(:disabled) {
+  color: var(--dn-accent-press);
+}
+.dn-back-icon {
+  display: inline-flex;
+  transform: rotate(180deg);
+}
+.dn-code-title {
+  font-size: var(--dn-text-window);
+  font-weight: 700;
+}
+.dn-code-entry {
+  position: relative;
+  padding-top: 6px;
+}
+.dn-code-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.dn-code-group {
+  height: 42px;
+  border-radius: var(--dn-radius-pill);
+  /* app-raised in the design's window; the dialog itself is raised, so the ground stands out. */
+  background: var(--dn-app-bg);
+  border: 1px solid var(--dn-app-line);
+  display: grid;
+  place-items: center;
+  font-family: var(--dn-font-mono);
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--dn-app-text);
+}
+.dn-code-group.is-empty {
+  color: var(--dn-app-muted);
+}
+.dn-code-group.is-current {
+  border-color: var(--dn-focus);
+  box-shadow: 0 0 0 2px var(--dn-app-raised), 0 0 0 4px var(--dn-focus);
+}
+/* The real field lies over the groups: clicks, typing and paste go to it; the groups show it. */
+.dn-code-input {
+  position: absolute;
+  inset: 6px 0 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  opacity: 0;
+  cursor: text;
+}
+.dn-code-input:focus-visible {
+  outline: none; /* the current group shows the focus ring */
+}
+.dn-code-hint {
+  font-size: 12px;
+  color: var(--dn-app-muted);
+}
+.dn-code-form .dn-pin-status:empty {
+  /* Kept as a live region, out of the layout. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.dn-code-form .dn-pin-status {
+  justify-content: flex-start;
+}
+.dn-code-form .dn-modal-actions {
+  padding-top: 0;
+}
+.dn-code-form .dn-btn-accent:disabled {
+  opacity: 0.45;
+}
+/* "Forgot your PIN?" under a PIN typed in an app-coloured dialog. */
+.dn-pinpad.is-app .dn-pin-forgot {
+  color: var(--dn-app-text);
+}

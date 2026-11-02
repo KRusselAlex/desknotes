@@ -50,6 +50,9 @@ vi.mock("../../ipc/commands", () => ({
     privacyStatus: vi.fn(),
     setNotePrivate: vi.fn().mockResolvedValue(undefined),
     openSettings: vi.fn().mockResolvedValue(undefined),
+    forgotPinSystem: vi.fn(),
+    recoverWithCode: vi.fn(),
+    duplicateNote: vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -476,6 +479,121 @@ describe("NoteWindow", () => {
       await userEvent.click(screen.getByRole("menuitem", { name: "Make not private" }));
       expect(commands.setNotePrivate).toHaveBeenLastCalledWith(ID, false, "Bills");
       expect(commands.privacyStatus).not.toHaveBeenCalled();
+    });
+
+    it("never shows the title of a locked note, even when it differs from the label", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote({ title: "Account 0042, PIN 7731", privateLabel: "Bank" }));
+      const { container } = render(<NoteWindow noteId={ID} />);
+      expect(await screen.findByText("Bank")).toBeInTheDocument();
+      expect(container.textContent).not.toContain("0042");
+      expect(container.textContent).not.toContain("Account");
+      expect(document.title).not.toContain("Account");
+    });
+
+    it("Forgot your PIN? proves it in this window, then opens Settings to choose a new PIN", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      vi.mocked(commands.privacyStatus).mockResolvedValue(status({ locked: true, recovery: "system" }));
+      vi.mocked(commands.forgotPinSystem).mockResolvedValue(true);
+      render(<NoteWindow noteId={ID} />);
+      await userEvent.click(await screen.findByRole("button", { name: "Forgot your PIN?" }));
+      await waitFor(() => expect(commands.openSettings).toHaveBeenCalledWith("privacy-new-pin"));
+      expect(commands.forgotPinSystem).toHaveBeenCalledTimes(1);
+      expect(commands.unlock).not.toHaveBeenCalled();
+    });
+
+    it("Forgot your PIN? with a recovery code shows the code entry in the note", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      vi.mocked(commands.privacyStatus).mockResolvedValue(status({ locked: true, recovery: "code", recoveryMethod: "code" }));
+      render(<NoteWindow noteId={ID} />);
+      await userEvent.click(await screen.findByRole("button", { name: "Forgot your PIN?" }));
+      expect(await screen.findByRole("dialog", { name: "Enter your recovery code" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Back to PIN" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByRole("img", { name: "0 of 6 digits" })).toBeInTheDocument();
+    });
+
+    /** A private note whose last save the lock refused: editor and "Not saved" kept (R14). */
+    async function refusedByTheLock() {
+      const view = await openNote({ private: true, privateLabel: "Bank" });
+      vi.mocked(commands.saveNoteContent).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      await typeIntoNote(view.container, "late words ");
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      await act(async () => handlers.privacy?.({ locked: true }));
+      await screen.findByText(/Not saved/);
+      return view;
+    }
+
+    it("offers Unlock to save when the lock refused the save, and saves after the PIN (R20)", async () => {
+      await refusedByTheLock();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      vi.mocked(commands.unlock).mockResolvedValue({ kind: "ok" });
+      vi.mocked(commands.saveNoteContent).mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "Unlock to save" }));
+      const dialog = await screen.findByRole("dialog", { name: "Unlock to save" });
+      expect(dialog).toHaveTextContent("Enter your PIN to save it.");
+      await userEvent.keyboard("246810");
+
+      expect(commands.unlock).toHaveBeenCalledWith("246810");
+      await waitFor(() => expect(commands.saveNoteContent).toHaveBeenCalledWith(ID, expect.stringContaining("late words")));
+      await waitFor(() => expect(screen.queryByText(/Not saved/)).toBeNull());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(editorBox()).toHaveTextContent("late words");
+    });
+
+    it("keeps Retry for saves refused for other reasons", async () => {
+      const { container } = await openNote({ private: true });
+      vi.mocked(commands.saveNoteContent).mockRejectedValueOnce(new Error("disk full"));
+      await typeIntoNote(container, "x");
+      await act(async () => handlers.willQuit?.());
+      expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Unlock to save" })).toBeNull();
+    });
+
+    it("saves text the lock refused once private notes are unlocked in another window", async () => {
+      await refusedByTheLock();
+      vi.mocked(commands.saveNoteContent).mockClear();
+      await act(async () => handlers.privacy?.({ locked: false }));
+      await waitFor(() => expect(commands.saveNoteContent).toHaveBeenCalledWith(ID, expect.stringContaining("late words")));
+      await waitFor(() => expect(screen.queryByText(/Not saved/)).toBeNull());
+    });
+
+    it("says why Make not private was refused (R21)", async () => {
+      vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      await openNote({ private: true, privateLabel: "Bank" });
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Make not private" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      expect(screen.getByRole("menuitem", { name: "Make not private" })).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      await userEvent.click(screen.getByRole("button", { name: "OK" }));
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("says why a label change was refused, in the dialog", async () => {
+      vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      await openNote({ private: true, privateLabel: "Bank" });
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Change private label…" }));
+      await userEvent.type(await screen.findByRole("textbox", { name: "Label (optional)" }), "s{Enter}");
+      expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("says why Make private could not start", async () => {
+      vi.mocked(commands.privacyStatus).mockRejectedValueOnce(new Error("database is locked"));
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
+    });
+
+    it("says why Duplicate was refused (D12)", async () => {
+      vi.mocked(commands.duplicateNote).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      await openNote({ private: true });
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
     });
   });
 });

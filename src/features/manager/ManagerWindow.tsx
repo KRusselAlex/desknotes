@@ -4,8 +4,9 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onActionFailed, onNotesChanged, onQuitBlocked } from "../../ipc/events";
-import type { NoteCounts, NoteFilter, NoteSummary } from "../../types/note";
+import { onActionFailed, onNotesChanged, onPrivacyChanged, onQuitBlocked } from "../../ipc/events";
+import { PRIVATE_FALLBACK_LABEL, type NoteCounts, type NoteFilter, type NoteSummary, type PrivacyStatus } from "../../types/note";
+import { refusalText } from "../privacy/refusal";
 
 const TABS: { id: NoteFilter; label: string }[] = [
   { id: "active", label: "Active" },
@@ -17,6 +18,13 @@ const TABS: { id: NoteFilter; label: string }[] = [
 const GROUP_THRESHOLD = 12;
 /** Below this width the New note button drops its label (design M3). */
 const COMPACT_WIDTH = 480;
+
+const resetDate = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/** What a row shows as its name: a locked private note's label, never its title (D2). */
+function rowName(n: NoteSummary): string {
+  return n.locked ? n.privateLabel || PRIVATE_FALLBACK_LABEL : n.title;
+}
 
 /** Highlight the first case-insensitive occurrence of `query` in `text`. */
 export function highlight(text: string, query: string): ReactNode {
@@ -42,11 +50,14 @@ export function ManagerWindow() {
   const [confirmPurge, setConfirmPurge] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
+  const [privacy, setPrivacy] = useState<PrivacyStatus | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const { width } = useWindowSize();
   const searching = query.trim() !== "";
 
   const refresh = useCallback(async () => {
+    // The lock state only decides "Lock now" and the reset notice; the list does not wait for it.
+    commands.privacyStatus().then(setPrivacy, () => setPrivacy(null));
     try {
       const [list, c, hidden] = await Promise.all([
         commands.listNotes(tab, query),
@@ -69,7 +80,11 @@ export function ManagerWindow() {
 
   useEffect(() => {
     const unlisten = onNotesChanged(() => void refresh());
-    return () => void unlisten.then((f) => f());
+    const unlistenPrivacy = onPrivacyChanged(() => void refresh());
+    return () => {
+      void unlisten.then((f) => f());
+      void unlistenPrivacy.then((f) => f());
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -108,7 +123,8 @@ export function ManagerWindow() {
       await action();
       await refresh();
     } catch (e) {
-      setError((e as Error).message);
+      // e.g. a locked private note cannot be deleted for good (D12): say why.
+      setError(refusalText(e));
     }
   }
 
@@ -177,6 +193,9 @@ export function ManagerWindow() {
                       },
                     ]
                   : []),
+                ...(privacy?.enabled && !privacy.locked
+                  ? [{ id: "lock-now", label: "Lock now", icon: "lock" as const, onSelect: () => void run(commands.lockNow) }]
+                  : []),
                 { id: "settings", label: "Settings…", icon: "settings", separatorBefore: true, onSelect: () => void commands.openSettings() },
                 { id: "quit", label: "Quit DeskNotes", icon: "quit", separatorBefore: true, onSelect: () => void commands.quitApp() },
               ]}
@@ -184,6 +203,19 @@ export function ManagerWindow() {
           )}
         </div>
       </div>
+
+      {privacy?.resetAt != null && (
+        <div className="dn-banner-error" role="alert">
+          <Icon name="shield" size={18} />
+          <span>
+            The PIN was reset on {resetDate.format(privacy.resetAt)}. Private notes are not locked until you choose a
+            new PIN in Settings → Privacy.
+          </span>
+          <button type="button" onClick={() => void run(commands.acknowledgePinReset)}>
+            OK
+          </button>
+        </div>
+      )}
 
       {banner && (
         <div className="dn-banner-error" role="alert">
@@ -291,7 +323,17 @@ function NoteRow({ note: n, tab, query, compact, run, onAskPurge }: RowProps) {
   const open = () => {
     if (tab === "active") void run(() => commands.showNote(n.id));
   };
-  const title = n.title ? highlight(n.title, query) : <em>Empty note</em>;
+  const name = rowName(n);
+  const title = (
+    <>
+      {n.private && (
+        <span className="dn-row-private" role="img" aria-label="Private" title="Private">
+          <Icon name="lock" size={13} />
+        </span>
+      )}
+      {name ? highlight(name, query) : <em>Empty note</em>}
+    </>
+  );
   const eye = (
     <button
       type="button"
@@ -332,8 +374,8 @@ function NoteRow({ note: n, tab, query, compact, run, onAskPurge }: RowProps) {
     >
       <span className="dn-row-dot" style={{ background: n.color }} />
       <div className="dn-row-text">
-        <span className={`dn-row-title${n.title ? "" : " is-empty"}`}>{title}</span>
-        {n.snippet && query.trim() ? (
+        <span className={`dn-row-title${name ? "" : " is-empty"}`}>{title}</span>
+        {n.snippet && !n.locked && query.trim() ? (
           <span className="dn-row-meta">{highlight(n.snippet, query)}</span>
         ) : (
           <span className="dn-row-meta">{rowMeta(n, tab)}</span>
@@ -395,7 +437,7 @@ function PurgeConfirm({
     <div className="dn-purge" role="listitem">
       <div className="dn-purge-head">
         <span className="dn-row-dot" style={{ background: note.color }} />
-        <span className="dn-row-title">{note.title || "Empty note"}</span>
+        <span className="dn-row-title">{rowName(note) || "Empty note"}</span>
       </div>
       <div className="dn-purge-actions" role="alertdialog" aria-label="Confirm permanent deletion">
         <span>Delete forever? This cannot be undone.</span>

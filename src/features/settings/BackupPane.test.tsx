@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../../ipc/commands", () => ({
@@ -7,6 +7,10 @@ vi.mock("../../ipc/commands", () => ({
     chooseBackup: vi.fn(),
     cancelRestore: vi.fn().mockResolvedValue(undefined),
     restoreBackup: vi.fn(),
+    unlock: vi.fn(),
+    privacyStatus: vi.fn(),
+    forgotPinSystem: vi.fn(),
+    openSettings: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -90,5 +94,102 @@ describe("BackupPane", () => {
     await userEvent.click(screen.getByRole("button", { name: /Restore from backup/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("not a DeskNotes backup");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  describe("while private notes are locked (R11)", () => {
+    const locked = () => new Error("operation not allowed: private notes are locked");
+    const exported = { path: "/home/me/b.json", count: 4, skipped: 0, exportedAt: 9 };
+
+    it("export_while_locked_asks_pin_then_exports", async () => {
+      const onExported = vi.fn();
+      vi.mocked(commands.exportBackup).mockRejectedValueOnce(locked()).mockResolvedValueOnce(exported);
+      vi.mocked(commands.unlock).mockResolvedValue({ kind: "ok" });
+      render(<BackupPane lastBackupAt={null} onExported={onExported} />);
+      await userEvent.click(screen.getByRole("button", { name: /Export backup/ }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Unlock private notes" });
+      expect(dialog).toHaveTextContent("Enter your PIN so the backup includes them.");
+      expect(screen.queryByRole("alert")).toBeNull();
+      await userEvent.keyboard("246810");
+
+      expect(commands.unlock).toHaveBeenCalledWith("246810");
+      expect(await screen.findByRole("status")).toHaveTextContent("4 notes in /home/me/b.json");
+      expect(commands.exportBackup).toHaveBeenCalledTimes(2);
+      expect(onExported).toHaveBeenCalledWith(9);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("tries once more only: a second refusal is explained", async () => {
+      vi.mocked(commands.exportBackup).mockRejectedValue(locked());
+      vi.mocked(commands.unlock).mockResolvedValue({ kind: "ok" });
+      render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+      await userEvent.click(screen.getByRole("button", { name: /Export backup/ }));
+      await screen.findByRole("dialog");
+      await userEvent.keyboard("246810");
+      expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
+      expect(commands.exportBackup).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("a wrong PIN keeps asking; Cancel exports nothing", async () => {
+      vi.mocked(commands.exportBackup).mockRejectedValueOnce(locked());
+      vi.mocked(commands.unlock).mockResolvedValue({ kind: "wrong", waitSecs: 0 });
+      render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+      await userEvent.click(screen.getByRole("button", { name: /Export backup/ }));
+      await screen.findByRole("dialog");
+      await userEvent.keyboard("111111");
+      expect(await screen.findByText("Wrong PIN. Try again.")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(commands.exportBackup).toHaveBeenCalledTimes(1);
+    });
+
+    it("restoring asks for the PIN before choosing the file", async () => {
+      vi.mocked(commands.chooseBackup)
+        .mockRejectedValueOnce(locked())
+        .mockResolvedValueOnce({ fileName: "b.json", backupCount: 2, currentCount: 1, exportedAt: 1 });
+      vi.mocked(commands.unlock).mockResolvedValue({ kind: "ok" });
+      render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+      await userEvent.click(screen.getByRole("button", { name: /Restore from backup/ }));
+      expect(await screen.findByRole("dialog", { name: "Unlock private notes" })).toHaveTextContent(
+        "Enter your PIN to restore a backup.",
+      );
+      await userEvent.keyboard("246810");
+      expect(await screen.findByRole("alertdialog", { name: "Restore this backup?" })).toBeInTheDocument();
+      expect(commands.chooseBackup).toHaveBeenCalledTimes(2);
+    });
+
+    it("a restore refused after the file was chosen lets the file go when cancelled", async () => {
+      vi.mocked(commands.chooseBackup).mockResolvedValue({ fileName: "b.json", backupCount: 2, currentCount: 1, exportedAt: 1 });
+      vi.mocked(commands.restoreBackup).mockRejectedValueOnce(locked());
+      render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+      await userEvent.click(screen.getByRole("button", { name: /Restore from backup/ }));
+      await userEvent.click(await screen.findByRole("button", { name: "Replace notes" }));
+      await screen.findByRole("dialog", { name: "Unlock private notes" });
+      expect(commands.cancelRestore).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(commands.cancelRestore).toHaveBeenCalled();
+      expect(commands.restoreBackup).toHaveBeenCalledTimes(1);
+    });
+
+    it("Forgot your PIN? leads to the forgotten-PIN screens here, then on to a new PIN", async () => {
+      vi.mocked(commands.exportBackup).mockRejectedValueOnce(locked());
+      vi.mocked(commands.privacyStatus).mockResolvedValue({
+        enabled: true,
+        locked: true,
+        lockAfterMinutes: 5,
+        recovery: "system",
+        recoveryMethod: "system",
+        systemAvailable: true,
+        resetAt: null,
+      });
+      vi.mocked(commands.forgotPinSystem).mockResolvedValue(true);
+      render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+      await userEvent.click(screen.getByRole("button", { name: /Export backup/ }));
+      await userEvent.click(await screen.findByRole("button", { name: "Forgot your PIN?" }));
+      await waitFor(() => expect(commands.openSettings).toHaveBeenCalledWith("privacy-new-pin"));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(commands.exportBackup).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -13,6 +13,12 @@
 // Settings: ?w=settings&section=privacy opens at Privacy (&nopin: lock off, &nosystem: no
 // computer-password route, &method=code: recovery code chosen); &section=privacy-new-pin opens
 // "choose a new PIN" as after a forgotten-PIN proof. 123456 is refused as too easy.
+//
+// Forgotten PIN: "Forgot your PIN?" uses the computer password (accepted after a second;
+// &systemcancel: refused, as when its dialog is cancelled), the recovery code with
+// &method=code or &nosystem (K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ), or explains --reset-pin with
+// &norecovery. &reset shows the manager's "The PIN was reset" notice. While private notes are
+// locked, backup export and restore, purging and duplicating them are refused as natively.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -123,8 +129,12 @@ const privacy = {
       ? "code"
       : "system"
     : null) as RecoveryMethod | null,
-  hasCode: params.get("nopin") === null && (!systemAvailable || params.get("method") === "code"),
+  hasCode:
+    params.get("nopin") === null &&
+    params.get("norecovery") === null &&
+    (!systemAvailable || params.get("method") === "code"),
   lockAfter: 5,
+  resetAt: params.get("reset") !== null ? now - 20 * H : null,
 };
 const PREVIEW_CODE = "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ";
 const tooEasy = (pin: unknown) => pin === "123456" || pin === "000000";
@@ -140,7 +150,7 @@ function privacyStatus(): PrivacyStatus {
     recovery,
     recoveryMethod: privacy.method,
     systemAvailable,
-    resetAt: null,
+    resetAt: privacy.resetAt,
   };
 }
 const isWithheld = (n: Note) => privacy.pinSet && privacy.locked && n.private;
@@ -150,7 +160,9 @@ const redact = (n: Note): Note => ({
   content: { type: "doc", content: [{ type: "paragraph" }] },
   locked: true,
 });
-const notLocked = () => ({ code: "not_allowed", message: "private notes are locked" });
+const notLocked = () => ({ code: "not_allowed", message: "operation not allowed: private notes are locked" });
+const anyWithheld = () => notes.some(isWithheld);
+const bare = (code: unknown) => String(code ?? "").replace(/[\s-]/g, "").toUpperCase();
 function checkPin(pin: string): PinCheck {
   const left = Math.ceil((privacy.waitUntil - Date.now()) / 1000);
   if (left > 0) return { kind: "waiting", waitSecs: left };
@@ -292,6 +304,46 @@ mockIPC(
           }, 300),
         );
       }
+      case "forgot_pin_system":
+        if (privacyStatus().recovery !== "system") throw { code: "not_allowed", message: "The Ubuntu password cannot be used here. Use the recovery code." };
+        // The system's own password dialog would be open for a moment.
+        return new Promise<boolean>((resolve) =>
+          setTimeout(() => {
+            const given = params.get("systemcancel") === null;
+            if (given) announce(false);
+            resolve(given);
+          }, 1000),
+        );
+      case "recover_with_code": {
+        if (!privacy.hasCode) throw { code: "not_allowed", message: "operation not allowed: nothing is set to check" };
+        const left = Math.ceil((privacy.waitUntil - Date.now()) / 1000);
+        if (left > 0) return { kind: "waiting", waitSecs: left };
+        // Same shared waits as a wrong PIN.
+        const result = checkPin(bare(a.code) === bare(PREVIEW_CODE) ? PREVIEW_PIN : "");
+        if (result.kind === "ok") announce(false);
+        return result;
+      }
+      case "acknowledge_pin_reset":
+        privacy.resetAt = null;
+        return null;
+      case "export_backup":
+        if (anyWithheld()) throw notLocked();
+        return { path: "~/Documents/desknotes-backup.json", count: notes.length, skipped: 0, exportedAt: Date.now() };
+      case "choose_backup":
+        if (anyWithheld()) throw notLocked();
+        return { fileName: "desknotes-backup.json", backupCount: notes.length, currentCount: notes.length, exportedAt: now - 24 * H };
+      case "restore_backup":
+        if (anyWithheld()) throw notLocked();
+        return { restored: notes.length, safetyCopy: "~/.local/share/io.github.krusselalex.desknotes/backups/pre-restore.db" };
+      case "purge_note": {
+        const i = notes.findIndex((n) => n.id === a.id);
+        if (isWithheld(notes[i]!)) throw notLocked();
+        notes.splice(i, 1);
+        return null;
+      }
+      case "duplicate_note":
+        if (isWithheld(find(a.id))) throw notLocked();
+        return structuredClone(find(a.id));
       case "lock_now":
         if (privacy.pinSet) announce(true);
         return null;
@@ -309,6 +361,8 @@ mockIPC(
         return null;
       case "open_settings":
         console.info("preview: open_settings", a.section ?? "", "(the Settings window opens in the app)");
+        // Like the native side, an open Settings window is told which section to show.
+        if (which === "settings" && a.section) setTimeout(() => void emit("settings-section", a.section), 0);
         return null;
       default:
         console.info("preview: ignored command", cmd, a);

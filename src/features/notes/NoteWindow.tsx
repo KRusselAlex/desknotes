@@ -10,8 +10,11 @@ import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged } from
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import { PRIVATE_FALLBACK_LABEL, type Note } from "../../types/note";
 import { headerShade } from "../appearance/colors";
+import { ForgotPin } from "../privacy/ForgotPin";
 import { PinPad } from "../privacy/PinPad";
 import { PrivateLabelDialog } from "../privacy/PrivateLabelDialog";
+import { isLockRefusal, refusalText } from "../privacy/refusal";
+import { UnlockDialog } from "../privacy/UnlockDialog";
 import { Autosave, type SaveState } from "./autosave";
 import { ColorPopover } from "./ColorPopover";
 import { createExtensions, serializeDoc } from "./extensions";
@@ -19,7 +22,7 @@ import { FormatBar } from "./FormatBar";
 import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
 import { isSafeLink } from "./links";
-import { SaveError, SaveIndicator } from "./SaveStatus";
+import { NoteNotice, SaveError, SaveIndicator } from "./SaveStatus";
 
 /** Below this width the date hides and the bar keeps only List, B, I, Link. */
 const NARROW = 260;
@@ -58,6 +61,7 @@ export function NoteWindow({ noteId }: { noteId: string }) {
  */
 function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void }) {
   const label = note.privateLabel || PRIVATE_FALLBACK_LABEL;
+  const [forgot, setForgot] = useState(false);
 
   const refresh = useCallback(() => {
     commands.getNote(note.id).then(onNote, () => undefined);
@@ -160,9 +164,10 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
         </div>
       </header>
       <div className="dn-note-locked">
-        {/* The forgotten-PIN screens are added with the manager's unlock (DES-28, plan Task 10). */}
-        <PinPad onUnlocked={refresh} onForgot={() => undefined} />
+        <PinPad onUnlocked={refresh} onForgot={() => setForgot(true)} />
       </div>
+      {/* Once proved, the lock is off: privacy-changed brings the note back unlocked. */}
+      {forgot && <ForgotPin onClose={() => setForgot(false)} />}
     </div>
   );
 }
@@ -209,6 +214,10 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lockCheck = useRef<Promise<void> | null>(null);
   const [labelDialog, setLabelDialog] = useState<"make" | "rename" | null>(null);
+  /** "Unlock to save": the PIN asked for here when the lock refused this note's save (R20). */
+  const [unlocking, setUnlocking] = useState(false);
+  /** Why the last menu action was refused (R21). */
+  const [refusal, setRefusal] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [saveErrorReason, setSaveErrorReason] = useState<string>();
   const [popover, setPopover] = useState<Popover>("none");
@@ -393,13 +402,15 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
     };
   }, [autosave, hold, stopHold]);
 
-  // The privacy lock turned on (for every window, or for this kept-open note).
+  // The privacy lock turned on (for every window, or for this kept-open note). When it
+  // turns off, text the lock refused to save is saved now.
   useEffect(() => {
     const unlisten = onPrivacyChanged(({ locked: lockedNow }) => {
       if (lockedNow && privateRef.current) void checkLock();
+      else if (!lockedNow && autosave.currentState === "error") void autosave.flush();
     });
     return () => void unlisten.then((f) => f());
-  }, [checkLock]);
+  }, [autosave, checkLock]);
 
   // Changes made from another window (colour, lock).
   useEffect(() => {
@@ -476,23 +487,40 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
     return () => window.removeEventListener("keydown", onKey);
   }, [hide, locked]);
 
+  /** A refused action (e.g. Duplicate while private notes are locked, D12) says why. */
   async function act(action: () => Promise<unknown>) {
-    await saveThen(action);
+    setRefusal(null);
+    try {
+      await saveThen(action);
+    } catch (e) {
+      setRefusal(refusalText(e));
+    }
   }
 
   /** "Make private" needs a PIN: without one, Settings opens at Privacy to set it up first. */
   async function makePrivate() {
-    const status = await commands.privacyStatus().catch(() => null);
-    if (!status) return;
+    setRefusal(null);
+    let status;
+    try {
+      status = await commands.privacyStatus();
+    } catch (e) {
+      setRefusal(refusalText(e));
+      return;
+    }
     if (!status.enabled) {
-      await commands.openSettings("privacy").catch(() => undefined);
+      await commands.openSettings("privacy").catch((e: unknown) => setRefusal(refusalText(e)));
       return;
     }
     setLabelDialog("make");
   }
 
+  /** Make private (true) or change the label of a private note; a refusal is shown in the dialog. */
   async function confirmLabel(label: string) {
-    await commands.setNotePrivate(note.id, true, label);
+    try {
+      await commands.setNotePrivate(note.id, true, label);
+    } catch (e) {
+      throw new Error(refusalText(e), { cause: e });
+    }
     applyPrivacy(true, label);
     setLabelDialog(null);
     editor?.commands.focus();
@@ -500,11 +528,13 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
 
   /** Keeps the label, in case the note is made private again. */
   async function makeNotPrivate() {
+    setRefusal(null);
     try {
       await commands.setNotePrivate(note.id, false, privateLabel);
       applyPrivacy(false, privateLabel);
-    } catch {
-      // Refused (e.g. while locked): nothing changed, the menu still says so.
+    } catch (e) {
+      // Refused (e.g. while locked): nothing changed, and the reason is shown (R21).
+      setRefusal(refusalText(e));
     }
   }
 
@@ -724,11 +754,29 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
       </div>
       <LinkHint container={bodyEl} />
 
-      {saveState === "error" && <SaveError reason={saveErrorReason} onRetry={() => void autosave.flush()} />}
+      {unlocking && (
+        <UnlockDialog
+          title="Unlock to save"
+          text="Private notes were locked before this note was saved. Enter your PIN to save it."
+          onUnlocked={() => {
+            setUnlocking(false);
+            void autosave.flush();
+          }}
+          onCancel={() => setUnlocking(false)}
+        />
+      )}
+      {refusal && <NoteNotice text={refusal} onDismiss={() => setRefusal(null)} />}
+      {saveState === "error" && (
+        <SaveError
+          reason={saveErrorReason}
+          onRetry={() => void autosave.flush()}
+          onUnlock={isLockRefusal(saveErrorReason) ? () => setUnlocking(true) : undefined}
+        />
+      )}
       {showBar && editor && (
         <FormatBar editor={editor} narrow={narrow} onLink={() => setPopover("link")} />
       )}
-      {!showBar && saveState !== "error" && (
+      {!showBar && saveState !== "error" && !refusal && (
         <span className="dn-resize-mark" aria-hidden="true">
           <Icon name="resize" size={12} />
         </span>
