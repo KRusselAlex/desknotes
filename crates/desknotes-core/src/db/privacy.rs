@@ -74,6 +74,14 @@ impl RecoveryMethod {
     }
 }
 
+/// A new recovery code (dashed, shown once) and the hash of its normalized form.
+fn make_recovery_code() -> CoreResult<(String, String)> {
+    let code = new_recovery_code();
+    let normalized = normalize_recovery_code(&code)
+        .ok_or_else(|| CoreError::Validation("could not make a recovery code".into()))?;
+    Ok((code, hash_secret(&normalized)?))
+}
+
 impl Database {
     fn delete_setting(&self, key: &str) -> CoreResult<()> {
         self.conn
@@ -146,10 +154,8 @@ impl Database {
     /// Makes a new recovery code, replacing any earlier one. The code is returned
     /// (dashed) once; only the hash of its normalized form is stored.
     pub fn issue_recovery_code(&self) -> CoreResult<String> {
-        let code = new_recovery_code();
-        let normalized = normalize_recovery_code(&code)
-            .ok_or_else(|| CoreError::Validation("could not make a recovery code".into()))?;
-        self.set_setting(PIN_RECOVERY_HASH, &hash_secret(&normalized)?)?;
+        let (code, hash) = make_recovery_code()?;
+        self.set_setting(PIN_RECOVERY_HASH, &hash)?;
         Ok(code)
     }
 
@@ -173,6 +179,26 @@ impl Database {
     /// Callers check the PIN and that the method can be used here first.
     pub fn set_recovery_method(&self, method: RecoveryMethod) -> CoreResult<()> {
         self.set_setting(RECOVERY_METHOD, method.as_str())
+    }
+
+    /// Changes the way back in one transaction (D14): to `Code`, a new recovery
+    /// code replaces any earlier one and is returned (dashed) once; to `System`,
+    /// the stored code is removed so it stops working. On error nothing changed.
+    /// Callers check the PIN and that the method can be used here first.
+    pub fn switch_recovery_method(&self, method: RecoveryMethod) -> CoreResult<Option<String>> {
+        // Hashing is slow: done before the transaction opens.
+        let issued = match method {
+            RecoveryMethod::Code => Some(make_recovery_code()?),
+            RecoveryMethod::System => None,
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        match &issued {
+            Some((_, hash)) => self.set_setting(PIN_RECOVERY_HASH, hash)?,
+            None => self.delete_setting(PIN_RECOVERY_HASH)?,
+        }
+        self.set_recovery_method(method)?;
+        tx.commit()?;
+        Ok(issued.map(|(code, _)| code))
     }
 
     /// Spacing, dashes and case do not matter. Shares the wrong-PIN throttle.
@@ -464,6 +490,73 @@ mod tests {
         );
         // Nothing to clear is fine.
         db.clear_recovery_code().unwrap();
+    }
+
+    #[test]
+    fn switching_to_code_stores_a_new_code_and_the_method_together() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.set_setting(PIN_RECOVERY_HASH, &recovery().1).unwrap();
+        db.set_recovery_method(RecoveryMethod::System).unwrap();
+
+        let code = db
+            .switch_recovery_method(RecoveryMethod::Code)
+            .unwrap()
+            .expect("a recovery code");
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::Code));
+        assert_eq!(db.check_recovery_code(&code, NOW).unwrap(), PinCheck::Ok);
+        assert!(matches!(
+            db.check_recovery_code(&recovery().0, NOW).unwrap(),
+            PinCheck::Wrong { .. }
+        ));
+        let stored = db.get_setting(PIN_RECOVERY_HASH).unwrap().unwrap();
+        assert!(!stored.contains(&code.replace('-', "")));
+    }
+
+    #[test]
+    fn switching_to_system_removes_the_code_with_the_method() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.set_setting(PIN_RECOVERY_HASH, &recovery().1).unwrap();
+        db.set_recovery_method(RecoveryMethod::Code).unwrap();
+
+        assert_eq!(
+            db.switch_recovery_method(RecoveryMethod::System).unwrap(),
+            None
+        );
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::System));
+        assert!(!db.has_recovery_code().unwrap());
+        assert!(db.pin_is_set().unwrap());
+    }
+
+    #[test]
+    fn a_failed_switch_changes_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.set_setting(PIN_RECOVERY_HASH, &recovery().1).unwrap();
+        db.set_recovery_method(RecoveryMethod::Code).unwrap();
+        // Make the method write (the second one) fail inside the transaction.
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER refuse_method BEFORE UPDATE ON settings \
+                 WHEN NEW.key = 'recovery_method' BEGIN SELECT RAISE(ABORT, 'no'); END;",
+            )
+            .unwrap();
+
+        assert!(db.switch_recovery_method(RecoveryMethod::System).is_err());
+        assert_eq!(db.recovery_method().unwrap(), Some(RecoveryMethod::Code));
+        assert_eq!(
+            db.check_recovery_code(&recovery().0, NOW).unwrap(),
+            PinCheck::Ok,
+            "the old code still works"
+        );
+
+        assert!(db.switch_recovery_method(RecoveryMethod::Code).is_err());
+        assert_eq!(
+            db.check_recovery_code(&recovery().0, NOW).unwrap(),
+            PinCheck::Ok,
+            "not replaced by a code never shown"
+        );
     }
 
     #[test]

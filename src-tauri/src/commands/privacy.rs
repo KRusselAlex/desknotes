@@ -103,6 +103,17 @@ fn method_usable(method: RecoveryMethod, system_auth: bool) -> CoreResult<()> {
     Ok(())
 }
 
+/// "New recovery code…" only where the code is the way back (D14: only the
+/// chosen way works): while the Ubuntu password is, a code is refused.
+fn new_code_allowed(method: Option<RecoveryMethod>, system_auth: bool) -> CoreResult<()> {
+    if system_route_allowed(method, system_auth) {
+        return Err(CoreError::NotAllowed(
+            "the Ubuntu password is the way back; choose a recovery code first".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// A new PIN after forgetting the old one comes with a new recovery code
 /// unless the Ubuntu password is the way back.
 fn issue_code_with_new_pin(method: Option<RecoveryMethod>, system_auth: bool) -> bool {
@@ -145,20 +156,8 @@ fn change_recovery_method(
             recovery_code: None,
         });
     }
-    let recovery_code = match method {
-        RecoveryMethod::Code => {
-            // The code first: if it cannot be made, the earlier choice stays.
-            let code = db.issue_recovery_code()?;
-            db.set_recovery_method(RecoveryMethod::Code)?;
-            Some(code)
-        }
-        RecoveryMethod::System => {
-            // The choice first: never "code" chosen with no code stored.
-            db.set_recovery_method(RecoveryMethod::System)?;
-            db.clear_recovery_code()?;
-            None
-        }
-    };
+    // One transaction: on error the earlier choice and code stay as they were.
+    let recovery_code = db.switch_recovery_method(method)?;
     Ok(RecoveryChange {
         check,
         recovery_code,
@@ -312,6 +311,8 @@ pub async fn turn_off_lock(
 
 /// Replace the recovery code (Settings, design D6). `None` when the PIN was
 /// not accepted; `privacy_status` is unchanged, and a wait may have started.
+/// Refused (`not_allowed`, before the PIN is checked) while the Ubuntu password
+/// is the way back (D14).
 #[tauri::command]
 pub async fn new_recovery_code(
     window: WebviewWindow,
@@ -320,7 +321,9 @@ pub async fn new_recovery_code(
 ) -> IpcResult<Option<String>> {
     only_from_settings(&window, PRIVACY)?;
     plausible_pin(&pin)?;
+    let system = system_auth_available();
     state.with_db(|db| {
+        new_code_allowed(db.recovery_method()?, system)?;
         if db.check_pin(&pin, now_ms())? != PinCheck::Ok {
             return Ok(None);
         }
@@ -538,8 +541,8 @@ mod tests {
 
     use super::{
         RecoveryChange, change_recovery_method, choose_new_pin_window, issue_code_with_new_pin,
-        method_usable, needs_pin_first, plausible_pin, replace_forgotten_pin, store_first_pin,
-        system_route_allowed,
+        method_usable, needs_pin_first, new_code_allowed, plausible_pin, replace_forgotten_pin,
+        store_first_pin, system_route_allowed,
     };
 
     #[test]
@@ -612,6 +615,25 @@ mod tests {
         assert_eq!(refused.code(), "not_allowed");
         assert!(method_usable(RecoveryMethod::Code, true).is_ok());
         assert!(method_usable(RecoveryMethod::Code, false).is_ok());
+    }
+
+    #[test]
+    fn a_new_code_only_where_the_code_is_the_way_back() {
+        for (method, system) in [(Some(RecoveryMethod::System), true), (None, true)] {
+            let refused = new_code_allowed(method, system).unwrap_err();
+            assert_eq!(refused.code(), "not_allowed", "{method:?}");
+        }
+        for (method, system) in [
+            (Some(RecoveryMethod::Code), true),
+            (Some(RecoveryMethod::Code), false),
+            (Some(RecoveryMethod::System), false),
+            (None, false),
+        ] {
+            assert!(
+                new_code_allowed(method, system).is_ok(),
+                "{method:?} {system}"
+            );
+        }
     }
 
     #[test]
