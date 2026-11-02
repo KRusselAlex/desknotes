@@ -121,7 +121,12 @@ fn toggle_shortcut_view() -> ToggleShortcut {
 /// confirms them: the desktop's keyboard settings and the privacy lock. Note
 /// windows and the manager cannot make them.
 pub(crate) fn only_from_settings(window: &tauri::WebviewWindow, what: &str) -> IpcResult<()> {
-    if window.label() == windows::SETTINGS {
+    only_from_settings_label(window.label(), what)
+}
+
+/// [`only_from_settings`] for a window label (testable without a window).
+pub(crate) fn only_from_settings_label(label: &str, what: &str) -> IpcResult<()> {
+    if label == windows::SETTINGS {
         Ok(())
     } else {
         Err(IpcError::new(

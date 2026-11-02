@@ -1,9 +1,14 @@
 //! Privacy lock commands (design §4.1–4.6). The PIN is checked here, in Rust,
 //! before anything is unlocked or changed; there is no command that turns the
 //! lock off without a correct PIN, the Ubuntu password or the recovery code.
-//! PINs and recovery codes are never logged. A recovery code is only returned
-//! to the Settings window, or to the window where a forgotten PIN was just
-//! replaced after the Ubuntu password or the old recovery code (§4.6).
+//! PINs and recovery codes are never logged, and a recovery code is only ever
+//! returned to the Settings window.
+//!
+//! Forgotten PIN (§4.6, Ruling R17): `forgot_pin_system` or `recover_with_code`,
+//! from any window, only prove who is asking (they return success or a
+//! `PinCheck`, never a code). On success the UI opens Settings → Privacy, where
+//! `choose_new_pin` (Settings only) stores the new PIN and, where the Ubuntu
+//! password cannot be used, returns the new recovery code.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -14,7 +19,7 @@ use desknotes_core::{CoreError, CoreResult, Database, now_ms};
 use serde::Serialize;
 use tauri::{AppHandle, State, WebviewWindow};
 
-use super::settings::only_from_settings;
+use super::settings::{only_from_settings, only_from_settings_label};
 use crate::error::{IpcError, IpcResult};
 use crate::platform::system_auth::{ask_system_password, system_auth_available};
 use crate::privacy::{self, emit_privacy_changed, recovery_mode};
@@ -313,16 +318,25 @@ pub async fn recover_with_code(
     Ok(check)
 }
 
-/// Choose a new PIN after `forgot_pin_system` or `recover_with_code` succeeded
-/// (one new PIN per proof; a lock in between cancels it → `not_allowed`). Where
-/// the Ubuntu password cannot be used, a new recovery code replaces the old one
-/// and is returned, shown once. A weak PIN is refused without using up the proof.
+/// Only the Settings window may choose the new PIN: it may receive a new
+/// recovery code, and codes go to Settings only (Ruling R17).
+fn choose_new_pin_window(label: &str) -> IpcResult<()> {
+    only_from_settings_label(label, PRIVACY)
+}
+
+/// Settings only. Choose a new PIN after `forgot_pin_system` or
+/// `recover_with_code` succeeded (one new PIN per proof; a lock in between
+/// cancels it → `not_allowed`). Where the Ubuntu password cannot be used, a new
+/// recovery code replaces the old one and is returned, shown once. Another
+/// window or a weak PIN is refused without using up the proof.
 #[tauri::command]
 pub async fn choose_new_pin(
     app: AppHandle,
+    window: WebviewWindow,
     state: State<'_, AppState>,
     pin: String,
 ) -> IpcResult<SetupResult> {
+    choose_new_pin_window(window.label())?;
     validate_new_pin(&pin)?;
     let issue_code = !system_auth_available();
     let result =
@@ -395,7 +409,25 @@ mod tests {
     use desknotes_core::db::PinCheck;
     use desknotes_core::{CoreError, Database};
 
-    use super::{needs_pin_first, plausible_pin, replace_forgotten_pin};
+    use super::{choose_new_pin_window, needs_pin_first, plausible_pin, replace_forgotten_pin};
+
+    #[test]
+    fn choose_new_pin_only_from_settings() {
+        assert!(choose_new_pin_window("settings").is_ok());
+        for other in [
+            "manager",
+            "note-0b9d6f6e-3f0a-4b8e-9a51-2a4c1d7e8f90",
+            "",
+            "Settings",
+        ] {
+            let refused = choose_new_pin_window(other).unwrap_err();
+            assert_eq!(refused.code, "not_allowed", "{other:?}");
+            assert_eq!(
+                refused.message, "The privacy lock can only be changed in Settings.",
+                "{other:?}"
+            );
+        }
+    }
 
     #[test]
     fn choose_new_pin_needs_a_proof() {
