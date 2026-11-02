@@ -1,5 +1,8 @@
 //! Operating-system specifics. Everything Linux-only lives here (ADR-0002).
 
+#[cfg(target_os = "linux")]
+pub mod gnome_shortcut;
+
 /// On Linux Wayland sessions, run through XWayland unless the user opted out,
 /// because native Wayland does not let apps place windows or keep them on top.
 pub fn select_display_backend() {

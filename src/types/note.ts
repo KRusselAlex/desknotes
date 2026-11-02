@@ -59,6 +59,16 @@ export interface NoteSize {
   height: number;
 }
 
+/** The "Show / hide all notes" shortcut as GNOME has it (Rust `ToggleShortcut`). */
+export interface ToggleShortcut {
+  /** False on desktops without GNOME custom shortcuts. */
+  available: boolean;
+  /** GNOME accelerator text, e.g. `<Control><Alt>n`; null when not set up. */
+  binding: string | null;
+  /** Readable form, e.g. "Ctrl+Alt+N". */
+  label: string | null;
+}
+
 /** What the Settings window shows (Rust `SettingsView`). */
 export interface SettingsView {
   launchAtLogin: boolean;

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 vi.mock("../../ipc/commands", () => ({
   commands: {
     getSettings: vi.fn(),
+    getToggleShortcut: vi.fn().mockResolvedValue({ available: true, binding: null, label: null }),
     setLaunchAtLogin: vi.fn(),
     setNewNoteColor: vi.fn().mockResolvedValue(undefined),
     setMinNoteSize: vi.fn(),

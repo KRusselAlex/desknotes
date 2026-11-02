@@ -214,3 +214,72 @@ in the scratch database while DeskNotes was stopped, then restarted:
 | Header above the screen | 700, −150 | 700, 32 (below the top bar) |
 
 All stayed 300 × 280. Not checked: unplugging a real second monitor (only one here).
+
+## Show / hide all shortcut (DES-27) — 2026-11-02
+
+**Platform facts (Ubuntu 24.04, GNOME Shell 46.0, xdg-desktop-portal-gnome 46.2):**
+- The XDG GlobalShortcuts portal is not offered (the desktop portal exposes only Background
+  and Settings); it arrives with GNOME 48.
+- An X11 key grab from XWayland only sees keys while one of DeskNotes' own windows has
+  focus, so it cannot be a global shortcut.
+- A GNOME custom keyboard shortcut can run any command globally. Ctrl+Alt+N is not used by
+  GNOME here (read-only check of the window manager, shell and media-keys bindings).
+
+**Part 1, the command:** `desknotes --toggle-notes`. A second launch hands it to the running
+DeskNotes (single instance). Release build, isolated data:
+
+| Situation | Result |
+|---|---|
+| Two notes on screen | Second launch exits in ~135 ms (code 0); both notes hidden (saved first) |
+| Run again | Both notes back |
+| DeskNotes not running | It starts DeskNotes |
+| No notes on screen and none remembered (the manager is then on screen) | Manager stays; no error |
+
+**Real key press, confirmed by the owner (2026-11-02):** they added a GNOME custom shortcut
+by hand (Ctrl+Alt+N running the release build with `--toggle-notes`); pressing it hides and
+shows their notes. From a terminal, the same command started DeskNotes, then hid and showed
+the note.
+
+**Part 2, setting up the GNOME shortcut (backend only, no UI yet):** module
+`src-tauri/src/platform/gnome_shortcut.rs` and commands `get_toggle_shortcut`,
+`set_toggle_shortcut`, `remove_toggle_shortcut`. Tested with the real GIO settings code
+against a **scratch keyfile backend** (`GSETTINGS_BACKEND=keyfile`, scratch
+`XDG_CONFIG_HOME`; the test refuses to run otherwise):
+
+| Check | Result |
+|---|---|
+| Install Ctrl+Alt+N next to another custom shortcut | Both in the list, in order; name, command and key written |
+| Conflicts | Another custom shortcut on Super+E is reported by name; GNOME's Ctrl+Alt+T is reported as "terminal"; Ctrl+Alt+N is free |
+| Remove | Only DeskNotes' entry goes; the other shortcut keeps its name, key and place |
+| The owner's own GNOME settings | `dconf dump` of media-keys identical before and after |
+
+**Part 3, the Settings row and dialog.** No design existed; the owner asked DeskNotes to
+draw it from the existing designs: the S2 row (mono key pill, "Change" link), the S3
+confirmation modal, tokens only. Checked in the preview (light and dark: not set up,
+dialog, conflict, set up, change with "Remove shortcut") and in the real app, release
+build, with GNOME settings pointed at a scratch keyfile (`GSETTINGS_BACKEND=keyfile`):
+
+| Step | Result |
+|---|---|
+| Settings → General | "Show / hide all notes — Not set up — Set up…" |
+| Set up… | Dialog explains what will be added; field focused, suggests Ctrl+Alt+N |
+| Set shortcut | Scratch settings get one entry: name, `'…/desknotes' --toggle-notes`, `<Control><Alt>n`, added to the list; row shows the key and "Change" |
+| Change → Remove shortcut | List emptied; row back to "Not set up" |
+| The owner's own GNOME shortcuts | `dconf dump` identical before and after |
+
+**Pre-merge review (desknotes-reviewer), all fixed:** a stray `APPIMAGE` from another
+AppImage could have been written as the command (now only trusted when DeskNotes runs from
+it; " (deleted)" stripped after upgrades); `%` in the path is doubled for GNOME's launcher;
+malformed entries in the custom-shortcut list are skipped (GLib returns NULL for them, which
+crashed); F-keys are written as `F5` (GTK cannot read `f5`); a second hide / show while one
+runs is ignored (two at once could forget hidden notes); Shift+Tab leaves the key field,
+focus stays in the dialog and returns to the button; only the Settings window may change the
+desktop shortcut; a key changed by hand in GNOME Settings is shown as stored and can still be
+removed; memory/null settings backends count as unavailable; Ubuntu's dock and tiling keys
+are checked for conflicts; numpad keys are refused. The real-app run above was repeated
+after the fixes with the same results.
+
+Not checked: DeskNotes writing the shortcut into the owner's real settings (they already
+have a hand-made Ctrl+Alt+N, which the conflict check would report). Removing DeskNotes
+does not remove its GNOME shortcut; use "Remove shortcut" first, or GNOME Settings →
+Keyboard afterwards.

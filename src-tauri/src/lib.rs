@@ -13,11 +13,18 @@ use tauri::{Manager, RunEvent};
 
 use crate::state::AppState;
 
+/// Command-line flag for the show / hide all keyboard shortcut (DES-27).
+pub const TOGGLE_NOTES_ARG: &str = "--toggle-notes";
+
 pub fn run() {
     let app = tauri::Builder::default()
-        // Must be registered first: a second launch just shows the manager.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Err(e) = windows::show_manager(app) {
+        // Must be registered first. A second launch hands its arguments to this
+        // one: `--toggle-notes` (the show / hide all shortcut) hides or shows the
+        // notes; anything else just shows the manager.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if argv.iter().any(|a| a == TOGGLE_NOTES_ARG) {
+                tray::spawn_notes_action(app, commands::notes::toggle_notes);
+            } else if let Err(e) = windows::show_manager(app) {
                 eprintln!("DeskNotes: could not show the manager: {e}");
             }
         }))
@@ -63,6 +70,9 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::set_launch_at_login,
             commands::settings::set_new_note_color,
+            commands::settings::get_toggle_shortcut,
+            commands::settings::set_toggle_shortcut,
+            commands::settings::remove_toggle_shortcut,
             commands::settings::set_min_note_size,
             commands::settings::open_data_folder,
             commands::backup::export_backup,

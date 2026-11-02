@@ -271,3 +271,32 @@ essential, show it as an alternative and we will test it on Ubuntu before commit
 **Background opacity** depends on the desktop compositor. It works on a normal
 GNOME session, but it may be unavailable elsewhere, so the design should also
 look right at 100 % opacity.
+
+## 9. Follow-up request: the "Show / hide all notes" shortcut (Settings → General)
+
+Design S2 shows the row "Show / hide all notes — Ctrl+Alt+N — Change". What happens
+behind "Change" is not designed yet. How it works (DES-27): Ubuntu 24.04 has no
+system-wide shortcut service for apps, so DeskNotes adds **one entry to GNOME's own
+keyboard settings** (Settings → Keyboard → Custom Shortcuts) that runs DeskNotes. It
+works in every app. DeskNotes only does this after the person confirms, and only
+touches its own entry.
+
+Please design, in light and dark, in the S2 card style:
+
+**The row, in three states**
+- *Not set up* (a fresh install): no key shown, a "Set up…" button.
+- *Set up*: the key (e.g. "Ctrl+Alt+N") and "Change".
+- *Not available* (a desktop without GNOME shortcuts): muted text, no button.
+
+**The dialog (or popover) opened by "Set up…" / "Change"**
+- One or two sentences saying DeskNotes will add a shortcut to GNOME's keyboard
+  settings, that it works in every app, and that it can be removed here or in GNOME
+  Settings.
+- A key field: "Press the keys…", then shows what was pressed ("Ctrl+Alt+N").
+  Ctrl+Alt+N is suggested at first.
+- Inline errors under the field:
+  - "Ctrl+Alt+T is already used by Terminal." (taken by GNOME or another shortcut)
+  - "Use Ctrl, Alt or Super with the key." (plain or Shift-only keys)
+  - "This key can't be used." (keys other than letters, digits, F1–F12 and Space)
+- Buttons: Cancel and "Set shortcut" (primary). When one is already set up, also
+  "Remove shortcut".

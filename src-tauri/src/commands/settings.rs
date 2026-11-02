@@ -78,6 +78,120 @@ pub fn set_new_note_color(
     Ok(())
 }
 
+/// The "Show / hide all notes" keyboard shortcut, as GNOME has it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleShortcut {
+    /// False on desktops without GNOME custom shortcuts.
+    pub available: bool,
+    /// Accelerator text, e.g. `<Control><Alt>n`; `None` when not set up.
+    pub binding: Option<String>,
+    /// Readable form, e.g. "Ctrl+Alt+N".
+    pub label: Option<String>,
+}
+
+fn toggle_shortcut_view() -> ToggleShortcut {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::platform::gnome_shortcut as gnome;
+        let current = gnome::current();
+        ToggleShortcut {
+            available: gnome::available(),
+            // A key changed by hand in GNOME Settings that DeskNotes cannot read is
+            // shown as GNOME stores it, and can still be removed.
+            label: current.as_ref().map(|c| {
+                c.accel
+                    .as_ref()
+                    .map_or_else(|| c.binding.clone(), |a| a.label())
+            }),
+            binding: current.map(|c| c.accel.map_or(c.binding, |a| a.to_gsettings())),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        ToggleShortcut {
+            available: false,
+            binding: None,
+            label: None,
+        }
+    }
+}
+
+/// The desktop's keyboard settings are changed only from the Settings window,
+/// where the person confirms it; note windows cannot do it.
+fn only_from_settings(window: &tauri::WebviewWindow) -> IpcResult<()> {
+    if window.label() == windows::SETTINGS {
+        Ok(())
+    } else {
+        Err(IpcError::new(
+            "not_allowed",
+            "The keyboard shortcut can only be changed in Settings.",
+        ))
+    }
+}
+
+#[tauri::command]
+pub fn get_toggle_shortcut() -> ToggleShortcut {
+    toggle_shortcut_view()
+}
+
+/// Add or change the GNOME custom shortcut that runs `desknotes --toggle-notes`.
+/// The Settings window calls this only after the person confirmed it.
+#[tauri::command]
+pub fn set_toggle_shortcut(
+    window: tauri::WebviewWindow,
+    binding: String,
+) -> IpcResult<ToggleShortcut> {
+    only_from_settings(&window)?;
+    #[cfg(target_os = "linux")]
+    {
+        use crate::platform::gnome_shortcut::{self as gnome, Accel};
+        if !gnome::available() {
+            return Err(IpcError::new(
+                "shortcut",
+                "This desktop has no GNOME keyboard shortcuts.",
+            ));
+        }
+        let accel = Accel::parse(&binding)
+            .ok_or_else(|| IpcError::new("validation", "This key combination is not supported."))?;
+        if !accel.is_acceptable() {
+            return Err(IpcError::new(
+                "validation",
+                "Use Ctrl, Alt or Super with the key.",
+            ));
+        }
+        let taken = gnome::conflicts(&accel);
+        if !taken.is_empty() {
+            return Err(IpcError::new(
+                "shortcut_taken",
+                format!("{} is already used by {}.", accel.label(), taken.join(", ")),
+            ));
+        }
+        let command = gnome::toggle_command().map_err(|e| IpcError::new("shortcut", e))?;
+        gnome::install(&accel, &command).map_err(|e| IpcError::new("shortcut", e))?;
+        Ok(toggle_shortcut_view())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = binding;
+        Err(IpcError::new(
+            "shortcut",
+            "Not available on this system yet.",
+        ))
+    }
+}
+
+/// Remove DeskNotes' GNOME custom shortcut (other shortcuts are kept).
+#[tauri::command]
+pub fn remove_toggle_shortcut(window: tauri::WebviewWindow) -> IpcResult<ToggleShortcut> {
+    only_from_settings(&window)?;
+    #[cfg(target_os = "linux")]
+    if crate::platform::gnome_shortcut::available() {
+        crate::platform::gnome_shortcut::remove().map_err(|e| IpcError::new("shortcut", e))?;
+    }
+    Ok(toggle_shortcut_view())
+}
+
 /// Change the smallest size a note window may take, for open notes too.
 /// Returns the size that was saved.
 #[tauri::command]
