@@ -224,7 +224,7 @@ impl Database {
         self.set_setting(PIN_RESET_AT, &now_ms.to_string())
     }
 
-    /// When the PIN was reset by recovery code, until acknowledged. Damaged → `None`.
+    /// When the PIN was reset with `desknotes --reset-pin` (D11), until acknowledged. Damaged → `None`.
     pub fn pin_reset_at(&self) -> CoreResult<Option<i64>> {
         Ok(self
             .get_setting(PIN_RESET_AT)?
