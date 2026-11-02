@@ -329,22 +329,30 @@ impl Database {
     /// Mark a note private or not, with its neutral label. The label is stored
     /// validated; clearing `private` keeps the label for next time.
     ///
-    /// While the lock is in effect, a note it withholds cannot change at all
-    /// (design §4.2: label and "Make not private" need the PIN). A normal note
-    /// made private while locked is kept open, so its open editor can keep
-    /// saving until the shell releases it, like a note whose save failed at lock.
+    /// While the lock is in effect, a private note cannot change at all, whether
+    /// it is withheld or kept open at the last lock (design §4.2: label and
+    /// "Make not private" need the PIN). A normal note made private while locked
+    /// is kept open, so its open editor can keep saving until the shell releases
+    /// it, like a note whose save failed at lock.
     pub fn set_private(&self, id: &str, private: bool, label: &str) -> CoreResult<()> {
         self.refuse_if_note_locked(id)?;
         let label = validate_private_label(label)?;
-        let newly_private_while_locked = private
-            && self.lock_active()?
-            && !self
+        let locked = self.lock_active()?;
+        let newly_private_while_locked = if locked {
+            let currently_private = self
                 .conn
                 .query_row("SELECT private FROM notes WHERE id = ?1", [id], |r| {
                     r.get::<_, bool>(0)
                 })
-                .optional()?
-                .unwrap_or(true);
+                .optional()?;
+            if currently_private == Some(true) {
+                return Err(CoreError::NotAllowed(super::PRIVATE_LOCKED.into()));
+            }
+            // A missing note falls through to `not_found` below.
+            private && currently_private.is_some()
+        } else {
+            false
+        };
         let changed = self.conn.execute(
             "UPDATE notes SET private = ?2, private_label = ?3 WHERE id = ?1",
             params![id, private, label],

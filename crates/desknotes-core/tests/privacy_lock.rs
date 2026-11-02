@@ -355,6 +355,56 @@ fn note_made_private_while_locked_stays_savable_until_released() {
 }
 
 #[test]
+fn kept_open_private_note_cannot_lose_privacy_or_label_while_locked() {
+    let db = db_with_pin();
+    let kept = private_note(&db, "unsaved secret", "Bank");
+    db.set_privacy_locked(true, std::slice::from_ref(&kept));
+    assert!(!db.is_note_locked(&kept).unwrap(), "kept open");
+    for (private, label) in [
+        (false, "Bank"),
+        (false, ""),
+        (true, "Other"),
+        (true, "Bank"),
+    ] {
+        assert_eq!(
+            db.set_private(&kept, private, label).unwrap_err().code(),
+            "not_allowed",
+            "{private} {label:?}"
+        );
+    }
+    let note = db.get_note(&kept).unwrap();
+    assert!(note.private);
+    assert_eq!(note.private_label, "Bank");
+
+    // A note made private while locked is private from then on: no take-backs either.
+    let fresh = db.create_note(None).unwrap().id;
+    db.set_private(&fresh, true, "Diary").unwrap();
+    assert_eq!(
+        db.set_private(&fresh, false, "Diary").unwrap_err().code(),
+        "not_allowed"
+    );
+    // Missing notes still report not_found while locked.
+    assert_eq!(
+        db.set_private("missing", false, "").unwrap_err().code(),
+        "not_found"
+    );
+
+    db.set_privacy_locked(false, &[]);
+    db.set_private(&kept, false, "Bank").unwrap();
+    assert!(!db.get_note(&kept).unwrap().private);
+}
+
+#[test]
+fn privacy_can_be_cleared_when_no_pin_is_set() {
+    let db = db_with_pin();
+    let id = private_note(&db, "secret", "Bank");
+    db.set_privacy_locked(true, &[]);
+    db.clear_pin().unwrap();
+    db.set_private(&id, false, "Bank").unwrap();
+    assert!(!db.get_note(&id).unwrap().private);
+}
+
+#[test]
 fn clearing_the_pin_resets_the_lock() {
     let db = db_with_pin();
     let id = private_note(&db, "secret", "Bank");

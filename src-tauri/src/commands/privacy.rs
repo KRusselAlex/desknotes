@@ -210,8 +210,16 @@ pub fn set_lock_after(
     state.with_db(|db| db.set_lock_after_minutes(minutes))
 }
 
+/// Making a note private needs a PIN (marking it private first starts the PIN
+/// setup, §4.1). Making it not private does not: with no PIN there is no lock,
+/// and flags kept from an earlier lock must stay removable.
+fn needs_pin_first(pin_set: bool, private: bool) -> bool {
+    private && !pin_set
+}
+
 /// Make a note private (with an optional label shown while locked) or not.
-/// Needs a PIN; the core refuses any change to a locked private note.
+/// While the lock is on, the core refuses any change to a private note (kept
+/// open or not): its label and "Make not private" need the PIN.
 #[tauri::command]
 pub fn set_note_private(
     app: AppHandle,
@@ -222,7 +230,7 @@ pub fn set_note_private(
 ) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
     state.with_db(|db| {
-        if !db.pin_is_set()? {
+        if needs_pin_first(db.pin_is_set()?, private) {
             return Err(CoreError::NotAllowed(
                 "set up a PIN before making notes private".into(),
             ));
@@ -247,7 +255,18 @@ pub fn acknowledge_pin_reset(state: State<'_, AppState>) -> IpcResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::plausible_pin;
+    use super::{needs_pin_first, plausible_pin};
+
+    #[test]
+    fn only_making_private_needs_a_pin() {
+        assert!(needs_pin_first(false, true));
+        assert!(
+            !needs_pin_first(false, false),
+            "flags stay removable without a PIN"
+        );
+        assert!(!needs_pin_first(true, true));
+        assert!(!needs_pin_first(true, false));
+    }
 
     #[test]
     fn only_six_digits_are_checked() {
