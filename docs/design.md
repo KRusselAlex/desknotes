@@ -50,6 +50,7 @@ All core dependencies are free and open source. None requires a paid service, ac
 | rusqlite (`bundled`) | 0.41.1 | MIT (SQLite: public domain) | Native SQLite access |
 | serde / serde_json / thiserror / uuid | current | MIT OR Apache-2.0 | Serialization, errors, stable IDs |
 | argon2 (M3) | 0.6.0 | MIT OR Apache-2.0 | PIN hashing (Argon2id) |
+| zbus (M3, Linux only; blocking API) | 5.13.2 | MIT | Listen for sleep and screen-lock signals on the local D-Bus to lock private notes. Already in the build through Tauri's plugins; no network |
 | react / react-dom | 19.3.1 | MIT | UI |
 | vite / @vitejs/plugin-react | 8.3.5 / 6.1.2 | MIT | Build tooling |
 | typescript | **6.0.3** (pinned) | Apache-2.0 | Type checking. 7.0 exists but typescript-eslint supports `<6.1` |

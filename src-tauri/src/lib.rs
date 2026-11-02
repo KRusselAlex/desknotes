@@ -17,6 +17,17 @@ use crate::state::AppState;
 /// Command-line flag for the show / hide all keyboard shortcut (DES-27).
 pub const TOGGLE_NOTES_ARG: &str = "--toggle-notes";
 
+/// Lock private notes on sleep, screen lock and inactivity (design D3). Each
+/// watcher has its own thread; none can stop or slow the app.
+fn start_lock_triggers(app: &tauri::AppHandle) {
+    let on_event = app.clone();
+    platform::lock_triggers::watch(move || {
+        privacy::lock_automatically(&on_event);
+    });
+    let on_tick = app.clone();
+    platform::lock_triggers::watch_inactivity(move || privacy::lock_if_inactive(&on_tick));
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         // Must be registered first. A second launch hands its arguments to this
@@ -42,6 +53,7 @@ pub fn run() {
             app.manage(AppState::open(&handle));
             windows::restore_on_startup(&handle);
             tray::install(&handle);
+            start_lock_triggers(&handle);
             Ok(())
         })
         .on_window_event(windows::on_window_event)

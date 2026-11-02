@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "linux")]
 pub mod gnome_shortcut;
+pub mod lock_triggers;
 pub mod system_auth;
 
 /// On Linux Wayland sessions, run through XWayland unless the user opted out,

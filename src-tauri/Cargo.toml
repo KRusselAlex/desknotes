@@ -31,3 +31,6 @@ tauri-plugin-dialog = "2"
 webkit2gtk = "=2.0.2"
 # Same version Tauri uses; GNOME settings for the show / hide all shortcut (DES-27).
 gio = "=0.18.4"
+# Already in the build through Tauri's plugins (same version, same features); the
+# blocking API listens for sleep and screen-lock signals on D-Bus (design D3).
+zbus = "5"

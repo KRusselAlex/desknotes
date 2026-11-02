@@ -3,13 +3,16 @@
 //! this module decides when it changes. PINs and codes are never logged.
 
 use std::collections::HashSet;
+use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
+use desknotes_core::now_ms;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::app::SAVE_TIMEOUT;
 use crate::error::IpcResult;
+use crate::platform::lock_triggers::inactive_long_enough;
 use crate::state::AppState;
 use crate::windows::{self, emit_changed};
 
@@ -99,6 +102,61 @@ pub fn spawn_lock(app: &AppHandle) {
     });
 }
 
+/// Serialises automatic locks: a second trigger for the same event (the screen
+/// saver and logind both report a screen lock) waits here, then finds the lock
+/// already on and does nothing.
+static AUTO_LOCK: Mutex<()> = Mutex::new(());
+
+/// Whether an automatic trigger should lock: a PIN is set and the lock is not
+/// already in effect.
+pub fn auto_lock_needed(pin_set: bool, locked: bool) -> bool {
+    pin_set && !locked
+}
+
+/// Lock because of sleep, a screen lock or inactivity. Blocking (waits for the
+/// note windows): call it from a watcher thread, never the main thread.
+/// Returns false when locking failed; the manager is told why.
+pub fn lock_automatically(app: &AppHandle) -> bool {
+    let _one_at_a_time = AUTO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let state = app.state::<AppState>();
+    let needed = state
+        .with_db(|db| Ok(auto_lock_needed(db.pin_is_set()?, db.privacy_locked())))
+        .unwrap_or(false);
+    if !needed {
+        return true;
+    }
+    match lock(app) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!(
+                "DeskNotes: private notes could not be locked: {}",
+                e.message
+            );
+            crate::tray::report(app, e.message);
+            false
+        }
+    }
+}
+
+/// The inactivity check: lock when the notes are unlocked and no DeskNotes
+/// window has reported input for the chosen number of minutes.
+pub fn lock_if_inactive(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let minutes = state.with_db(|db| {
+        Ok(if auto_lock_needed(db.pin_is_set()?, db.privacy_locked()) {
+            Some(db.lock_after_minutes()?)
+        } else {
+            None
+        })
+    });
+    let Ok(Some(minutes)) = minutes else { return };
+    let last = state.last_activity_ms.load(Ordering::Relaxed);
+    if inactive_long_enough(now_ms(), last, minutes) && !lock_automatically(app) {
+        // Do not report the same failure every check: try again after a full period.
+        state.touch_activity();
+    }
+}
+
 /// A note kept open at the last lock has saved, or its window closed: lock it
 /// now and tell its window (if any) to show the locked view.
 pub fn release_kept_open(app: &AppHandle, id: &str) {
@@ -139,6 +197,14 @@ mod tests {
 
     fn ids(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn automatic_locks_need_a_pin_and_an_unlocked_state() {
+        assert!(auto_lock_needed(true, false));
+        assert!(!auto_lock_needed(false, false), "no PIN, nothing to lock");
+        assert!(!auto_lock_needed(true, true), "already locked");
+        assert!(!auto_lock_needed(false, true));
     }
 
     #[test]
