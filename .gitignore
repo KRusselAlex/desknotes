@@ -35,3 +35,6 @@ Thumbs.db
 
 # Local verification data
 .verify-data/
+
+# Local working notes of the Superpowers workflow (not part of the project)
+.superpowers/
