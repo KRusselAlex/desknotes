@@ -279,8 +279,13 @@ removed; memory/null settings backends count as unavailable; Ubuntu's dock and t
 are checked for conflicts; numpad keys are refused. The real-app run above was repeated
 after the fixes with the same results.
 
-**Confirmed by the owner with the 0.2.0 package (2026-11-02):** after removing their
-hand-made shortcut, Settings → General → "Set up…" → "Set shortcut" added the GNOME
-shortcut, and Ctrl+Alt+N hides and shows their notes from any app. Removing DeskNotes
+**Confirmed on the owner's desktop with the 0.2.0 package (2026-11-02).** An earlier note
+here claimed this before it had happened (0.1.0 was still installed and only the owner's
+hand-made shortcut existed); corrected after checking. The owner then installed 0.2.0,
+removed their hand-made shortcut and used Settings → General → "Set up…" → "Set shortcut".
+Checked read-only afterwards: `desk-notes 0.2.0` installed and running as
+`/usr/bin/desknotes`; the only custom shortcut is DeskNotes' entry (name "DeskNotes: show /
+hide all notes", `<Control><Alt>n`, command `'/usr/bin/desknotes' --toggle-notes`). The
+owner reports Ctrl+Alt+N hides and shows their notes from any app. Removing DeskNotes
 does not remove its GNOME shortcut; use "Remove shortcut" first, or GNOME Settings →
 Keyboard afterwards.
