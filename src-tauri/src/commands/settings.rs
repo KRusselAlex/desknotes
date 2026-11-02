@@ -1,4 +1,4 @@
-use desknotes_core::CoreError;
+use desknotes_core::{CoreError, NoteSize};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt as _;
@@ -14,6 +14,7 @@ use crate::windows::{self, emit_changed};
 pub struct SettingsView {
     pub launch_at_login: bool,
     pub new_note_color: String,
+    pub min_note_size: NoteSize,
     pub version: String,
     pub data_dir: String,
     /// Time of the last successful export (Unix ms), if any.
@@ -36,6 +37,7 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Set
         // If the launcher state cannot be read, show it as off rather than failing.
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
         new_note_color: state.with_db(|db| db.new_note_color())?,
+        min_note_size: state.with_db(|db| db.min_note_size())?,
         version: app.package_info().version.to_string(),
         data_dir,
         last_backup_at: state
@@ -74,6 +76,20 @@ pub fn set_new_note_color(
     state.with_db(|db| db.set_new_note_color(&color))?;
     emit_changed(&app, None, "other");
     Ok(())
+}
+
+/// Change the smallest size a note window may take, for open notes too.
+/// Returns the size that was saved.
+#[tauri::command]
+pub fn set_min_note_size(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    width: u32,
+    height: u32,
+) -> IpcResult<NoteSize> {
+    let size = state.with_db(|db| db.set_min_note_size(width, height))?;
+    windows::apply_min_note_size(&app, size);
+    Ok(size)
 }
 
 /// Show the folder that holds the notes database in the file manager.

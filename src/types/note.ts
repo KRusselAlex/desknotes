@@ -53,10 +53,18 @@ export interface SaveResult {
   updatedAt: number;
 }
 
+/** A note size in whole pixels (Rust `NoteSize`). */
+export interface NoteSize {
+  width: number;
+  height: number;
+}
+
 /** What the Settings window shows (Rust `SettingsView`). */
 export interface SettingsView {
   launchAtLogin: boolean;
   newNoteColor: string;
+  /** Smallest size a note window may take, in pixels. */
+  minNoteSize: NoteSize;
   version: string;
   dataDir: string;
   /** Last successful export, Unix ms. */

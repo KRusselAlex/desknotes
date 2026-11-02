@@ -63,6 +63,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::set_launch_at_login,
             commands::settings::set_new_note_color,
+            commands::settings::set_min_note_size,
             commands::settings::open_data_folder,
             commands::backup::export_backup,
             commands::backup::choose_backup,

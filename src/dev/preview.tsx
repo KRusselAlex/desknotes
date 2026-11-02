@@ -113,9 +113,11 @@ mockIPC(
       case "hidden_note_count":
         return 0;
       case "get_settings":
-        return { launchAtLogin: false, newNoteColor: "#fff4a3", version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
       case "set_launch_at_login":
         return Boolean(a.enabled);
+      case "set_min_note_size":
+        return { width: a.width, height: a.height };
       case "set_edit_locked":
         find(a.id).editLocked = Boolean(a.locked);
         return null;

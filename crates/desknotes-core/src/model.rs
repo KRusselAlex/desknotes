@@ -7,6 +7,29 @@ pub const MIN_WIDTH: f64 = 180.0;
 pub const MIN_HEIGHT: f64 = 120.0;
 /// Height of a collapsed note: just its header strip.
 pub const COLLAPSED_HEIGHT: f64 = 32.0;
+/// Largest value the "Minimum note size" setting accepts, per side.
+pub const MAX_MIN_NOTE_SIDE: u32 = 600;
+
+/// A note size in whole logical pixels (the "Minimum note size" setting).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoteSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl NoteSize {
+    /// The smallest a note can ever be: the layout does not fit below this.
+    pub const FLOOR: NoteSize = NoteSize {
+        width: MIN_WIDTH as u32,
+        height: MIN_HEIGHT as u32,
+    };
+
+    /// True when both sides are between the floor and `MAX_MIN_NOTE_SIDE`.
+    pub fn is_valid_minimum(&self) -> bool {
+        (Self::FLOOR.width..=MAX_MIN_NOTE_SIDE).contains(&self.width)
+            && (Self::FLOOR.height..=MAX_MIN_NOTE_SIDE).contains(&self.height)
+    }
+}
 
 /// Where a note window sits and whether it is shown. Logical pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

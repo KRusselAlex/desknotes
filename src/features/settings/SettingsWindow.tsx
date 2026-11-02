@@ -6,6 +6,7 @@ import { commands } from "../../ipc/commands";
 import type { SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
 import { BackupPane } from "./BackupPane";
+import { MinNoteSize } from "./MinNoteSize";
 
 type Section = "general" | "backup" | "about";
 
@@ -25,13 +26,16 @@ export function SettingsWindow() {
     commands.getSettings().then(setSettings, (e: Error) => setError(e.message));
   }, []);
 
-  async function update(action: () => Promise<Partial<SettingsView>>) {
+  /** Run a change and merge its result. Returns false (and shows why) if it failed. */
+  async function update(action: () => Promise<Partial<SettingsView>>): Promise<boolean> {
     try {
       const patch = await action();
       setSettings((s) => (s ? { ...s, ...patch } : s));
       setError(null);
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     }
   }
 
@@ -95,6 +99,16 @@ export function SettingsWindow() {
                     />
                   ))}
                 </div>
+              </div>
+              <div className="dn-card-sep" />
+              <div className="dn-card-row">
+                <div className="dn-card-label">Minimum note size</div>
+                <MinNoteSize
+                  value={settings.minNoteSize}
+                  onSave={(size) =>
+                    update(async () => ({ minNoteSize: await commands.setMinNoteSize(size.width, size.height) }))
+                  }
+                />
               </div>
             </div>
           </>
