@@ -32,7 +32,8 @@ vi.mock("../../ipc/window", () => ({
   onCloseRequested: () => Promise.resolve(() => undefined),
   openExternal: vi.fn(),
 }));
-vi.mock("../../ipc/commands", () => ({
+vi.mock("../../ipc/commands", async (importOriginal) => ({
+  CommandError: (await importOriginal<typeof import("../../ipc/commands")>()).CommandError,
   commands: {
     getNote: vi.fn(),
     saveNoteContent: vi.fn(),
@@ -56,7 +57,7 @@ vi.mock("../../ipc/commands", () => ({
   },
 }));
 
-import { commands } from "../../ipc/commands";
+import { CommandError, commands } from "../../ipc/commands";
 import { NoteWindow } from "./NoteWindow";
 
 const ID = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
@@ -352,7 +353,7 @@ describe("NoteWindow", () => {
 
     it("keeps the editor and its text when the lock refused the last save", async () => {
       const { container } = await openNote({ private: true });
-      vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("private notes are locked"));
+      vi.mocked(commands.saveNoteContent).mockRejectedValue(new CommandError("private_locked", "private notes are locked"));
       await typeIntoNote(container, "late words ");
       vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
       await act(async () => handlers.privacy?.({ locked: true }));
@@ -550,7 +551,7 @@ describe("NoteWindow", () => {
     /** A private note whose last save the lock refused: editor and "Not saved" kept (R14). */
     async function refusedByTheLock() {
       const view = await openNote({ private: true, privateLabel: "Bank" });
-      vi.mocked(commands.saveNoteContent).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      vi.mocked(commands.saveNoteContent).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
       await typeIntoNote(view.container, "late words ");
       vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
       await act(async () => handlers.privacy?.({ locked: true }));
@@ -584,6 +585,15 @@ describe("NoteWindow", () => {
       expect(screen.queryByRole("button", { name: "Unlock to save" })).toBeNull();
     });
 
+    it("knows the lock by the error code, not by its words", async () => {
+      const { container } = await openNote({ private: true });
+      vi.mocked(commands.saveNoteContent).mockRejectedValueOnce(new Error("private notes are locked"));
+      await typeIntoNote(container, "x");
+      await act(async () => handlers.willQuit?.());
+      expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Unlock to save" })).toBeNull();
+    });
+
     it("saves text the lock refused once private notes are unlocked in another window", async () => {
       await refusedByTheLock();
       vi.mocked(commands.saveNoteContent).mockClear();
@@ -593,7 +603,7 @@ describe("NoteWindow", () => {
     });
 
     it("says why Make not private was refused (R21)", async () => {
-      vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
       await openNote({ private: true, privateLabel: "Bank" });
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       await userEvent.click(screen.getByRole("menuitem", { name: "Make not private" }));
@@ -606,7 +616,7 @@ describe("NoteWindow", () => {
     });
 
     it("says why a label change was refused, in the dialog", async () => {
-      vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
       await openNote({ private: true, privateLabel: "Bank" });
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       await userEvent.click(screen.getByRole("menuitem", { name: "Change private label…" }));
@@ -624,7 +634,7 @@ describe("NoteWindow", () => {
     });
 
     it("says why Duplicate was refused (D12)", async () => {
-      vi.mocked(commands.duplicateNote).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+      vi.mocked(commands.duplicateNote).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
       await openNote({ private: true });
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       await userEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));

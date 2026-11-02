@@ -160,7 +160,7 @@ const redact = (n: Note): Note => ({
   content: { type: "doc", content: [{ type: "paragraph" }] },
   locked: true,
 });
-const notLocked = () => ({ code: "not_allowed", message: "operation not allowed: private notes are locked" });
+const notLocked = () => ({ code: "private_locked", message: "private notes are locked" });
 const anyWithheld = () => notes.some(isWithheld);
 const bare = (code: unknown) => String(code ?? "").replace(/[\s-]/g, "").toUpperCase();
 function checkPin(pin: string): PinCheck {

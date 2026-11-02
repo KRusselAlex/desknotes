@@ -3,7 +3,7 @@
 //! text, find it by its text, or destroy or copy it.
 
 use desknotes_core::validation::empty_doc;
-use desknotes_core::{Database, NoteFilter, PRIVATE_FALLBACK_LABEL};
+use desknotes_core::{CoreError, Database, NoteFilter, PRIVATE_FALLBACK_LABEL};
 
 const PIN: &str = "482913";
 
@@ -129,16 +129,14 @@ fn locked_private_notes_cannot_be_saved_copied_or_destroyed() {
     db.set_privacy_locked(true, &[]);
 
     let err = db.save_content(&id, &doc("overwritten")).unwrap_err();
-    assert_eq!(err.code(), "not_allowed");
-    assert_eq!(
-        err.to_string(),
-        "operation not allowed: private notes are locked"
-    );
-    assert_eq!(db.duplicate_note(&id).unwrap_err().code(), "not_allowed");
-    assert_eq!(db.purge_note(&id).unwrap_err().code(), "not_allowed");
+    assert_eq!(err.code(), "private_locked");
+    assert!(matches!(err, CoreError::PrivateLocked), "{err:?}");
+    assert_eq!(err.to_string(), "private notes are locked");
+    assert_eq!(db.duplicate_note(&id).unwrap_err().code(), "private_locked");
+    assert_eq!(db.purge_note(&id).unwrap_err().code(), "private_locked");
     assert_eq!(
         db.set_private(&id, false, "Bank").unwrap_err().code(),
-        "not_allowed"
+        "private_locked"
     );
 
     // Nothing changed underneath, and allowed actions still work (D12).
@@ -172,16 +170,16 @@ fn export_and_restore_need_unlock_when_private_notes_exist() {
     db.trash_note(&id).unwrap();
     assert_eq!(
         db.refuse_if_any_private_locked().unwrap_err().code(),
-        "not_allowed"
+        "private_locked"
     );
     assert_eq!(
         db.export_backup("0.1.0").err().unwrap().code(),
-        "not_allowed"
+        "private_locked"
     );
     let safety = dir.path().join("b2");
     assert_eq!(
         db.restore_backup(&backup, &safety).unwrap_err().code(),
-        "not_allowed"
+        "private_locked"
     );
     assert!(!safety.exists(), "refused before writing anything");
     assert_eq!(db.count_all_notes().unwrap(), 2);
@@ -248,7 +246,7 @@ fn kept_open_note_saves_until_released() {
         db.save_content(&kept, &doc("draft three"))
             .unwrap_err()
             .code(),
-        "not_allowed"
+        "private_locked"
     );
     assert_eq!(db.get_note(&kept).unwrap().title, "Diary");
 
@@ -314,7 +312,7 @@ fn withheld_note_cannot_change_label_or_privacy_while_locked() {
     ] {
         assert_eq!(
             db.set_private(&id, private, label).unwrap_err().code(),
-            "not_allowed"
+            "private_locked"
         );
     }
     db.set_privacy_locked(false, &[]);
@@ -349,7 +347,7 @@ fn note_made_private_while_locked_stays_savable_until_released() {
         db.save_content(&id, &doc("third draft"))
             .unwrap_err()
             .code(),
-        "not_allowed"
+        "private_locked"
     );
     assert_eq!(db.get_note(&id).unwrap().title, "Diary");
 }
@@ -368,7 +366,7 @@ fn kept_open_private_note_cannot_lose_privacy_or_label_while_locked() {
     ] {
         assert_eq!(
             db.set_private(&kept, private, label).unwrap_err().code(),
-            "not_allowed",
+            "private_locked",
             "{private} {label:?}"
         );
     }
@@ -381,7 +379,7 @@ fn kept_open_private_note_cannot_lose_privacy_or_label_while_locked() {
     db.set_private(&fresh, true, "Diary").unwrap();
     assert_eq!(
         db.set_private(&fresh, false, "Diary").unwrap_err().code(),
-        "not_allowed"
+        "private_locked"
     );
     // Missing notes still report not_found while locked.
     assert_eq!(

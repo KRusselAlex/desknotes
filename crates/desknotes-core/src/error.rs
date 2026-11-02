@@ -12,6 +12,10 @@ pub enum CoreError {
     NotFound(String),
     #[error("operation not allowed: {0}")]
     NotAllowed(String),
+    /// A locked private note was asked to change, be copied or be destroyed,
+    /// or a whole-collection action needs the PIN first (design D12, §4.4).
+    #[error("private notes are locked")]
+    PrivateLocked,
     #[error(
         "database schema version {found} is newer than this DeskNotes supports ({supported}); \
          it was left untouched"
@@ -28,6 +32,7 @@ impl CoreError {
             CoreError::Validation(_) => "validation",
             CoreError::NotFound(_) => "not_found",
             CoreError::NotAllowed(_) => "not_allowed",
+            CoreError::PrivateLocked => "private_locked",
             CoreError::SchemaTooNew { .. } => "schema_too_new",
         }
     }

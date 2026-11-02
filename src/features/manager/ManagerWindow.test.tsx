@@ -16,7 +16,8 @@ vi.mock("../../ipc/events", () => ({
     return Promise.resolve(() => undefined);
   },
 }));
-vi.mock("../../ipc/commands", () => ({
+vi.mock("../../ipc/commands", async (importOriginal) => ({
+  CommandError: (await importOriginal<typeof import("../../ipc/commands")>()).CommandError,
   commands: {
     listNotes: vi.fn(),
     noteCounts: vi.fn(),
@@ -39,7 +40,7 @@ vi.mock("../../ipc/commands", () => ({
   },
 }));
 
-import { commands } from "../../ipc/commands";
+import { CommandError, commands } from "../../ipc/commands";
 import { ManagerWindow, highlight } from "./ManagerWindow";
 
 const note = (over: Partial<NoteSummary> = {}): NoteSummary => ({
@@ -275,7 +276,7 @@ describe("ManagerWindow with private notes", () => {
 
   it("explains why a locked private note cannot be deleted for good", async () => {
     vi.mocked(commands.listNotes).mockResolvedValue([lockedRow({ deletedAt: Date.now() })]);
-    vi.mocked(commands.purgeNote).mockRejectedValueOnce(new Error("operation not allowed: private notes are locked"));
+    vi.mocked(commands.purgeNote).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
     render(<ManagerWindow />);
     await userEvent.click(screen.getByRole("tab", { name: /Trash/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Delete permanently" }));

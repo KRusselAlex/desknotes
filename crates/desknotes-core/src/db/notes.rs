@@ -346,7 +346,7 @@ impl Database {
                 })
                 .optional()?;
             if currently_private == Some(true) {
-                return Err(CoreError::NotAllowed(super::PRIVATE_LOCKED.into()));
+                return Err(CoreError::PrivateLocked);
             }
             // A missing note falls through to `not_found` below.
             private && currently_private.is_some()

@@ -18,9 +18,6 @@ pub use backup::{Export, LAST_BACKUP_AT};
 pub use migrations::LATEST_VERSION;
 pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};
 
-/// Message of the error returned when a locked private note is asked to change.
-const PRIVATE_LOCKED: &str = "private notes are locked";
-
 pub struct Database {
     conn: Connection,
     /// The privacy lock as set by the shell (memory only, design §4.3). It only
@@ -162,7 +159,7 @@ impl Database {
             return Ok(());
         }
         match self.is_note_locked(id) {
-            Ok(true) => Err(CoreError::NotAllowed(PRIVATE_LOCKED.into())),
+            Ok(true) => Err(CoreError::PrivateLocked),
             Ok(false) | Err(CoreError::NotFound(_)) => Ok(()),
             Err(e) => Err(e),
         }
@@ -181,7 +178,7 @@ impl Database {
             |r| r.get(0),
         )?;
         if any {
-            return Err(CoreError::NotAllowed(PRIVATE_LOCKED.into()));
+            return Err(CoreError::PrivateLocked);
         }
         Ok(())
     }

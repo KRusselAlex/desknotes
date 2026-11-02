@@ -221,6 +221,8 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [saveErrorReason, setSaveErrorReason] = useState<string>();
+  /** The last save was refused because private notes are locked (its error code, R20). */
+  const [saveRefusedByLock, setSaveRefusedByLock] = useState(false);
   const [popover, setPopover] = useState<Popover>("none");
   const [focused, setFocused] = useState(false);
   const [, setTick] = useState(0); // refreshes the relative date chip
@@ -243,9 +245,10 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
           setUpdatedAt(result.updatedAt);
           setTitle(result.title);
         },
-        onStateChange: (state, error) => {
+        onStateChange: (state, message, error) => {
           setSaveState(state);
-          setSaveErrorReason(error);
+          setSaveErrorReason(message);
+          setSaveRefusedByLock(isLockRefusal(error));
         },
       }),
     [note.id],
@@ -350,7 +353,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   /**
    * The lock may have come: save, then swap to the PIN view if the native side
    * now withholds this note. Text that could not be saved (for instance refused
-   * with "private notes are locked") keeps the editor and the "Not saved"
+   * with `private_locked`) keeps the editor and the "Not saved"
    * message: never unmounted silently (R14).
    */
   const checkLock = useCallback((): Promise<void> => {
@@ -771,7 +774,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
         <SaveError
           reason={saveErrorReason}
           onRetry={() => void autosave.flush()}
-          onUnlock={isLockRefusal(saveErrorReason) ? () => setUnlocking(true) : undefined}
+          onUnlock={saveRefusedByLock ? () => setUnlocking(true) : undefined}
         />
       )}
       {showBar && editor && (

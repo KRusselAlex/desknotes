@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-vi.mock("../../ipc/commands", () => ({
+vi.mock("../../ipc/commands", async (importOriginal) => ({
+  CommandError: (await importOriginal<typeof import("../../ipc/commands")>()).CommandError,
   commands: {
     exportBackup: vi.fn(),
     chooseBackup: vi.fn(),
@@ -14,7 +15,7 @@ vi.mock("../../ipc/commands", () => ({
   },
 }));
 
-import { commands } from "../../ipc/commands";
+import { CommandError, commands } from "../../ipc/commands";
 import { BackupPane } from "./BackupPane";
 
 describe("BackupPane", () => {
@@ -97,7 +98,7 @@ describe("BackupPane", () => {
   });
 
   describe("while private notes are locked (R11)", () => {
-    const locked = () => new Error("operation not allowed: private notes are locked");
+    const locked = () => new CommandError("private_locked", "private notes are locked");
     const exported = { path: "/home/me/b.json", count: 4, skipped: 0, exportedAt: 9 };
 
     it("export_while_locked_asks_pin_then_exports", async () => {
