@@ -109,7 +109,6 @@ export const commands = {
   /** Settings only. Private flags and labels are kept. */
   turnOffLock: (pin: string) => call<PinCheck>("turn_off_lock", { pin }),
   /** Settings only. Null when the PIN was not accepted. */
-  newRecoveryCode: (pin: string) => call<string | null>("new_recovery_code", { pin }),
   /** Settings only. Switching to "code" returns the new recovery code, shown once. */
   setRecoveryMethod: (pin: string, method: RecoveryMethod) =>
     call<RecoveryChange>("set_recovery_method", { pin, method }),
