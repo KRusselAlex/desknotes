@@ -68,8 +68,8 @@ pub struct Note {
     pub private: bool,
     /// Neutral name shown instead of the title for a private note.
     pub private_label: String,
-    /// True while the privacy lock hides this note's content. Always false in
-    /// the core's own reads; the shell applies the lock state.
+    /// True while the privacy lock withholds this note: `content` is then an
+    /// empty document and `title` the label (or "Private note"), never the text.
     pub locked: bool,
     pub window: NoteWindow,
 }

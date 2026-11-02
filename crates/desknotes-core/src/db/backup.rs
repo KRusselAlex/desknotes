@@ -28,11 +28,14 @@ impl Database {
             .query_row("SELECT count(*) FROM notes", [], |r| r.get(0))?)
     }
 
+    /// Every note, for a backup file. Refused while the privacy lock is in
+    /// effect and any private note exists (design §4.4, D12).
     pub fn export_backup(&self, app_version: &str) -> CoreResult<Export> {
+        self.refuse_if_any_private_locked()?;
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.content_json, n.color, n.created_at, n.updated_at, n.archived_at,
                     n.deleted_at, n.edit_locked, w.x, w.y, w.width, w.height, w.visible,
-                    w.always_on_top, w.collapsed
+                    w.always_on_top, w.collapsed, n.private, n.private_label
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              ORDER BY n.created_at",
         )?;
@@ -49,6 +52,8 @@ impl Database {
                     archived_at: r.get(5)?,
                     deleted_at: r.get(6)?,
                     edit_locked: r.get(7)?,
+                    private: r.get(15)?,
+                    private_label: r.get(16)?,
                     window: crate::model::NoteWindow {
                         x: r.get(8)?,
                         y: r.get(9)?,
@@ -87,12 +92,15 @@ impl Database {
     /// Replace every note with the notes of a validated backup (from
     /// `crate::backup::parse_backup`). A full copy of the current database is
     /// written to `safety_dir` first, and the replacement is one transaction:
-    /// it either fully happens or leaves the notes untouched.
+    /// it either fully happens or leaves the notes untouched. Refused, before
+    /// anything is written, while the privacy lock is in effect and any private
+    /// note exists (design D12).
     pub fn restore_backup(
         &self,
         backup: &Backup,
         safety_dir: &Path,
     ) -> CoreResult<std::path::PathBuf> {
+        self.refuse_if_any_private_locked()?;
         let copy = safety_dir.join(format!("pre-restore-{}.db", now_ms()));
         self.backup_to(&copy)?;
         let tx = self.conn.unchecked_transaction()?;
@@ -100,8 +108,9 @@ impl Database {
         for n in &backup.notes {
             tx.execute(
                 "INSERT INTO notes (id, title, content_json, search_text, color, created_at,
-                                    updated_at, archived_at, deleted_at, edit_locked)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    updated_at, archived_at, deleted_at, edit_locked, private,
+                                    private_label)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     n.id,
                     derive_title(&n.content),
@@ -112,7 +121,9 @@ impl Database {
                     n.updated_at,
                     n.archived_at,
                     n.deleted_at,
-                    n.edit_locked
+                    n.edit_locked,
+                    n.private,
+                    n.private_label
                 ],
             )?;
             let w = &n.window;
@@ -123,6 +134,8 @@ impl Database {
             )?;
         }
         tx.commit()?;
+        // Notes kept open across a lock belonged to the replaced collection.
+        self.kept_open.borrow_mut().clear();
         Ok(copy)
     }
 }
@@ -175,6 +188,72 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn version_2_round_trip_keeps_private_notes_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = Database::open_in_memory().unwrap();
+        let (a, b, c) = sample(&src);
+        src.set_private(&a, true, "Bank").unwrap();
+        src.set_private(&c, true, "").unwrap();
+        // Not private any more, but the label is kept for next time.
+        src.set_private(&b, true, "Diary").unwrap();
+        src.set_private(&b, false, "Diary").unwrap();
+        let export = src.export_backup("0.2.0").unwrap();
+        assert_eq!(export.backup.version, crate::backup::BACKUP_VERSION);
+        let text = serde_json::to_string(&export.backup).unwrap();
+
+        let dst = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        dst.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        for id in [&a, &b, &c] {
+            assert_eq!(dst.get_note(id).unwrap(), src.get_note(id).unwrap());
+        }
+        let restored = dst.get_note(&a).unwrap();
+        assert!(restored.private);
+        assert_eq!(restored.private_label, "Bank");
+        assert!(dst.get_note(&c).unwrap().private);
+        let not_private = dst.get_note(&b).unwrap();
+        assert!(!not_private.private);
+        assert_eq!(not_private.private_label, "Diary");
+
+        // The restored private note is withheld once a PIN exists and the lock is on.
+        dst.set_new_pin("482913").unwrap();
+        dst.set_privacy_locked(true, &[]);
+        assert!(dst.get_note(&a).unwrap().locked);
+        assert!(
+            dst.list_notes(NoteFilter::Active, Some("groceries"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn version_1_file_restores_every_note_as_not_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
+        let v1 = serde_json::json!({
+            "format": "desknotes-backup", "version": 1, "appVersion": "0.1.0", "exportedAt": 3,
+            "notes": [{
+                "id": id,
+                "content": {"type":"doc","content":[{"type":"paragraph","content":[
+                    {"type":"text","text":"from version one"}]}]},
+                "color": "#fff4a3", "createdAt": 1, "updatedAt": 2,
+                "archivedAt": null, "deletedAt": null, "editLocked": true,
+                "window": {"x": 10.0, "y": 20.0, "width": 300.0, "height": 280.0,
+                           "visible": true, "alwaysOnTop": false, "collapsed": false}
+            }]
+        })
+        .to_string();
+        let db = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        db.restore_backup(&parse_backup(&v1).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title, "from version one");
+        assert!(note.edit_locked);
+        assert!(!note.private);
+        assert_eq!(note.private_label, "");
     }
 
     #[test]
