@@ -33,6 +33,10 @@ pub const DB_FILE: &str = "desknotes.db";
 /// Pre-migration backups, next to the database.
 pub const BACKUP_DIR: &str = "backups";
 
+/// Error code of [`AppState::with_db`] when the database never opened
+/// (already reported at startup).
+pub const DATABASE_UNAVAILABLE: &str = "database_unavailable";
+
 pub struct PendingRestore {
     pub backup: desknotes_core::backup::Backup,
 }
@@ -82,9 +86,9 @@ impl AppState {
             .db
             .lock()
             .map_err(|_| IpcError::new("internal", "database lock poisoned"))?;
-        let db = guard.as_ref().ok_or_else(|| {
-            IpcError::new("database_unavailable", "the notes database is not open")
-        })?;
+        let db = guard
+            .as_ref()
+            .ok_or_else(|| IpcError::new(DATABASE_UNAVAILABLE, "the notes database is not open"))?;
         Ok(f(db)?)
     }
 

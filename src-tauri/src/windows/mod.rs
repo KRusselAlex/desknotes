@@ -473,6 +473,14 @@ pub fn after_note_hidden(app: &AppHandle, hidden_note_id: &str) {
     }
 }
 
+/// Whether the manager is shown at startup rather than only created: when no
+/// note opens (so DeskNotes is reachable), when there are errors to report, and
+/// when "The PIN was reset on …" is waiting to be seen (design D11) — notes on
+/// screen must not hide that notice, which only the manager shows.
+fn manager_shown_at_startup(notes_to_show: usize, has_errors: bool, pin_reset: bool) -> bool {
+    notes_to_show == 0 || has_errors || pin_reset
+}
+
 /// Open saved notes and the manager at startup.
 pub fn restore_on_startup(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -485,14 +493,19 @@ pub fn restore_on_startup(app: &AppHandle) {
             }
             notes
         }
-        Err(e) if e.code == "database_unavailable" => Vec::new(), // already reported
+        Err(e) if e.code == crate::state::DATABASE_UNAVAILABLE => Vec::new(), // already reported
         Err(e) => {
             state.push_error(format!("Saved notes could not be loaded: {}", e.message));
             Vec::new()
         }
     };
+    // A failure to read it is not a reason to show the manager: it is reported
+    // when the manager asks for the privacy status.
+    let pin_reset = state
+        .with_db(|db| db.pin_reset_at())
+        .is_ok_and(|at| at.is_some());
     // The manager comes first: note windows share its web process.
-    let show_manager = notes.is_empty() || !state.errors().is_empty();
+    let show_manager = manager_shown_at_startup(notes.len(), !state.errors().is_empty(), pin_reset);
     if let Err(e) = ensure_manager(app, show_manager) {
         eprintln!("DeskNotes: could not create the manager window: {e}");
     }
@@ -565,6 +578,17 @@ mod tests {
         ] {
             assert_eq!(settings_section(bad), None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_manager_shows_at_startup_when_there_is_something_to_see() {
+        assert!(manager_shown_at_startup(0, false, false), "no notes open");
+        assert!(!manager_shown_at_startup(2, false, false), "notes only");
+        assert!(manager_shown_at_startup(2, true, false), "errors to report");
+        // `--reset-pin` ran while DeskNotes was closed: its notice must be seen
+        // even when notes open (D11).
+        assert!(manager_shown_at_startup(2, false, true), "PIN was reset");
+        assert!(manager_shown_at_startup(0, false, true));
     }
 
     #[test]

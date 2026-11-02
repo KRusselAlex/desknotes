@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::commands::app::SAVE_TIMEOUT;
 use crate::error::IpcResult;
 use crate::platform::lock_triggers::inactive_long_enough;
-use crate::state::AppState;
+use crate::state::{AppState, DATABASE_UNAVAILABLE};
 use crate::windows::{self, emit_changed};
 
 /// Sent to all windows when the lock turns on or off, and to one note window
@@ -153,6 +153,16 @@ pub fn should_lock_for_inactivity(
         )
 }
 
+/// What the automatic triggers take as "is a PIN set" when the database could
+/// not be asked at all (`code` of the error). The database never opened
+/// (`database_unavailable`, already reported at startup): no note can be shown,
+/// so there is nothing to lock — `Some(false)`, rather than an error raised on
+/// every screen lock and every check. Any other failure stays unknown (`None`),
+/// which locks (fail safe, see [`auto_lock_needed`]).
+pub fn pin_set_without_database(code: &str) -> Option<bool> {
+    (code == DATABASE_UNAVAILABLE).then_some(false)
+}
+
 /// Read what the automatic triggers need. A failure is logged once (no note
 /// text or secrets in it) and the unknowns stay `None`.
 fn read_lock_inputs(state: &AppState) -> LockInputs {
@@ -172,9 +182,12 @@ fn read_lock_inputs(state: &AppState) -> LockInputs {
             inputs
         }
         Err(e) => {
-            log_unreadable_once(&LOGGED, &e.message);
+            let pin_set = pin_set_without_database(&e.code);
+            if pin_set.is_none() {
+                log_unreadable_once(&LOGGED, &e.message);
+            }
             LockInputs {
-                pin_set: None,
+                pin_set,
                 locked: false,
                 minutes: None,
             }
@@ -288,6 +301,29 @@ mod tests {
     fn an_unreadable_pin_state_locks_instead_of_giving_up() {
         assert!(auto_lock_needed(None, false));
         assert!(!auto_lock_needed(None, true), "already locked");
+    }
+
+    #[test]
+    fn no_database_means_nothing_to_lock() {
+        let pin_set = pin_set_without_database(DATABASE_UNAVAILABLE);
+        assert_eq!(pin_set, Some(false));
+        assert!(!auto_lock_needed(pin_set, false));
+        assert!(!should_lock_for_inactivity(
+            pin_set,
+            false,
+            None,
+            i64::MAX,
+            0
+        ));
+    }
+
+    #[test]
+    fn other_database_failures_still_lock() {
+        for code in ["internal", "database", "io", ""] {
+            let pin_set = pin_set_without_database(code);
+            assert_eq!(pin_set, None, "{code:?}");
+            assert!(auto_lock_needed(pin_set, false), "{code:?}");
+        }
     }
 
     #[test]
