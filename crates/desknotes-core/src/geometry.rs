@@ -70,19 +70,31 @@ pub fn keep_on_screen(rect: Rect, areas: &[Rect]) -> Rect {
         ..rect
     };
 
-    // TODO(you): decide how much of a note must stay reachable.
-    //
-    // Today this returns `rect` unchanged, so a note saved on an unplugged
-    // monitor would reopen invisible. Choose a policy, for example:
-    //   * "fully inside": move the note so it fits entirely in the work area
-    //     it overlaps most (or the primary one if it overlaps none);
-    //   * "grab handle": only require its top 32 px header to be on a work
-    //     area, so people can park notes half off-screen on purpose.
-    // Helpful pieces: `Rect::overlap_area`, `right()`, `bottom()`, and remember
-    // a note can be larger than a small monitor (then align it top-left).
-    // Then remove `#[ignore]` from the tests at the bottom of this file.
-    let _ = areas;
-    rect
+    // Policy chosen by the owner (DES-14): "fully inside". The note moves into the
+    // work area it overlaps most, or the primary one if it overlaps none. Its size
+    // never changes; if it is larger than that area it is aligned top-left so its
+    // header (the drag handle) stays reachable.
+    let area = areas
+        .iter()
+        .map(|a| (a, rect.overlap_area(a)))
+        .filter(|(_, overlap)| *overlap > 0.0)
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map_or(areas[0], |(a, _)| *a);
+    Rect {
+        x: fit(rect.x, rect.width, area.x, area.width),
+        y: fit(rect.y, rect.height, area.y, area.height),
+        ..rect
+    }
+}
+
+/// Position along one axis that keeps `[pos, pos + len]` inside
+/// `[start, start + span]`, or `start` when it cannot fit.
+fn fit(pos: f64, len: f64, start: f64, span: f64) -> f64 {
+    if len >= span {
+        start
+    } else {
+        pos.clamp(start, start + span - len)
+    }
 }
 
 #[cfg(test)]
@@ -116,7 +128,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "enable once keep_on_screen has a policy"]
     fn note_from_unplugged_monitor_comes_back() {
         let r = Rect::new(3000.0, 400.0, 300.0, 280.0);
         let placed = keep_on_screen(r, &[LAPTOP]);
@@ -125,7 +136,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "enable once keep_on_screen has a policy"]
     fn header_hidden_under_top_panel_is_pulled_down() {
         let r = Rect::new(200.0, -150.0, 300.0, 280.0);
         let placed = keep_on_screen(r, &[LAPTOP, RIGHT_MONITOR]);
@@ -133,9 +143,31 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "enable once keep_on_screen has a policy"]
     fn note_on_second_monitor_stays_there() {
         let r = Rect::new(2500.0, 300.0, 300.0, 280.0);
         assert_eq!(keep_on_screen(r, &[LAPTOP, RIGHT_MONITOR]), r);
+    }
+
+    #[test]
+    fn note_half_off_the_right_edge_moves_fully_inside() {
+        let r = Rect::new(1800.0, 900.0, 300.0, 280.0);
+        let placed = keep_on_screen(r, &[LAPTOP]);
+        assert_eq!(placed, Rect::new(1620.0, 800.0, 300.0, 280.0));
+    }
+
+    #[test]
+    fn note_across_two_monitors_goes_to_the_one_it_overlaps_most() {
+        // 100 px on the laptop, 200 px on the right monitor.
+        let r = Rect::new(1820.0, 300.0, 300.0, 280.0);
+        let placed = keep_on_screen(r, &[LAPTOP, RIGHT_MONITOR]);
+        assert_eq!(placed, Rect::new(1920.0, 300.0, 300.0, 280.0));
+    }
+
+    #[test]
+    fn note_bigger_than_the_screen_keeps_its_size_and_shows_its_header() {
+        let small = Rect::new(0.0, 0.0, 800.0, 600.0);
+        let r = Rect::new(500.0, 400.0, 1000.0, 900.0);
+        let placed = keep_on_screen(r, &[small]);
+        assert_eq!(placed, Rect::new(0.0, 0.0, 1000.0, 900.0));
     }
 }
