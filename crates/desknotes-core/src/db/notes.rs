@@ -327,18 +327,33 @@ impl Database {
     }
 
     /// Mark a note private or not, with its neutral label. The label is stored
-    /// validated; clearing `private` keeps the label for next time. A note the
-    /// lock withholds cannot be made not private.
+    /// validated; clearing `private` keeps the label for next time.
+    ///
+    /// While the lock is in effect, a note it withholds cannot change at all
+    /// (design §4.2: label and "Make not private" need the PIN). A normal note
+    /// made private while locked is kept open, so its open editor can keep
+    /// saving until the shell releases it, like a note whose save failed at lock.
     pub fn set_private(&self, id: &str, private: bool, label: &str) -> CoreResult<()> {
-        if !private {
-            self.refuse_if_note_locked(id)?;
-        }
+        self.refuse_if_note_locked(id)?;
         let label = validate_private_label(label)?;
+        let newly_private_while_locked = private
+            && self.lock_active()?
+            && !self
+                .conn
+                .query_row("SELECT private FROM notes WHERE id = ?1", [id], |r| {
+                    r.get::<_, bool>(0)
+                })
+                .optional()?
+                .unwrap_or(true);
         let changed = self.conn.execute(
             "UPDATE notes SET private = ?2, private_label = ?3 WHERE id = ?1",
             params![id, private, label],
         )?;
-        self.expect_one(changed, id)
+        self.expect_one(changed, id)?;
+        if newly_private_while_locked {
+            self.kept_open.borrow_mut().insert(id.to_string());
+        }
+        Ok(())
     }
 
     pub fn set_color(&self, id: &str, color: &str) -> CoreResult<()> {

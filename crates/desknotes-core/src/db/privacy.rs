@@ -135,11 +135,14 @@ impl Database {
     }
 
     /// Removes the PIN, recovery code and wait. Private flags and labels stay.
+    /// The privacy lock is turned off too, so a PIN set later does not suddenly
+    /// lock notes whose editors are open; the shell locks again explicitly.
     pub fn clear_pin(&self) -> CoreResult<()> {
         self.conn.execute(
             "DELETE FROM settings WHERE key IN (?1, ?2, ?3)",
             [PIN_HASH, PIN_RECOVERY_HASH, PIN_THROTTLE],
         )?;
+        self.set_privacy_locked(false, &[]);
         Ok(())
     }
 

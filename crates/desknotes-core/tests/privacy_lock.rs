@@ -294,3 +294,74 @@ fn is_note_locked_reports_missing_notes() {
         "not_found"
     );
 }
+
+#[test]
+fn withheld_note_cannot_change_label_or_privacy_while_locked() {
+    let db = db_with_pin();
+    let id = private_note(&db, "secret", "Bank");
+    db.set_privacy_locked(true, &[]);
+    for (private, label) in [
+        (true, "Other"),
+        (true, "Bank"),
+        (false, "Bank"),
+        (false, ""),
+    ] {
+        assert_eq!(
+            db.set_private(&id, private, label).unwrap_err().code(),
+            "not_allowed"
+        );
+    }
+    db.set_privacy_locked(false, &[]);
+    let note = db.get_note(&id).unwrap();
+    assert!(note.private);
+    assert_eq!(note.private_label, "Bank");
+    // Unlocked, both changes are allowed again.
+    db.set_private(&id, true, "Savings").unwrap();
+    assert_eq!(db.get_note(&id).unwrap().private_label, "Savings");
+    db.set_private(&id, false, "Savings").unwrap();
+    assert!(!db.get_note(&id).unwrap().private);
+}
+
+#[test]
+fn note_made_private_while_locked_stays_savable_until_released() {
+    let db = db_with_pin();
+    let id = db.create_note(None).unwrap().id;
+    db.save_content(&id, &doc("first draft")).unwrap();
+    db.set_privacy_locked(true, &[]);
+
+    db.set_private(&id, true, "Diary").unwrap();
+    assert!(!db.is_note_locked(&id).unwrap(), "not withheld at once");
+    db.save_content(&id, &doc("second draft")).unwrap();
+    let note = db.get_note(&id).unwrap();
+    assert!(note.private);
+    assert!(!note.locked);
+    assert_eq!(note.title, "second draft");
+
+    db.release_kept_open(&id);
+    assert!(db.is_note_locked(&id).unwrap());
+    assert_eq!(
+        db.save_content(&id, &doc("third draft"))
+            .unwrap_err()
+            .code(),
+        "not_allowed"
+    );
+    assert_eq!(db.get_note(&id).unwrap().title, "Diary");
+}
+
+#[test]
+fn clearing_the_pin_resets_the_lock() {
+    let db = db_with_pin();
+    let id = private_note(&db, "secret", "Bank");
+    db.set_privacy_locked(true, &[]);
+    assert!(db.is_note_locked(&id).unwrap());
+
+    db.clear_pin().unwrap();
+    assert!(!db.privacy_locked());
+    db.set_new_pin(PIN).unwrap();
+    assert!(!db.privacy_locked(), "a new PIN does not lock by itself");
+    assert!(!db.is_note_locked(&id).unwrap());
+    db.save_content(&id, &doc("still editable")).unwrap();
+
+    db.set_privacy_locked(true, &[]);
+    assert!(db.is_note_locked(&id).unwrap());
+}
