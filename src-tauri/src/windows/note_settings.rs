@@ -186,4 +186,27 @@ mod tests {
         assert_eq!(window_height(1040.0), 640.0);
         assert_eq!(window_height(600.0), 552.0);
     }
+
+    /// The window may close itself and nothing more: no link opening (default.json
+    /// carries `opener:allow-open-url`), and no other window may close itself.
+    #[test]
+    fn the_note_settings_window_has_its_own_small_capability() {
+        let read = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        let default = read(include_str!("../../capabilities/default.json"));
+        let own = read(include_str!("../../capabilities/note-settings.json"));
+        let windows = |c: &serde_json::Value| -> Vec<String> {
+            c["windows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|w| w.as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert!(!windows(&default).iter().any(|w| w == NOTE_SETTINGS));
+        assert_eq!(windows(&own), [NOTE_SETTINGS]);
+        let permissions = own["permissions"].to_string();
+        assert!(permissions.contains("core:default"));
+        assert!(permissions.contains("core:window:allow-close"));
+        assert!(!permissions.contains("opener"));
+    }
 }
