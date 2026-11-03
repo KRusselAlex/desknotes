@@ -107,7 +107,7 @@ pub(crate) fn work_area_for(app: &AppHandle, rect: &Rect) -> Rect {
     best_area(rect, &work_areas(app))
 }
 
-fn geometry_of(
+pub(crate) fn geometry_of(
     scale: tauri::Result<f64>,
     position: tauri::Result<PhysicalPosition<i32>>,
     size: tauri::Result<PhysicalSize<u32>>,
@@ -202,9 +202,16 @@ type RelatedView = webkit2gtk::WebView;
 type RelatedView = ();
 
 fn report_window_error(app: &AppHandle, e: tauri::Error) {
-    app.state::<AppState>().push_error(format!(
-        "A note window could not be opened (its content is safe): {e}"
-    ));
+    report_window_problem(
+        app,
+        format!("A note window could not be opened (its content is safe): {e}"),
+    );
+}
+
+/// Tell the owner about a window that could not be (re)opened: the message goes
+/// on the manager's error list and the manager is shown.
+pub(crate) fn report_window_problem(app: &AppHandle, message: String) {
+    app.state::<AppState>().push_error(message);
     let _ = show_manager(app);
 }
 
@@ -293,11 +300,21 @@ pub fn open_settings(app: &AppHandle, section: Option<&'static str>) -> tauri::R
 /// Open (or focus) the window of a note. On Linux the window itself is created a
 /// moment later on the main thread; errors then appear in the manager.
 pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
+    open_note_with_focus(app, note, true)
+}
+
+/// `open_note`, but the window may be opened without taking the focus. A note
+/// recreated for the opacity switch (`reopen_note`) is opened that way: the
+/// owner is working in the Note settings window, which keeps the focus (and
+/// stays in front of the note) when it is open.
+pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri::Result<()> {
     let label = note_label(&note.id);
     if let Some(existing) = app.get_webview_window(&label) {
         existing.show()?;
         existing.unminimize()?;
-        existing.set_focus()?;
+        if focus {
+            existing.set_focus()?;
+        }
         return Ok(());
     }
 
@@ -326,7 +343,7 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         // Requests are queued; a second one for the same note just focuses it.
         if let Some(existing) = handle.get_webview_window(&label) {
             existing.show()?;
-            return existing.set_focus();
+            return if focus { existing.set_focus() } else { Ok(()) };
         }
         // Read here, on the main thread like `set_min_note_size`, so a change made
         // while this build was queued is not missed. A smaller note opens at the
@@ -382,10 +399,27 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
             .geometry
             .update(&note_id, position, width, saved_height);
         window.show()?;
-        window.set_focus()
+        focus_after_show(&handle, &window, focus)
     };
 
     build_sharing_process(app, build)
+}
+
+/// After a note window is shown: focus it, or (`focus` false) give the focus
+/// back to the Note settings window when that is open, since showing a window
+/// makes the window manager focus it and put it in front.
+fn focus_after_show(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    focus: bool,
+) -> tauri::Result<()> {
+    if focus {
+        return window.set_focus();
+    }
+    match app.get_webview_window(NOTE_SETTINGS) {
+        Some(settings) => settings.set_focus(),
+        None => Ok(()),
+    }
 }
 
 /// Roll a note window up to its header strip, or back to `height`.
