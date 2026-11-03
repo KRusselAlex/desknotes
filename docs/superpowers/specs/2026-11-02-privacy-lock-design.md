@@ -75,6 +75,9 @@ Anti-goals (would be a failure even if it "works")
   (appended migration), validated in Rust (plain text, short, e.g. ≤ 40 characters). Manager: a small private indicator
   on the row, using an existing icon (`lock`) from `src/components/icons.ts`.
 - "Make not private" requires the note to be unlocked.
+- Making a note private while the lock is on (other private notes locked) locks it at its
+  next save, so the text on screen is saved first and then hidden (owner's decision,
+  2026-11-03, final review #6).
 
 ### 4.3 Locking
 - Triggers (D3). Sleep: logind `PrepareForSleep` on the system bus. Screen lock: GNOME
