@@ -127,6 +127,12 @@
   font-size: var(--note-font-size, var(--dn-text-base));
   line-height: var(--note-leading, var(--dn-leading));
 }
+/* Direction "Automatic" (dir="auto" on the editor, set by NoteWindow): every block
+   decides its own direction from its first strong character, as dir="auto" does on a
+   paragraph, so an Arabic line and an English line in one note each read their own way. */
+.dn-note-body .tiptap[dir="auto"] :is(p, h1, h2, h3, li, blockquote) {
+  unicode-bidi: plaintext;
+}
 .dn-note-body .tiptap p {
   margin: 0 0 8px;
 }

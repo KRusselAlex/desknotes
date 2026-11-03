@@ -1,6 +1,8 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
+// @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
+import { readFileSync } from "node:fs";
 import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import type { Note, PrivacyStatus } from "../../types/note";
 
@@ -729,6 +731,29 @@ describe("NoteWindow", () => {
       vi.mocked(commands.getNote).mockResolvedValue(note({ appearance: { direction: "ltr" } }));
       await act(async () => handlers.notesChanged?.({ id: ID, kind: "other" }));
       await waitFor(() => expect(container.querySelector(".tiptap")).toHaveAttribute("dir", "ltr"));
+    });
+
+    it("lets each block decide its own direction in automatic mode (not one direction for the note)", async () => {
+      const { container } = await openNote();
+      // The editor is dir="auto" ...
+      expect(container.querySelector(".tiptap")).toHaveAttribute("dir", "auto");
+      // ... and the stylesheet makes every block resolve its own base direction under it,
+      // and only under it: a fixed LTR or RTL note is left alone.
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const rule = /\.dn-note-body \.tiptap\[dir="auto"\] :is\(([^)]*)\)\s*\{([^}]*)\}/.exec(noteCss);
+      expect(rule).not.toBeNull();
+      const blocks = rule![1]!.split(",").map((b) => b.trim());
+      expect(blocks).toEqual(expect.arrayContaining(["p", "h1", "h2", "h3", "li"]));
+      expect(rule![2]).toMatch(/unicode-bidi:\s*plaintext/);
+      expect(noteCss).not.toMatch(/\.tiptap\[dir="(ltr|rtl)"\][^{]*\{[^}]*unicode-bidi/);
+    });
+
+    it("does not leave a failed reopen unhandled", async () => {
+      vi.mocked(commands.reopenNote).mockRejectedValueOnce(new Error("did not close in time"));
+      await openNote();
+      await act(async () => handlers.noteAction?.("reopen"));
+      await waitFor(() => expect(commands.reopenNote).toHaveBeenCalledWith(ID));
+      await act(async () => undefined); // an unhandled rejection would fail the run
     });
 
     it("saves first and reopens the window only after a successful save", async () => {

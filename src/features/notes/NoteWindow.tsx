@@ -339,7 +339,8 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
       else if (action === "archive") void saveThen(() => commands.setArchived(note.id, true));
       else if (action === "trash") void saveThen(() => commands.trashNote(note.id));
       // The opacity crossed 100 %: the shell recreates this window. Only after the text is saved.
-      else if (action === "reopen") void saveThen(() => commands.reopenNote(note.id));
+      // A failed reopen is reported by the native side (the manager's error list); nothing to add here.
+      else if (action === "reopen") void saveThen(() => commands.reopenNote(note.id)).catch(() => undefined);
     });
     return () => void unlisten.then((f) => f());
   }, [hide, note.id, saveThen]);

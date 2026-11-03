@@ -183,7 +183,9 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     dragging.current = false;
     if (pending.current) sendAppearanceNow();
   }, [sendAppearanceNow]);
-  flushRef.current = flushAppearance;
+  useEffect(() => {
+    flushRef.current = flushAppearance;
+  }, [flushAppearance]);
 
   function changeAppearance(patch: Appearance) {
     showAppearance(merged(appearanceRef.current, patch));
