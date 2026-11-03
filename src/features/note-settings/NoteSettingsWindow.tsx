@@ -60,7 +60,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const [noteId, setNoteId] = useState(firstNoteId);
   const [color, setColor] = useState<string | null>(null);
   const [appearance, setAppearance] = useState<Appearance>({});
-  const [size, setSize] = useState<NoteSize>(DEFAULT_SIZE);
+  /** Null until the shown note's first read has landed. */
+  const [size, setSize] = useState<NoteSize | null>(null);
   const [editLocked, setEditLocked] = useState(false);
   const [onTop, setOnTop] = useState(false);
   const [fonts, setFonts] = useState<string[] | null>(null);
@@ -72,6 +73,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const idRef = useRef(noteId);
   /** Counts note switches. An answer that belongs to an earlier note is ignored. */
   const generation = useRef(0);
+  /** The generation whose first read has landed; later reads wait for it. */
+  const readGeneration = useRef(-1);
   const appearanceRef = useRef<Appearance>({});
   /** Appearance changes to the shown note sent and not answered yet. */
   const inFlight = useRef(0);
@@ -99,6 +102,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
             void closeCurrentWindow();
             return;
           }
+          // Until the note's first read has landed, the window shows nothing of it.
+          if (!first && readGeneration.current !== gen) return;
           setColor(n.color);
           // A slider being moved, or a change on its way, wins over what was saved before it.
           if (first || (!dragging.current && !pending.current && inFlight.current === 0)) {
@@ -106,7 +111,10 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
           }
           setEditLocked(n.editLocked);
           setOnTop(n.window.alwaysOnTop);
-          if (first) setSize({ width: n.window.width, height: n.window.height });
+          if (first) {
+            setSize({ width: n.window.width, height: n.window.height });
+            readGeneration.current = gen;
+          }
         },
         () => {
           if (generation.current === gen) void closeCurrentWindow();
@@ -209,11 +217,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     void resize(DEFAULT_SIZE.width, DEFAULT_SIZE.height);
   }
 
-  // Show (or switch to) a note.
-  useEffect(() => {
-    idRef.current = noteId;
-    refresh(noteId, true);
-  }, [noteId, refresh]);
+  // The note the window opened for (a switch reads its note in the handler below).
+  useEffect(() => refresh(idRef.current, true), [refresh]);
 
   // Installed fonts, read once per window opening.
   useEffect(() => {
@@ -244,9 +249,12 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
         dragging.current = false;
         showAppearance({});
         setColor(null);
+        setSize(null);
         setAspect(null);
         setError(null);
         setNoteId(id);
+        // Read here, not in an effect: the window may be asked again for the note it shows.
+        refresh(id, true);
       }),
     ].map((p) => p.catch(() => null));
     return () => unlisteners.forEach((p) => void p.then((f) => f?.()));
@@ -269,6 +277,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const opacity = appearance.opacity ?? APPEARANCE_DEFAULTS.opacity;
   const direction = appearance.direction ?? APPEARANCE_DEFAULTS.direction;
   const font = appearance.font ?? "";
+  const ready = color !== null && size !== null;
   const isPreset = color !== null && COLOR_PRESETS.some((p) => p.value === color.toLowerCase());
 
   const sliderEvents = {
@@ -281,7 +290,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   return (
     <div className="dn-ns">
       <div className="dn-ns-scroll">
-        {color !== null && (
+        {ready && (
           <div className="dn-ns-head">
             <span className="dn-ns-note-swatch" role="img" aria-label="Note colour" style={{ backgroundColor: color }} />
           </div>
@@ -292,7 +301,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
             <span>{error}</span>
           </div>
         )}
-        {color !== null && (
+        {ready && (
           <>
             <Card title="Text">
               <div className="dn-ns-row">
@@ -465,7 +474,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
         )}
       </div>
       <footer className="dn-ns-footer">
-        <button type="button" className="dn-ns-link" disabled={color === null} onClick={resetToDefaults}>
+        <button type="button" className="dn-ns-link" disabled={!ready} onClick={resetToDefaults}>
           Reset to defaults
         </button>
         <span className="dn-ns-spacer" />

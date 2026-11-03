@@ -376,6 +376,31 @@ describe("NoteSettingsWindow", () => {
       expect(screen.queryByRole("alert")).toBeNull();
     });
 
+    it("reads the note again when asked to show the note it already shows", async () => {
+      await open(note({ appearance: { fontSize: 20 }, window: { ...note().window, width: 410 } }));
+      act(() => handlers.switchNote?.(ID));
+      expect(await screen.findByRole("button", { name: "Larger text" })).toBeInTheDocument();
+      expect(commands.getNote).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("20")).toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Width" })).toHaveValue("410");
+      expect(screen.getByRole("img", { name: "Note colour" })).toBeInTheDocument();
+    });
+
+    it("shows nothing until the new note's first read, even if another read lands before it", async () => {
+      await open();
+      const first = deferred<Note>();
+      vi.mocked(commands.getNote).mockReturnValueOnce(first.promise);
+      act(() => handlers.switchNote?.(OTHER));
+      vi.mocked(commands.getNote).mockResolvedValueOnce(other({ color: "#cfe8ff" }));
+      await act(async () => handlers.notesChanged?.({ id: OTHER, kind: "other" }));
+      expect(commands.getNote).toHaveBeenCalledTimes(3);
+      expect(screen.queryByRole("textbox", { name: "Width" })).toBeNull();
+      expect(screen.queryByRole("img", { name: "Note colour" })).toBeNull();
+      await act(async () => first.resolve(other({ window: { ...note().window, width: 444, height: 333 } })));
+      expect(screen.getByRole("textbox", { name: "Width" })).toHaveValue("444");
+      expect(screen.getByRole("textbox", { name: "Height" })).toHaveValue("333");
+    });
+
     it("ignores a resize of the old note that answers after the switch", async () => {
       await open();
       const oldResize = deferred<{ width: number; height: number }>();
