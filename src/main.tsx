@@ -10,6 +10,7 @@ import "./styles/note.css";
 import "./styles/manager.css";
 import "./styles/settings.css";
 import "./styles/privacy.css";
+import "./styles/note-settings.css";
 
 // Never let a click on a link navigate the webview itself.
 document.addEventListener(

@@ -22,3 +22,13 @@ export function onCloseRequested(handler: () => void): Promise<() => void> {
 export function openExternal(url: string): Promise<void> {
   return openUrl(url);
 }
+
+/** Close this window (the Note settings window closing itself). */
+export function closeCurrentWindow(): Promise<void> {
+  return getCurrentWindow().close();
+}
+
+/** The note a window was opened for: `?note=<id>` in its page URL, or null. */
+export function noteIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("note");
+}
