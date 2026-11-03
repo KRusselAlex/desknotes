@@ -24,6 +24,17 @@ pub const SAVE_ALL_NOTES: &str = "save-all-notes";
 pub const QUIT_BLOCKED: &str = "quit-blocked";
 /// Sent to a note window: perform "hide", "archive" or "trash" after saving.
 pub const NOTE_ACTION: &str = "note-action";
+/// Sent to the note settings window when a note window changes size.
+pub const NOTE_RESIZED: &str = "note-resized";
+
+/// Payload of `note-resized`: the note's new size in logical pixels.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteResized {
+    pub id: String,
+    pub width: f64,
+    pub height: f64,
+}
 
 /// Payload of `notes-changed`. `kind` is "content" for text saves (the
 /// manager refreshes titles) and "other" for everything else.
@@ -52,7 +63,7 @@ fn note_id_from_label(label: &str) -> Option<&str> {
 }
 
 /// Work areas (monitor minus panels) in logical pixels, primary first.
-fn work_areas(app: &AppHandle) -> Vec<Rect> {
+pub(crate) fn work_areas(app: &AppHandle) -> Vec<Rect> {
     let to_rect = |m: &tauri::Monitor| {
         let scale = m.scale_factor();
         let area = m.work_area();
@@ -74,6 +85,23 @@ fn work_areas(app: &AppHandle) -> Vec<Rect> {
         areas.push(Rect::new(0.0, 0.0, 1280.0, 800.0));
     }
     areas
+}
+
+/// The work area that shares the most with `rect`; the first one (the
+/// primary monitor) when `rect` touches none. `areas` is never empty.
+pub(crate) fn best_area(rect: &Rect, areas: &[Rect]) -> Rect {
+    areas
+        .iter()
+        .copied()
+        .filter(|a| rect.overlap_area(a) > 0.0)
+        .max_by(|a, b| rect.overlap_area(a).total_cmp(&rect.overlap_area(b)))
+        .unwrap_or(areas[0])
+}
+
+/// The work area of the screen a note sits on. `rect` is where the note is,
+/// open or not.
+pub(crate) fn work_area_for(app: &AppHandle, rect: &Rect) -> Rect {
+    best_area(rect, &work_areas(app))
 }
 
 fn geometry_of(
@@ -198,6 +226,8 @@ where
 }
 
 pub const SETTINGS: &str = "settings";
+/// The per-note settings window (one at a time).
+pub const NOTE_SETTINGS: &str = "note-settings";
 /// Sent to an open Settings window: show the section named in the payload.
 pub const SETTINGS_SECTION: &str = "settings-section";
 
@@ -519,6 +549,7 @@ pub fn restore_on_startup(app: &AppHandle) {
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            let resized = matches!(event, WindowEvent::Resized(_));
             let Some(id) = note_id_from_label(window.label()) else {
                 return;
             };
@@ -535,6 +566,21 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                     .state::<AppState>()
                     .geometry
                     .update(id, position, r.width, r.height);
+                // The note settings window follows the size while it is open.
+                // A collapsed strip is not the note's size: leave it out.
+                if resized && r.height > COLLAPSED_HEIGHT + 1.0 {
+                    let app = window.app_handle();
+                    if app.get_webview_window(NOTE_SETTINGS).is_some() {
+                        let payload = NoteResized {
+                            id: id.to_owned(),
+                            width: r.width,
+                            height: r.height,
+                        };
+                        if let Err(e) = app.emit_to(NOTE_SETTINGS, NOTE_RESIZED, payload) {
+                            eprintln!("DeskNotes: could not notify the note settings: {e}");
+                        }
+                    }
+                }
             }
         }
         WindowEvent::Destroyed => {
@@ -562,6 +608,26 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_belongs_to_the_screen_it_mostly_overlaps() {
+        let left = Rect::new(0.0, 0.0, 1920.0, 1040.0);
+        let right = Rect::new(1920.0, 0.0, 1280.0, 1000.0);
+        let areas = [left, right];
+        assert_eq!(
+            best_area(&Rect::new(1800.0, 100.0, 300.0, 280.0), &areas),
+            right
+        );
+        assert_eq!(
+            best_area(&Rect::new(1700.0, 100.0, 300.0, 280.0), &areas),
+            left
+        );
+        // Off every screen: the primary one.
+        assert_eq!(
+            best_area(&Rect::new(9000.0, 9000.0, 300.0, 280.0), &areas),
+            left
+        );
+    }
 
     #[test]
     fn only_known_settings_sections_are_accepted() {

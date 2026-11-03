@@ -528,6 +528,18 @@ impl Database {
         self.expect_one(changed, id)
     }
 
+    /// Set a note's (expanded) size without touching its position, also while
+    /// it is collapsed. `set_window_geometry` keeps a collapsed note's height,
+    /// because there the window is only the header strip.
+    pub fn set_window_size(&self, id: &str, width: f64, height: f64) -> CoreResult<()> {
+        let (width, height) = enforce_min_size(width, height);
+        let changed = self.conn.execute(
+            "UPDATE note_windows SET width = ?2, height = ?3 WHERE note_id = ?1",
+            params![id, width, height],
+        )?;
+        self.expect_one(changed, id)
+    }
+
     pub fn set_always_on_top(&self, id: &str, on: bool) -> CoreResult<()> {
         let changed = self.conn.execute(
             "UPDATE note_windows SET always_on_top = ?2 WHERE note_id = ?1",
@@ -813,6 +825,25 @@ mod tests {
         db.set_collapsed(&id, false).unwrap();
         db.set_window_geometry(&id, None, 320.0, 400.0).unwrap();
         assert_eq!(db.get_note(&id).unwrap().window.height, 400.0);
+    }
+
+    #[test]
+    fn window_size_can_be_set_while_collapsed() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_window_geometry(&id, Some((10.0, 20.0)), 300.0, 280.0)
+            .unwrap();
+        db.set_collapsed(&id, true).unwrap();
+        db.set_window_size(&id, 360.0, 400.0).unwrap();
+        let w = db.get_note(&id).unwrap().window;
+        // The size is the expanded one; the position is untouched.
+        assert!(w.collapsed);
+        assert_eq!(
+            (w.x, w.y, w.width, w.height),
+            (Some(10.0), Some(20.0), 360.0, 400.0)
+        );
+        assert!(db.set_window_size(&id, f64::NAN, 300.0).is_ok());
+        assert!(db.set_window_size("missing", 300.0, 300.0).is_err());
     }
 
     #[test]
