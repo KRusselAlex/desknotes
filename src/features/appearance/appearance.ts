@@ -29,6 +29,11 @@ export function isSeeThrough(a: Appearance): boolean {
   return (a.opacity ?? APPEARANCE_DEFAULTS.opacity) < 100;
 }
 
+/** Class for a note root that has a header: see `.dn-note.is-see-through` in note.css. */
+export function seeThroughClass(a: Appearance): string {
+  return isSeeThrough(a) ? " is-see-through" : "";
+}
+
 /**
  * CSS variables for one note: background and header (see-through below 100 %),
  * text colour, size, line spacing and font. Only the background gets the

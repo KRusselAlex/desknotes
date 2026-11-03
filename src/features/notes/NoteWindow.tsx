@@ -9,7 +9,7 @@ import { commands } from "../../ipc/commands";
 import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import { PRIVATE_FALLBACK_LABEL, type Appearance, type Note } from "../../types/note";
-import { APPEARANCE_DEFAULTS, appearanceStyle, isSeeThrough } from "../appearance/appearance";
+import { APPEARANCE_DEFAULTS, appearanceStyle, isSeeThrough, seeThroughClass } from "../appearance/appearance";
 import { ForgotPin } from "../privacy/ForgotPin";
 import { PinPad } from "../privacy/PinPad";
 import { PrivateLabelDialog } from "../privacy/PrivateLabelDialog";
@@ -157,7 +157,7 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
   }
 
   return (
-    <div className="dn-note is-private-locked" style={appearanceStyle(note.color, note.appearance)}>
+    <div className={`dn-note is-private-locked${seeThroughClass(note.appearance)}`} style={appearanceStyle(note.color, note.appearance)}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -187,7 +187,7 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
 function NoteLoadError({ noteId, color, appearance }: { noteId: string; color: string; appearance: Appearance }) {
   useSeeThrough(appearance);
   return (
-    <div className="dn-note" style={appearanceStyle(color, appearance)}>
+    <div className={`dn-note${seeThroughClass(appearance)}`} style={appearanceStyle(color, appearance)}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -667,7 +667,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   return (
     <div
       ref={rootRef}
-      className={`dn-note${locked ? " is-readonly" : ""}${editing ? " is-editing" : ""}`}
+      className={`dn-note${locked ? " is-readonly" : ""}${editing ? " is-editing" : ""}${seeThroughClass(appearance)}${showBar ? " has-bar" : ""}`}
       style={appearanceStyle(color, appearance)}
       onFocus={() => setFocused(true)}
       onBlur={(e) => {

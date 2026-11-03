@@ -673,6 +673,31 @@ describe("NoteWindow", () => {
       expect(document.documentElement).toHaveClass("dn-see-through");
     });
 
+    it("paints each region's opacity once: no root fill behind the header or the format bar", async () => {
+      const { container } = await openNote({ appearance: { opacity: 80 } });
+      const root = container.querySelector(".dn-note") as HTMLElement;
+      // note.css gives `.dn-note.is-see-through` a body-only background; the header and
+      // the format bar paint --note-hd themselves, so nothing is composited twice.
+      expect(root).toHaveClass("is-see-through");
+      expect(root).not.toHaveClass("has-bar");
+      expect(container.querySelector(".dn-note-header")).toBeInTheDocument();
+      await act(async () => (container.querySelector(".tiptap") as HTMLElement).focus());
+      await waitFor(() => expect(root).toHaveClass("has-bar"));
+      expect(container.querySelector(".dn-format-bar")).toBeInTheDocument();
+    });
+
+    it("keeps the plain root background at 100 %", async () => {
+      const { container } = await openNote({ appearance: { opacity: 100 } });
+      expect(container.querySelector(".dn-note")).not.toHaveClass("is-see-through");
+    });
+
+    it("applies the single-paint root to the locked private view too", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote({ appearance: { opacity: 90 } }));
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      expect(container.querySelector(".dn-note")).toHaveClass("is-see-through");
+    });
+
     it("is not see-through at 100 %", async () => {
       await openNote({ appearance: { opacity: 100 } });
       expect(document.documentElement).not.toHaveClass("dn-see-through");

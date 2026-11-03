@@ -14,6 +14,19 @@
   line-height: var(--dn-leading);
 }
 
+/* Below 100 % opacity every region must show the window behind at the same
+   opacity, painted once. The header and the format bar paint --note-hd themselves,
+   so the root paints --note-bg only between them (a bottom inset when the bar shows).
+   A note rolled up to its strip paints --note-hd on the root alone, so it needs nothing. */
+.dn-note.is-see-through {
+  --note-bar: 0px;
+  background: linear-gradient(var(--note-bg), var(--note-bg)) 0 var(--dn-header-h) / 100%
+    calc(100% - var(--dn-header-h) - var(--note-bar)) no-repeat;
+}
+.dn-note.is-see-through.has-bar {
+  --note-bar: var(--dn-bar-h);
+}
+
 /* Header: grip always; window controls on hover or keyboard focus (N1 vs N2). */
 .dn-note-header {
   height: var(--dn-header-h);
