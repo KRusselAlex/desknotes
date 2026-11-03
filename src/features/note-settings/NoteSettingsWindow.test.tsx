@@ -431,6 +431,43 @@ describe("NoteSettingsWindow", () => {
     expect(closeCurrentWindow).toHaveBeenCalledTimes(2);
   });
 
+  describe.each([
+    ["the Close button", () => fireEvent.click(screen.getByRole("button", { name: "Close" }))],
+    ["Esc", () => fireEvent.keyDown(document, { key: "Escape" })],
+  ])("closing with %s while a slider value is waiting for its 100 ms", (_name, close) => {
+    it("sends that value first", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(commands.getNote).mockResolvedValue(note());
+        render(<NoteSettingsWindow noteId={ID} />);
+        await act(async () => {
+          await vi.runOnlyPendingTimersAsync();
+        });
+        const slider = screen.getByRole("slider", { name: "Line spacing" });
+        fireEvent.pointerDown(slider);
+        fireEvent.change(slider, { target: { value: "150" } }); // goes out at once
+        fireEvent.change(slider, { target: { value: "160" } }); // waits
+        expect(commands.setNoteAppearance).toHaveBeenCalledTimes(1);
+        close();
+        expect(commands.setNoteAppearance).toHaveBeenCalledTimes(2);
+        expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { lineSpacing: 160 });
+        expect(closeCurrentWindow).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(commands.setNoteAppearance).mock.invocationCallOrder[1]!).toBeLessThan(
+          vi.mocked(closeCurrentWindow).mock.invocationCallOrder[0]!,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it("reads the disabled background image row as 'Background image Later', not 'Background imageLater'", async () => {
+    await open();
+    const row = screen.getByText("Background image").closest(".dn-ns-row") as HTMLElement;
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(row.textContent).toBe("Background image Later");
+  });
+
   it("shows an error when a change is refused", async () => {
     await open();
     vi.mocked(commands.setNoteAppearance).mockRejectedValueOnce(new Error("font size out of range"));

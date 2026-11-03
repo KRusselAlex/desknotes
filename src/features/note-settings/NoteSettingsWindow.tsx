@@ -83,6 +83,14 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef(false);
 
+  /** `flushAppearance`, reachable from callbacks that are defined before it. */
+  const flushRef = useRef<() => void>(() => undefined);
+  /** Close this window. A slider value still waiting to go out is sent first. */
+  const closeWindow = useCallback(() => {
+    flushRef.current();
+    void closeCurrentWindow();
+  }, []);
+
   const showAppearance = useCallback((next: Appearance) => {
     appearanceRef.current = next;
     setAppearance(next);
@@ -99,7 +107,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
         (n) => {
           if (generation.current !== gen) return;
           if (isGone(n)) {
-            void closeCurrentWindow();
+            closeWindow();
             return;
           }
           // Until the note's first read has landed, the window shows nothing of it.
@@ -117,11 +125,11 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
           }
         },
         () => {
-          if (generation.current === gen) void closeCurrentWindow();
+          if (generation.current === gen) closeWindow();
         },
       );
     },
-    [showAppearance],
+    [showAppearance, closeWindow],
   );
 
   /** Run a change to the shown note; on refusal show why and read the note again.
@@ -175,6 +183,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     dragging.current = false;
     if (pending.current) sendAppearanceNow();
   }, [sendAppearanceNow]);
+  flushRef.current = flushAppearance;
 
   function changeAppearance(patch: Appearance) {
     showAppearance(merged(appearanceRef.current, patch));
@@ -262,11 +271,11 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) void closeCurrentWindow();
+      if (e.key === "Escape" && !e.defaultPrevented) closeWindow();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [closeWindow]);
 
   // Closing: a slider value still waiting goes out.
   useEffect(() => () => flushAppearance(), [flushAppearance]);
@@ -428,7 +437,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
                 </span>
               </div>
               <div className="dn-ns-row is-later" aria-disabled="true">
-                Background image<span className="dn-ns-later">Later</span>
+                <span>Background image</span>{" "}
+                <span className="dn-ns-later">Later</span>
               </div>
             </Card>
 
@@ -478,7 +488,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
           Reset to defaults
         </button>
         <span className="dn-ns-spacer" />
-        <button type="button" className="dn-ns-close" onClick={() => void closeCurrentWindow()}>
+        <button type="button" className="dn-ns-close" onClick={closeWindow}>
           Close
         </button>
       </footer>
