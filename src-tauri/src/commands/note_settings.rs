@@ -1,6 +1,8 @@
 //! Commands behind the per-note settings window: text and background styling,
 //! the note's size, and the list of installed fonts.
 
+use std::time::{Duration, Instant};
+
 use desknotes_core::geometry::Rect;
 use desknotes_core::validation::parse_note_id;
 use desknotes_core::{Appearance, COLLAPSED_HEIGHT, NoteSize};
@@ -116,6 +118,54 @@ pub async fn list_fonts() -> IpcResult<Vec<String>> {
     tauri::async_runtime::spawn_blocking(fonts::families)
         .await
         .map_err(|e| IpcError::new("fonts", e.to_string()))
+}
+
+/// Open the Note settings window for a note, or switch the open one to it.
+/// Async: creating a window from a synchronous command deadlocks on Windows.
+#[tauri::command]
+pub async fn open_note_settings(app: AppHandle, id: String) -> IpcResult<()> {
+    let id = parse_note_id(&id)?;
+    windows::note_settings::open_note_settings(&app, &id)
+}
+
+/// How long to wait for a closed note window to be gone before reopening it.
+const GONE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Close a note's window and open it again at the same place and size (a
+/// window's transparency is fixed when it is created). The note window calls
+/// this itself after saving its text. A note with no open window is left alone.
+/// Closing a private note's window releases its kept-open state, so it opens
+/// locked; its text has been saved.
+#[tauri::command]
+pub async fn reopen_note(app: AppHandle, id: String) -> IpcResult<()> {
+    let id = parse_note_id(&id)?;
+    let label = windows::note_label(&id);
+    if app.get_webview_window(&label).is_none() {
+        return Ok(());
+    }
+    windows::close_note(&app, &id)?;
+    // `close_note` only asks for the window to be destroyed; it is gone once
+    // the main thread has handled that. Opening before then would just focus it.
+    // Off the async runtime's workers: this sleeps.
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let deadline = Instant::now() + GONE_TIMEOUT;
+        while handle.get_webview_window(&label).is_some() {
+            if Instant::now() >= deadline {
+                return Err(IpcError::new(
+                    "window",
+                    "The note window did not close in time.",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let note = handle.state::<AppState>().with_db(|db| db.get_note(&id))?;
+        windows::open_note(&handle, &note)?;
+        emit_changed(&handle, Some(&id), "other");
+        Ok(())
+    })
+    .await
+    .map_err(|e| IpcError::new("window", e.to_string()))?
 }
 
 /// The size to apply: whole pixels, at least `min`, at most `max` (the work

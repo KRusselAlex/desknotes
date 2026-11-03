@@ -2,6 +2,7 @@
 //! Windows are only ever created here, never from the webview.
 
 pub mod geometry;
+pub mod note_settings;
 
 use desknotes_core::geometry::{Rect, keep_on_screen};
 use desknotes_core::{COLLAPSED_HEIGHT, Note, NoteSize};
@@ -26,6 +27,8 @@ pub const QUIT_BLOCKED: &str = "quit-blocked";
 pub const NOTE_ACTION: &str = "note-action";
 /// Sent to the note settings window when a note window changes size.
 pub const NOTE_RESIZED: &str = "note-resized";
+/// Sent to an open note settings window: show the note whose id is the payload.
+pub const NOTE_SETTINGS_NOTE: &str = "note-settings-note";
 
 /// Payload of `note-resized`: the note's new size in logical pixels.
 #[derive(Clone, Serialize)]
@@ -312,6 +315,9 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
     let positioning = window_positioning_supported();
     let always_on_top = w.always_on_top;
     let collapsed = w.collapsed;
+    // Transparency is a creation-time property of the window, so only a note
+    // below 100 % opacity gets it; crossing 100 % reopens the window.
+    let transparent = note.appearance.opacity.unwrap_or(100) < 100;
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
@@ -351,6 +357,9 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
                 // title bar and the note keeps that extra height, growing on every
                 // restart. Mapping only after it is undecorated avoids this.
                 .visible(false);
+        if transparent {
+            builder = builder.transparent(true);
+        }
         if positioning {
             builder = builder.position(rect.x, rect.y);
         }

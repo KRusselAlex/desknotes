@@ -86,6 +86,8 @@ pub fn run() {
             commands::note_settings::set_note_appearance,
             commands::note_settings::set_note_size,
             commands::note_settings::list_fonts,
+            commands::note_settings::open_note_settings,
+            commands::note_settings::reopen_note,
             commands::app::show_manager,
             commands::app::startup_errors,
             commands::app::quit_app,
