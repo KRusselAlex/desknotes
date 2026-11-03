@@ -16,13 +16,43 @@ export function SaveIndicator({ state, editing }: { state: SaveState; editing: b
  * Inline message when a save failed (design N6). Text stays editable.
  * `reason` (the core's message, never note text) is shown on hover for bug reports.
  */
-export function SaveError({ onRetry, reason }: { onRetry: () => void; reason?: string }) {
+export function SaveError({
+  onRetry,
+  onUnlock,
+  reason,
+}: {
+  onRetry: () => void;
+  /** The save was refused because private notes are locked: unlock here, then it is saved (R20). */
+  onUnlock?: () => void;
+  reason?: string;
+}) {
   return (
     <div className="dn-save-error" role="alert">
       <Icon name="alert" />
       <span title={reason ? `Reason: ${reason}` : undefined}>Not saved. Your text is kept in this window.</span>
-      <button type="button" onClick={onRetry}>
-        Retry
+      {onUnlock ? (
+        // Keeps focus in the editor on press: its blur would retry the save, hiding this bar
+        // (and the button) before the click lands.
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={onUnlock}>
+          Unlock to save
+        </button>
+      ) : (
+        <button type="button" onClick={onRetry}>
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Why an action from the note's menu was refused (R21), in the "Not saved" bar's style. */
+export function NoteNotice({ text, onDismiss }: { text: string; onDismiss: () => void }) {
+  return (
+    <div className="dn-save-error" role="alert">
+      <Icon name="alert" />
+      <span>{text}</span>
+      <button type="button" onClick={onDismiss}>
+        OK
       </button>
     </div>
   );

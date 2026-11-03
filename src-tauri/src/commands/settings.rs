@@ -21,9 +21,21 @@ pub struct SettingsView {
     pub last_backup_at: Option<i64>,
 }
 
+/// Opens Settings, at `section` when given ("general", "privacy",
+/// "privacy-new-pin", "backup" or "about"; anything else is refused).
 #[tauri::command]
-pub async fn open_settings(app: AppHandle) -> IpcResult<()> {
-    Ok(windows::open_settings(&app)?)
+pub async fn open_settings(app: AppHandle, section: Option<String>) -> IpcResult<()> {
+    let section = parse_section(section.as_deref())?;
+    Ok(windows::open_settings(&app, section)?)
+}
+
+fn parse_section(name: Option<&str>) -> IpcResult<Option<&'static str>> {
+    match name {
+        None => Ok(None),
+        Some(name) => windows::settings_section(name)
+            .map(Some)
+            .ok_or_else(|| IpcError::new("validation", "There is no such Settings section.")),
+    }
 }
 
 #[tauri::command]
@@ -117,18 +129,26 @@ fn toggle_shortcut_view() -> ToggleShortcut {
     }
 }
 
-/// The desktop's keyboard settings are changed only from the Settings window,
-/// where the person confirms it; note windows cannot do it.
-fn only_from_settings(window: &tauri::WebviewWindow) -> IpcResult<()> {
-    if window.label() == windows::SETTINGS {
+/// Some changes are made only from the Settings window, where the person
+/// confirms them: the desktop's keyboard settings and the privacy lock. Note
+/// windows and the manager cannot make them.
+pub(crate) fn only_from_settings(window: &tauri::WebviewWindow, what: &str) -> IpcResult<()> {
+    only_from_settings_label(window.label(), what)
+}
+
+/// [`only_from_settings`] for a window label (testable without a window).
+pub(crate) fn only_from_settings_label(label: &str, what: &str) -> IpcResult<()> {
+    if label == windows::SETTINGS {
         Ok(())
     } else {
         Err(IpcError::new(
             "not_allowed",
-            "The keyboard shortcut can only be changed in Settings.",
+            format!("{what} can only be changed in Settings."),
         ))
     }
 }
+
+const SHORTCUT: &str = "The keyboard shortcut";
 
 #[tauri::command]
 pub fn get_toggle_shortcut() -> ToggleShortcut {
@@ -142,7 +162,7 @@ pub fn set_toggle_shortcut(
     window: tauri::WebviewWindow,
     binding: String,
 ) -> IpcResult<ToggleShortcut> {
-    only_from_settings(&window)?;
+    only_from_settings(&window, SHORTCUT)?;
     #[cfg(target_os = "linux")]
     {
         use crate::platform::gnome_shortcut::{self as gnome, Accel};
@@ -184,7 +204,7 @@ pub fn set_toggle_shortcut(
 /// Remove DeskNotes' GNOME custom shortcut (other shortcuts are kept).
 #[tauri::command]
 pub fn remove_toggle_shortcut(window: tauri::WebviewWindow) -> IpcResult<ToggleShortcut> {
-    only_from_settings(&window)?;
+    only_from_settings(&window, SHORTCUT)?;
     #[cfg(target_os = "linux")]
     if crate::platform::gnome_shortcut::available() {
         crate::platform::gnome_shortcut::remove().map_err(|e| IpcError::new("shortcut", e))?;
@@ -216,4 +236,21 @@ pub fn open_data_folder(app: AppHandle) -> IpcResult<()> {
     app.opener()
         .open_path(dir.display().to_string(), None::<&str>)
         .map_err(|e| IpcError::new("opener", e.to_string()))
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::parse_section;
+
+    #[test]
+    fn open_settings_accepts_known_sections_only() {
+        assert_eq!(parse_section(None).unwrap(), None);
+        assert_eq!(parse_section(Some("privacy")).unwrap(), Some("privacy"));
+        assert_eq!(
+            parse_section(Some("privacy-new-pin")).unwrap(),
+            Some("privacy-new-pin")
+        );
+        let err = parse_section(Some("index.html")).unwrap_err();
+        assert_eq!(err.code, "validation");
+    }
 }

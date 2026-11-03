@@ -40,3 +40,22 @@ export const ACTION_FAILED = "action-failed";
 export function onActionFailed(handler: (message: string) => void): Promise<UnlistenFn> {
   return listen<string>(ACTION_FAILED, (event) => handler(event.payload));
 }
+
+export const PRIVACY_CHANGED = "privacy-changed";
+
+/** The privacy lock turned on or off. Sent to every window, or to one note
+ * window when that note, kept open at the last lock, has now locked. */
+export interface PrivacyChanged {
+  locked: boolean;
+}
+
+export function onPrivacyChanged(handler: (e: PrivacyChanged) => void): Promise<UnlistenFn> {
+  return listen<PrivacyChanged>(PRIVACY_CHANGED, (event) => handler(event.payload));
+}
+
+export const SETTINGS_SECTION = "settings-section";
+
+/** Another window asked the open Settings window to show a section. */
+export function onSettingsSection(handler: (section: string) => void): Promise<UnlistenFn> {
+  return listen<string>(SETTINGS_SECTION, (event) => handler(event.payload));
+}

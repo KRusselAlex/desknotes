@@ -484,3 +484,11 @@
 [data-theme="dark"] .dn-manager .dn-menu-item:focus-visible {
   background: var(--dn-app-hover);
 }
+
+/* Private note indicator (spec §4.2): the lock icon before the title, or the label when locked. */
+.dn-row-private {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 5px;
+  color: var(--dn-app-muted);
+}

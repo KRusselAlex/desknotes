@@ -11,7 +11,8 @@ export type SaveState = "saved" | "pending" | "saving" | "error";
 
 export interface AutosaveOptions {
   save: (content: string) => Promise<void>;
-  onStateChange?: (state: SaveState, error?: string) => void;
+  /** `message` is the failed save's error message; `error` the error itself (e.g. for its code). */
+  onStateChange?: (state: SaveState, message?: string, error?: unknown) => void;
   debounceMs?: number;
   maxWaitMs?: number;
 }
@@ -75,7 +76,7 @@ export class Autosave {
       } catch (error) {
         // Keep the content unless something newer already replaced it.
         this.pending ??= snapshot;
-        this.setState("error", error instanceof Error ? error.message : String(error));
+        this.setState("error", error instanceof Error ? error.message : String(error), error);
         return;
       }
     }
@@ -89,8 +90,8 @@ export class Autosave {
     this.maxWaitTimer = null;
   }
 
-  private setState(state: SaveState, error?: string): void {
+  private setState(state: SaveState, message?: string, error?: unknown): void {
     this.state = state;
-    this.options.onStateChange?.(state, error);
+    this.options.onStateChange?.(state, message, error);
   }
 }

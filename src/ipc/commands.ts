@@ -9,10 +9,16 @@ import type {
   NoteFilter,
   NoteSize,
   NoteSummary,
+  PinCheck,
+  PrivacyStatus,
+  RecoveryChange,
+  RecoveryMethod,
   RestorePreview,
   RestoreResult,
   SaveResult,
   SettingsView,
+  SettingsSection,
+  SetupResult,
   ToggleShortcut,
 } from "../types/note";
 
@@ -66,7 +72,8 @@ export const commands = {
   hiddenNoteCount: () => call<number>("hidden_note_count"),
   startupErrors: () => call<string[]>("startup_errors"),
   quitApp: () => call<void>("quit_app"),
-  openSettings: () => call<void>("open_settings"),
+  /** Opens (or focuses) Settings, at `section` when given. */
+  openSettings: (section?: SettingsSection) => call<void>("open_settings", { section: section ?? null }),
   getSettings: () => call<SettingsView>("get_settings"),
   /** Returns the launcher state actually in effect afterwards. */
   setLaunchAtLogin: (enabled: boolean) => call<boolean>("set_launch_at_login", { enabled }),
@@ -88,6 +95,36 @@ export const commands = {
   restoreBackup: () => call<RestoreResult>("restore_backup"),
   /** Answer to save-all-notes: whether this window's text is saved. */
   quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
+
+  // Privacy lock. PINs are sent once to be checked and never stored here.
+  privacyStatus: () => call<PrivacyStatus>("privacy_status"),
+  /** Unlocks every private note when the PIN is right. */
+  unlock: (pin: string) => call<PinCheck>("unlock", { pin }),
+  /** Saves every open note, then locks private notes. */
+  lockNow: () => call<void>("lock_now"),
+  /** Settings only. "system" is refused where the Ubuntu password cannot be used. */
+  setupPin: (pin: string, method: RecoveryMethod) => call<SetupResult>("setup_pin", { pin, method }),
+  /** Settings only. */
+  changePin: (current: string, next: string) => call<PinCheck>("change_pin", { current, new: next }),
+  /** Settings only. Private flags and labels are kept. */
+  turnOffLock: (pin: string) => call<PinCheck>("turn_off_lock", { pin }),
+  /** Settings only. Null when the PIN was not accepted. */
+  /** Settings only. Switching to "code" returns the new recovery code, shown once. */
+  setRecoveryMethod: (pin: string, method: RecoveryMethod) =>
+    call<RecoveryChange>("set_recovery_method", { pin, method }),
+  /** Settings only: 1, 5, 10 or 15. */
+  setLockAfter: (minutes: number) => call<void>("set_lock_after", { minutes }),
+  /** Making a note private needs a PIN; `label` replaces the stored one ("" or null clears it). */
+  setNotePrivate: (id: string, isPrivate: boolean, label: string | null) =>
+    call<void>("set_note_private", { id, private: isPrivate, label }),
+  /** Input seen in this window, for the inactivity lock. */
+  reportActivity: () => call<void>("report_activity"),
+  acknowledgePinReset: () => call<void>("acknowledge_pin_reset"),
+  /** Asks for the Ubuntu password; true when it was given and the lock is off. */
+  forgotPinSystem: () => call<boolean>("forgot_pin_system"),
+  recoverWithCode: (code: string) => call<PinCheck>("recover_with_code", { code }),
+  /** Settings only, after forgotPinSystem or recoverWithCode succeeded. */
+  chooseNewPin: (pin: string) => call<SetupResult>("choose_new_pin", { pin }),
 };
 
 export type Commands = typeof commands;

@@ -6,6 +6,7 @@
 use serde_json::Value;
 
 use crate::error::{CoreError, CoreResult};
+use crate::model::PRIVATE_LABEL_MAX_CHARS;
 
 pub const MAX_CONTENT_BYTES: usize = 1024 * 1024;
 pub const MAX_DEPTH: usize = 64;
@@ -197,6 +198,22 @@ pub fn validate_color(color: &str) -> CoreResult<String> {
     } else {
         Err(invalid("color must look like #rrggbb"))
     }
+}
+
+/// A private note's neutral label: trimmed, at most `PRIVATE_LABEL_MAX_CHARS`
+/// characters, no control characters. Empty is allowed (the fallback label is
+/// used for display).
+pub fn validate_private_label(label: &str) -> CoreResult<String> {
+    let label = label.trim();
+    if label.chars().count() > PRIVATE_LABEL_MAX_CHARS {
+        return Err(invalid(format!(
+            "label must be at most {PRIVATE_LABEL_MAX_CHARS} characters"
+        )));
+    }
+    if label.chars().any(char::is_control) {
+        return Err(invalid("label must not contain control characters"));
+    }
+    Ok(label.to_string())
 }
 
 /// Text of each top-level block, in order.
@@ -436,6 +453,28 @@ mod tests {
         assert_eq!(derive_snippet(&doc, ""), None);
         let accents = json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Réunion ÉCOLE"}]}]});
         assert_eq!(derive_snippet(&accents, "école").unwrap(), "Réunion ÉCOLE");
+    }
+
+    #[test]
+    fn private_label_is_trimmed_and_limited() {
+        assert_eq!(validate_private_label("  Bank ").unwrap(), "Bank");
+        assert_eq!(validate_private_label("   ").unwrap(), "");
+        assert_eq!(
+            validate_private_label(&"é".repeat(40))
+                .unwrap()
+                .chars()
+                .count(),
+            40
+        );
+        assert_eq!(
+            validate_private_label(&"x".repeat(41)).unwrap_err().code(),
+            "validation"
+        );
+        assert_eq!(
+            validate_private_label("a\u{7}").unwrap_err().code(),
+            "validation"
+        );
+        assert!(validate_private_label("a\nb").is_err());
     }
 
     #[test]

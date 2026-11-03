@@ -6,6 +6,24 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Private notes with a privacy lock (Milestone 3): mark a note private from its ⋯ menu,
+  with an optional label. A 6-digit PIN (Settings → Privacy) locks every private note; a
+  locked note shows only its colour and label, never its text or title, in every window,
+  in the manager and in search.
+- Locks by itself when the computer sleeps, when the screen locks, and after 1, 5, 10 or 15
+  minutes without using DeskNotes; also "Lock now" in the tray, the manager and Settings.
+  Notes are saved first, so locking never loses typing.
+- Wrong PINs make you wait (30 s, then 1 min, then 5 min), also after a restart.
+- Forgotten PIN: "If I forget my PIN" in Settings chooses the way back — the Ubuntu
+  password (with the `.deb`) or a recovery code shown once. Last resort:
+  `desknotes --reset-pin` with DeskNotes closed; the next start says so.
+- Backups keep private notes private (backup format 2); export and restore ask for the
+  PIN while private notes are locked.
+
+### Changed
+- Settings opens at a given section from other windows (for example Privacy).
+
 ## [0.2.0] — 2026-11-02 — Milestone 2: desktop reliability
 
 ### Added

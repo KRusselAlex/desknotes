@@ -33,13 +33,13 @@ pub fn quit_app(app: AppHandle) {
 pub fn request_quit(app: AppHandle) {
     std::thread::spawn(move || {
         let unsaved = windows::save_all_open_notes(&app, SAVE_TIMEOUT);
-        if unsaved == 0 {
+        if unsaved.is_empty() {
             app.exit(0);
         } else {
             if let Err(e) = windows::show_manager(&app) {
                 eprintln!("DeskNotes: could not show the manager: {e}");
             }
-            let _ = app.emit(QUIT_BLOCKED, unsaved);
+            let _ = app.emit(QUIT_BLOCKED, unsaved.len());
         }
     });
 }

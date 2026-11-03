@@ -10,11 +10,12 @@ use crate::model::*;
 use crate::now_ms;
 use crate::validation::{
     derive_search_text, derive_snippet, derive_title, empty_doc, parse_content, validate_color,
+    validate_private_label,
 };
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
      n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top,
-     n.edit_locked, w.collapsed";
+     n.edit_locked, w.collapsed, n.private, n.private_label";
 
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
@@ -32,6 +33,9 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
             archived_at: row.get(6)?,
             deleted_at: row.get(7)?,
             edit_locked: row.get(14)?,
+            private: row.get(16)?,
+            private_label: row.get(17)?,
+            locked: false,
             window: NoteWindow {
                 x: row.get(8)?,
                 y: row.get(9)?,
@@ -44,6 +48,25 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
         },
         content_json,
     ))
+}
+
+/// What a locked private note shows instead of its title (design D2): its
+/// label, or the fallback when it has none. Never the derived title.
+fn display_label(label: &str) -> &str {
+    if label.is_empty() {
+        PRIVATE_FALLBACK_LABEL
+    } else {
+        label
+    }
+}
+
+/// The locked view of a private note: colour, label and window state only.
+/// The stored content is never parsed, so not even an error can describe it.
+fn redacted(mut note: Note) -> Note {
+    note.content = empty_doc();
+    note.title = display_label(&note.private_label).to_string();
+    note.locked = true;
+    note
 }
 
 /// Parse stored content. Stored content was validated on write, so failure
@@ -74,7 +97,7 @@ impl Database {
             always_on_top: false,
             collapsed: false,
         };
-        self.insert_note(&empty_doc(), &color, &window)
+        self.insert_note(&empty_doc(), &color, &window, false, "")
     }
 
     fn insert_note(
@@ -82,20 +105,25 @@ impl Database {
         content: &serde_json::Value,
         color: &str,
         window: &NoteWindow,
+        private: bool,
+        private_label: &str,
     ) -> CoreResult<Note> {
         let id = Uuid::new_v4().to_string();
         let now = now_ms();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO notes (id, title, content_json, search_text, color, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            "INSERT INTO notes (id, title, content_json, search_text, color, created_at, updated_at,
+                                private, private_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8)",
             params![
                 id,
                 derive_title(content),
                 content.to_string(),
                 derive_search_text(content),
                 color,
-                now
+                now,
+                private,
+                private_label
             ],
         )?;
         tx.execute(
@@ -116,6 +144,7 @@ impl Database {
         self.get_note(&id)
     }
 
+    /// A note, or its locked view while the privacy lock withholds it.
     pub fn get_note(&self, id: &str) -> CoreResult<Note> {
         let sql = format!(
             "SELECT {NOTE_COLUMNS} FROM notes n JOIN note_windows w ON w.note_id = n.id
@@ -126,7 +155,16 @@ impl Database {
             .query_row(&sql, [id], note_from_row)
             .optional()?
             .ok_or_else(|| CoreError::NotFound(id.to_string()))?;
+        if pair.0.private && self.withholds(id)? {
+            return Ok(redacted(pair.0));
+        }
         finish(pair)
+    }
+
+    /// True when the lock is in effect and the note with this id is not kept open.
+    /// Only meaningful for private notes. `lock` is `self.lock_active()`.
+    fn withheld(&self, lock: bool, private: bool, id: &str) -> bool {
+        private && lock && !self.kept_open.borrow().contains(id)
     }
 
     /// Notes whose windows should be open: visible, not archived, not in trash.
@@ -138,12 +176,17 @@ impl Database {
              WHERE w.visible = 1 AND n.archived_at IS NULL AND n.deleted_at IS NULL
              ORDER BY n.created_at"
         );
+        let lock = self.lock_active()?;
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], note_from_row)?;
         let (mut notes, mut unreadable) = (Vec::new(), Vec::new());
         for row in rows {
             let pair = row?;
             let id = pair.0.id.clone();
+            if self.withheld(lock, pair.0.private, &id) {
+                notes.push(redacted(pair.0));
+                continue;
+            }
             match finish(pair) {
                 Ok(note) => notes.push(note),
                 Err(_) => unreadable.push(id),
@@ -154,6 +197,8 @@ impl Database {
 
     /// Notes for the manager list, newest first. `query` matches anywhere in
     /// the note text, case-insensitively; matching rows carry a snippet.
+    /// While locked, a withheld private note is listed under its label and
+    /// matches a query on that label only, never on its text (design §4.4).
     pub fn list_notes(
         &self,
         filter: NoteFilter,
@@ -165,16 +210,23 @@ impl Database {
             NoteFilter::Trash => "n.deleted_at IS NOT NULL",
         };
         let needle = query.map(|q| q.trim().to_lowercase()).unwrap_or_default();
+        let lock = self.lock_active()?;
+        // Private notes are all fetched while locked; which of them match is
+        // decided below, once it is known whether each one is withheld.
         let sql = format!(
             "SELECT n.id, n.title, n.color, n.updated_at, n.archived_at, n.deleted_at, w.visible,
-                    CASE WHEN ?1 = '' THEN NULL ELSE n.content_json END
+                    n.private, n.private_label,
+                    CASE WHEN ?1 = '' THEN NULL ELSE n.content_json END,
+                    ?1 <> '' AND instr(n.search_text, ?1) > 0
              FROM notes n JOIN note_windows w ON w.note_id = n.id
-             WHERE {condition} AND (?1 = '' OR instr(n.search_text, ?1) > 0)
+             WHERE {condition}
+               AND (?1 = '' OR instr(n.search_text, ?1) > 0 OR (?2 AND n.private = 1))
              ORDER BY n.updated_at DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map([&needle], |r| {
-            let content: Option<String> = r.get(7)?;
+        let rows = stmt.query_map(params![needle, lock], |r| {
+            let content: Option<String> = r.get(9)?;
+            let text_hit: bool = r.get(10)?;
             Ok((
                 NoteSummary {
                     id: r.get(0)?,
@@ -184,14 +236,31 @@ impl Database {
                     archived_at: r.get(4)?,
                     deleted_at: r.get(5)?,
                     visible: r.get(6)?,
+                    private: r.get(7)?,
+                    private_label: r.get(8)?,
+                    locked: false,
                     snippet: None,
                 },
                 content,
+                text_hit,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (mut summary, content) = row?;
+            let (mut summary, content, text_hit) = row?;
+            if self.withheld(lock, summary.private, &summary.id) {
+                let label = display_label(&summary.private_label).to_string();
+                if !needle.is_empty() && !label.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                summary.title = label;
+                summary.locked = true;
+                out.push(summary);
+                continue;
+            }
+            if !needle.is_empty() && !text_hit {
+                continue;
+            }
             if let Some(raw) = content {
                 // A note whose stored JSON is unreadable is still listed, just without a snippet.
                 if let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) {
@@ -223,8 +292,9 @@ impl Database {
     }
 
     /// Validate and store new content. `raw` is the editor's JSON document.
-    /// Refused while the note is edit-locked.
+    /// Refused while the note is edit-locked, or private and withheld by the lock.
     pub fn save_content(&self, id: &str, raw: &str) -> CoreResult<SaveResult> {
+        self.refuse_if_note_locked(id)?;
         let doc = parse_content(raw)?;
         let title = derive_title(&doc);
         let now = now_ms();
@@ -256,6 +326,44 @@ impl Database {
         self.expect_one(changed, id)
     }
 
+    /// Mark a note private or not, with its neutral label. The label is stored
+    /// validated; clearing `private` keeps the label for next time.
+    ///
+    /// While the lock is in effect, a private note cannot change at all, whether
+    /// it is withheld or kept open at the last lock (design §4.2: label and
+    /// "Make not private" need the PIN). A normal note made private while locked
+    /// is kept open, so its open editor can keep saving until the shell releases
+    /// it, like a note whose save failed at lock.
+    pub fn set_private(&self, id: &str, private: bool, label: &str) -> CoreResult<()> {
+        self.refuse_if_note_locked(id)?;
+        let label = validate_private_label(label)?;
+        let locked = self.lock_active()?;
+        let newly_private_while_locked = if locked {
+            let currently_private = self
+                .conn
+                .query_row("SELECT private FROM notes WHERE id = ?1", [id], |r| {
+                    r.get::<_, bool>(0)
+                })
+                .optional()?;
+            if currently_private == Some(true) {
+                return Err(CoreError::PrivateLocked);
+            }
+            // A missing note falls through to `not_found` below.
+            private && currently_private.is_some()
+        } else {
+            false
+        };
+        let changed = self.conn.execute(
+            "UPDATE notes SET private = ?2, private_label = ?3 WHERE id = ?1",
+            params![id, private, label],
+        )?;
+        self.expect_one(changed, id)?;
+        if newly_private_while_locked {
+            self.kept_open.borrow_mut().insert(id.to_string());
+        }
+        Ok(())
+    }
+
     pub fn set_color(&self, id: &str, color: &str) -> CoreResult<()> {
         let color = validate_color(color)?;
         let changed = self.conn.execute(
@@ -265,7 +373,10 @@ impl Database {
         self.expect_one(changed, id)
     }
 
+    /// Copy a note. A copy of a private note is private, with the same label.
+    /// Refused for a note the lock withholds.
     pub fn duplicate_note(&self, id: &str) -> CoreResult<Note> {
+        self.refuse_if_note_locked(id)?;
         let original = self.get_note(id)?;
         let w = &original.window;
         let window = NoteWindow {
@@ -275,7 +386,13 @@ impl Database {
             collapsed: false,
             ..w.clone()
         };
-        self.insert_note(&original.content, &original.color, &window)
+        self.insert_note(
+            &original.content,
+            &original.color,
+            &window,
+            original.private,
+            &original.private_label,
+        )
     }
 
     /// Archive hides the window; the note stays searchable under "Archived".
@@ -335,8 +452,10 @@ impl Database {
     }
 
     /// Permanently delete. Only allowed for notes already in the trash, so a
-    /// single mistaken call can never destroy an active note.
+    /// single mistaken call can never destroy an active note, and never for a
+    /// note the lock withholds.
     pub fn purge_note(&self, id: &str) -> CoreResult<()> {
+        self.refuse_if_note_locked(id)?;
         let changed = self.conn.execute(
             "DELETE FROM notes WHERE id = ?1 AND deleted_at IS NOT NULL",
             [id],
@@ -347,6 +466,7 @@ impl Database {
                 "only notes in the trash can be deleted permanently".into(),
             ));
         }
+        self.release_kept_open(id);
         Ok(())
     }
 
@@ -723,5 +843,40 @@ mod tests {
             })
             .unwrap();
         assert_eq!(raw, "{oops");
+    }
+
+    #[test]
+    fn set_private_round_trips_with_label() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        let note = db.get_note(&id).unwrap();
+        assert!(!note.private);
+        assert_eq!(note.private_label, "");
+
+        db.set_private(&id, true, "  Bank ").unwrap();
+        let note = db.get_note(&id).unwrap();
+        assert!(note.private);
+        assert_eq!(note.private_label, "Bank");
+        let summary = &db.list_notes(NoteFilter::Active, None).unwrap()[0];
+        assert!(summary.private);
+        assert_eq!(summary.private_label, "Bank");
+        assert!(!summary.locked);
+
+        // Clearing the flag keeps the label.
+        db.set_private(&id, false, "Bank").unwrap();
+        let note = db.get_note(&id).unwrap();
+        assert!(!note.private);
+        assert_eq!(note.private_label, "Bank");
+
+        assert_eq!(
+            db.set_private(&id, true, &"x".repeat(41))
+                .unwrap_err()
+                .code(),
+            "validation"
+        );
+        assert_eq!(
+            db.set_private("missing", true, "").unwrap_err().code(),
+            "not_found"
+        );
     }
 }

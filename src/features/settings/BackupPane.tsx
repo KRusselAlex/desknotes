@@ -2,10 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { commands } from "../../ipc/commands";
 import type { RestorePreview } from "../../types/note";
+import { isLockRefusal, refusalText } from "../privacy/refusal";
+import { UnlockDialog } from "../privacy/UnlockDialog";
 
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 type Notice = { kind: "ok" | "error"; text: string } | null;
+
+/** What was refused because private notes are locked, to try once more after the PIN (R11). */
+type Waiting = { step: "export" | "choose" | "replace"; retry: () => Promise<void> };
+
+const UNLOCK_TEXT: Record<Waiting["step"], string> = {
+  export: "Private notes are locked. Enter your PIN so the backup includes them.",
+  choose: "Private notes are locked. Enter your PIN to restore a backup.",
+  replace: "Private notes are locked. Enter your PIN to restore a backup.",
+};
 
 /** Backup section of Settings (design S3). */
 export function BackupPane({
@@ -18,17 +29,30 @@ export function BackupPane({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [preview, setPreview] = useState<RestorePreview | null>(null);
+  const [waiting, setWaiting] = useState<Waiting | null>(null);
 
-  async function run(action: () => Promise<void>) {
+  /**
+   * Runs an export or restore step. While private notes are locked the native side
+   * refuses it before any file dialog; then the PIN is asked for here and the step is
+   * tried once more (`step` given only on the first try).
+   */
+  async function run(action: () => Promise<void>, step?: Waiting["step"]) {
     setBusy(true);
     setNotice(null);
     try {
       await action();
     } catch (e) {
-      setNotice({ kind: "error", text: (e as Error).message });
+      if (step && isLockRefusal(e)) setWaiting({ step, retry: () => run(action) });
+      else setNotice({ kind: "error", text: refusalText(e) });
     } finally {
       setBusy(false);
     }
+  }
+
+  /** The PIN dialog closed without the retry: a file chosen for restoring is let go. */
+  function dropWaiting() {
+    if (waiting?.step === "replace") void commands.cancelRestore();
+    setWaiting(null);
   }
 
   const exportNow = () =>
@@ -43,13 +67,13 @@ export function BackupPane({
         kind: result.skipped ? "error" : "ok",
         text: `Backup saved: ${result.count} ${result.count === 1 ? "note" : "notes"} in ${result.path}.${skipped}`,
       });
-    });
+    }, "export");
 
   const chooseFile = () =>
     run(async () => {
       const p = await commands.chooseBackup();
       if (p) setPreview(p);
-    });
+    }, "choose");
 
   const cancel = () => {
     setPreview(null);
@@ -64,7 +88,7 @@ export function BackupPane({
         kind: "ok",
         text: `Restored ${r.restored} ${r.restored === 1 ? "note" : "notes"}. Your previous notes were saved in ${r.safetyCopy}.`,
       });
-    });
+    }, "replace");
 
   return (
     <>
@@ -95,6 +119,19 @@ export function BackupPane({
         </div>
       )}
       {preview && <ConfirmRestore preview={preview} onCancel={cancel} onReplace={() => void replace()} />}
+      {waiting && (
+        <UnlockDialog
+          title="Unlock private notes"
+          text={UNLOCK_TEXT[waiting.step]}
+          onUnlocked={() => {
+            setWaiting(null);
+            void waiting.retry();
+          }}
+          // Settings moves on to choosing a new PIN; the backup can be made after that.
+          onProved={dropWaiting}
+          onCancel={dropWaiting}
+        />
+      )}
     </>
   );
 }

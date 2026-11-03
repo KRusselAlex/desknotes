@@ -1,11 +1,13 @@
 import { ManagerWindow } from "../features/manager/ManagerWindow";
 import { NoteWindow } from "../features/notes/NoteWindow";
 import { SettingsWindow } from "../features/settings/SettingsWindow";
+import { useActivityReporter } from "./activity";
 
 const NOTE_PREFIX = "note-";
 
 /** One bundle serves every window; the window label decides what to show. */
 export function App({ label }: { label: string | null }) {
+  useActivityReporter();
   if (label === "manager") return <ManagerWindow />;
   if (label === "settings") return <SettingsWindow />;
   if (label?.startsWith(NOTE_PREFIX)) return <NoteWindow noteId={label.slice(NOTE_PREFIX.length)} />;

@@ -1,0 +1,305 @@
+/* Privacy lock: PIN pad inside a locked private note (design "PIN inside a note",
+   "Wrong PIN · slowed down") and the private-label dialog (S3 modal style). */
+
+/* Locked note: header keeps colour, label and window controls; the body is the pad. */
+.dn-locked-label {
+  min-width: 0;
+  padding: 0 4px;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dn-note-locked {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 8px 8px;
+}
+/* The wait message needs the room above the dots. */
+.dn-note-locked:has(.dn-pinpad.has-status) {
+  padding-top: 4px;
+}
+
+.dn-pinpad {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.dn-pinpad:not(.has-status) > .dn-pin-status {
+  /* Kept as a live region, out of the layout. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.dn-pin-status {
+  max-width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.dn-pin-message {
+  min-height: 32px;
+  max-width: 100%;
+  padding: 0 14px 0 10px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-danger-bg);
+  color: var(--dn-danger-ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.dn-pin-dots {
+  display: flex;
+  gap: 10px;
+}
+.dn-pin-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: var(--dn-radius-pill);
+  border: 1.5px solid var(--dn-ink-muted);
+}
+.dn-pin-dot.is-filled {
+  background: var(--dn-ink);
+  border-color: var(--dn-ink);
+}
+
+.dn-pin-keys {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 56px));
+  gap: 5px 8px;
+}
+.dn-pin-key {
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-ink-fill);
+  color: var(--dn-ink);
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 600;
+}
+.dn-pin-key.is-plain {
+  background: transparent;
+}
+.dn-pin-key:hover:not(:disabled) {
+  background: var(--dn-ink-press);
+}
+.dn-pin-key:disabled {
+  /* The pad as a whole is dimmed while waiting (below), not each key. */
+  opacity: 1;
+}
+.dn-pinpad.is-waiting .dn-pin-dots,
+.dn-pinpad.is-waiting .dn-pin-keys {
+  opacity: 0.45;
+}
+
+.dn-pin-forgot {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--dn-ink);
+  font-size: var(--dn-text-sm);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* "Make private" label dialog, shown inside a note window. */
+.dn-private-dialog {
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  color: var(--dn-app-text);
+  font-size: var(--dn-text-md);
+}
+.dn-field-label {
+  font-size: var(--dn-text-sm);
+  color: var(--dn-app-muted);
+}
+.dn-text-field {
+  width: 100%;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--dn-app-line);
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-bg);
+  color: var(--dn-app-text);
+  font-size: var(--dn-text-md);
+}
+.dn-text-field::placeholder {
+  color: var(--dn-app-muted);
+}
+.dn-text-field[aria-invalid="true"] {
+  border-color: var(--dn-danger);
+}
+
+/* Small notes scroll the pad, with the note body's scrollbar. */
+.dn-note-locked::-webkit-scrollbar {
+  width: 10px;
+}
+.dn-note-locked::-webkit-scrollbar-thumb {
+  background: rgba(32, 30, 29, 0.35);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.dn-note-locked::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* PIN typed in a Settings dialog (design "Confirm PIN mismatch · Change PIN"): app
+   colours, 14 px dots 12 apart, the message under the dots, no keypad drawn. */
+.dn-pinpad.is-app {
+  align-items: flex-start;
+}
+.dn-pinpad.is-app > .dn-pin-status {
+  order: 1;
+  justify-content: flex-start;
+}
+.dn-pinpad.is-app .dn-pin-dots {
+  gap: 12px;
+}
+.dn-pinpad.is-app .dn-pin-dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--dn-app-muted);
+}
+.dn-pinpad.is-app .dn-pin-dot.is-filled {
+  border: 0;
+  background: var(--dn-app-text);
+}
+.dn-pinpad.is-app.has-error .dn-pin-dot {
+  border-color: var(--dn-danger);
+}
+/* "The PINs don't match. Enter it again." is a line, not the wait pill. */
+.dn-pinpad.is-app.has-error .dn-pin-message {
+  min-height: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* "Forgot your PIN?" (design "Recovery code entry"), in an S3-style dialog in any window. */
+.dn-forgot {
+  color: var(--dn-app-text);
+}
+/* A command to type: never broken at its dashes. */
+.dn-forgot strong {
+  white-space: nowrap;
+}
+.dn-code-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dn-back-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dn-accent-ink);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dn-back-link:hover:not(:disabled) {
+  color: var(--dn-accent-press);
+}
+.dn-back-icon {
+  display: inline-flex;
+  transform: rotate(180deg);
+}
+.dn-code-title {
+  font-size: var(--dn-text-window);
+  font-weight: 700;
+}
+.dn-code-entry {
+  position: relative;
+  padding-top: 6px;
+}
+.dn-code-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.dn-code-group {
+  height: 42px;
+  border-radius: var(--dn-radius-pill);
+  /* app-raised in the design's window; the dialog itself is raised, so the ground stands out. */
+  background: var(--dn-app-bg);
+  border: 1px solid var(--dn-app-line);
+  display: grid;
+  place-items: center;
+  font-family: var(--dn-font-mono);
+  font-size: 16px;
+  letter-spacing: 0.12em;
+  color: var(--dn-app-text);
+}
+.dn-code-group.is-empty {
+  color: var(--dn-app-muted);
+}
+.dn-code-group.is-current {
+  border-color: var(--dn-focus);
+  box-shadow: 0 0 0 2px var(--dn-app-raised), 0 0 0 4px var(--dn-focus);
+}
+/* The real field lies over the groups: clicks, typing and paste go to it; the groups show it. */
+.dn-code-input {
+  position: absolute;
+  inset: 6px 0 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  opacity: 0;
+  cursor: text;
+}
+.dn-code-input:focus-visible {
+  outline: none; /* the current group shows the focus ring */
+}
+.dn-code-hint {
+  font-size: 12px;
+  color: var(--dn-app-muted);
+}
+.dn-code-form .dn-pin-status:empty {
+  /* Kept as a live region, out of the layout. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.dn-code-form .dn-pin-status {
+  justify-content: flex-start;
+}
+.dn-code-form .dn-modal-actions {
+  padding-top: 0;
+}
+.dn-code-form .dn-btn-accent:disabled {
+  opacity: 0.45;
+}
+/* "Forgot your PIN?" under a PIN typed in an app-coloured dialog. */
+.dn-pinpad.is-app .dn-pin-forgot {
+  color: var(--dn-app-text);
+}

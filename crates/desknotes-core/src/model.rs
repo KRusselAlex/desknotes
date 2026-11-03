@@ -7,6 +7,10 @@ pub const MIN_WIDTH: f64 = 180.0;
 pub const MIN_HEIGHT: f64 = 120.0;
 /// Height of a collapsed note: just its header strip.
 pub const COLLAPSED_HEIGHT: f64 = 32.0;
+/// Longest private label, in characters.
+pub const PRIVATE_LABEL_MAX_CHARS: usize = 40;
+/// Shown in place of a private note's title when it has no label of its own.
+pub const PRIVATE_FALLBACK_LABEL: &str = "Private note";
 /// Largest value the "Minimum note size" setting accepts, per side.
 pub const MAX_MIN_NOTE_SIDE: u32 = 600;
 
@@ -60,6 +64,13 @@ pub struct Note {
     pub deleted_at: Option<i64>,
     /// Read-only: content changes are refused until unlocked.
     pub edit_locked: bool,
+    /// Hidden behind the privacy lock while the app is locked.
+    pub private: bool,
+    /// Neutral name shown instead of the title for a private note.
+    pub private_label: String,
+    /// True while the privacy lock withholds this note: `content` is then an
+    /// empty document and `title` the label (or "Private note"), never the text.
+    pub locked: bool,
     pub window: NoteWindow,
 }
 
@@ -74,6 +85,10 @@ pub struct NoteSummary {
     pub archived_at: Option<i64>,
     pub deleted_at: Option<i64>,
     pub visible: bool,
+    pub private: bool,
+    pub private_label: String,
+    /// See [`Note::locked`].
+    pub locked: bool,
     /// Text around the first match, only when searching.
     pub snippet: Option<String>,
 }

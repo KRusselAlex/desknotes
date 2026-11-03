@@ -1,7 +1,9 @@
 //! Portable backup format (documented in docs/backup-format.md).
 //!
 //! A backup is one UTF-8 JSON file holding every note, including archived and
-//! trashed ones, with its window state. It contains no settings and no PIN.
+//! trashed ones, with its window state and privacy flag. It contains no
+//! settings and no PIN. Version 2 added `private` and `privateLabel`; version 1
+//! files still restore, with every note not private.
 //! Everything read from a backup file is validated before anything is changed.
 
 use std::collections::HashSet;
@@ -11,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::enforce_min_size;
 use crate::model::NoteWindow;
-use crate::validation::{parse_content, parse_note_id, validate_color};
+use crate::validation::{parse_content, parse_note_id, validate_color, validate_private_label};
 
 pub const BACKUP_FORMAT: &str = "desknotes-backup";
-pub const BACKUP_VERSION: u32 = 1;
+pub const BACKUP_VERSION: u32 = 2;
 /// Refuse files larger than this before parsing them.
 pub const MAX_BACKUP_BYTES: usize = 200 * 1024 * 1024;
 pub const MAX_BACKUP_NOTES: usize = 100_000;
@@ -45,6 +47,12 @@ pub struct BackupNote {
     pub deleted_at: Option<i64>,
     #[serde(default)]
     pub edit_locked: bool,
+    /// Hidden behind the privacy lock (version 2; absent in version 1 = false).
+    #[serde(default)]
+    pub private: bool,
+    /// Neutral label shown for a locked private note (version 2; absent = "").
+    #[serde(default)]
+    pub private_label: String,
     pub window: NoteWindow,
 }
 
@@ -80,6 +88,8 @@ pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
         // Same checks as a save from the editor (size, structure, safe links).
         parse_content(&note.content.to_string()).map_err(|e| invalid(format!("note {n}: {e}")))?;
         note.color = validate_color(&note.color).map_err(|e| invalid(format!("note {n}: {e}")))?;
+        note.private_label = validate_private_label(&note.private_label)
+            .map_err(|e| invalid(format!("note {n}: {e}")))?;
         let times = [
             Some(note.created_at),
             Some(note.updated_at),
@@ -119,6 +129,11 @@ mod tests {
             .to_string()
     }
 
+    fn file_v2(notes: Vec<serde_json::Value>) -> String {
+        json!({"format": BACKUP_FORMAT, "version": 2, "appVersion": "0.2.0", "exportedAt": 3, "notes": notes})
+            .to_string()
+    }
+
     const A: &str = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
     const B: &str = "3a2d9e1f-7b9c-4d62-8e5f-3c9a6b2b0d4e";
 
@@ -127,6 +142,40 @@ mod tests {
         let b = parse_backup(&file(vec![note(A), note(B)])).unwrap();
         assert_eq!(b.notes.len(), 2);
         assert_eq!(b.notes[0].color, "#fff4a3");
+    }
+
+    #[test]
+    fn version_1_file_is_read_with_no_private_notes() {
+        let b = parse_backup(&file(vec![note(A)])).unwrap();
+        assert_eq!(b.version, 1);
+        assert!(!b.notes[0].private);
+        assert_eq!(b.notes[0].private_label, "");
+    }
+
+    #[test]
+    fn version_2_keeps_private_flag_and_label() {
+        let mut private = note(A);
+        private["private"] = json!(true);
+        private["privateLabel"] = json!("  Bank ");
+        let b = parse_backup(&file_v2(vec![private, note(B)])).unwrap();
+        assert!(b.notes[0].private);
+        assert_eq!(b.notes[0].private_label, "Bank", "label is normalised");
+        assert!(!b.notes[1].private, "the fields are optional");
+
+        let mut long = note(A);
+        long["privateLabel"] = json!("x".repeat(41));
+        assert!(parse_backup(&file_v2(vec![long])).is_err());
+        let mut control = note(A);
+        control["privateLabel"] = json!("a\u{7}b");
+        assert!(parse_backup(&file_v2(vec![control])).is_err());
+    }
+
+    #[test]
+    fn written_backups_name_the_new_fields() {
+        let b = parse_backup(&file_v2(vec![note(A)])).unwrap();
+        let out = serde_json::to_value(&b).unwrap();
+        assert_eq!(out["notes"][0]["private"], json!(false));
+        assert_eq!(out["notes"][0]["privateLabel"], json!(""));
     }
 
     #[test]

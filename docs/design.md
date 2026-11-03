@@ -50,6 +50,7 @@ All core dependencies are free and open source. None requires a paid service, ac
 | rusqlite (`bundled`) | 0.41.1 | MIT (SQLite: public domain) | Native SQLite access |
 | serde / serde_json / thiserror / uuid | current | MIT OR Apache-2.0 | Serialization, errors, stable IDs |
 | argon2 (M3) | 0.6.0 | MIT OR Apache-2.0 | PIN hashing (Argon2id) |
+| zbus (M3, Linux only; blocking API) | 5.13.2 | MIT | Listen for sleep and screen-lock signals on the local D-Bus to lock private notes. Already in the build through Tauri's plugins; no network |
 | react / react-dom | 19.3.1 | MIT | UI |
 | vite / @vitejs/plugin-react | 8.3.5 / 6.1.2 | MIT | Build tooling |
 | typescript | **6.0.3** (pinned) | Apache-2.0 | Type checking. 7.0 exists but typescript-eslint supports `<6.1` |
@@ -251,7 +252,14 @@ change until it is unlocked. The core refuses every content save while
 `edit_locked` is set, so the interface and the native layer agree. Empty checklist
 boxes are drawn dashed to show they are inert (design state N17).
 
-## 7. Forgotten PIN (proposal for M3, not yet decided)
+## 7. Forgotten PIN (decided for M3 — see docs/superpowers/specs/2026-11-02-privacy-lock-design.md D5, D6, D11, D14)
+
+Built: the owner chooses in Settings → Privacy between the Ubuntu password (polkit, with the
+`.deb`) and a recovery code; `desknotes --reset-pin` is the last resort and is announced at
+the next start. Operating-system unlock on Windows/macOS (Windows Hello, Touch ID) remains
+for when those platforms are built. The original proposal follows.
+
+### Original proposal
 
 The lock protects notes from someone looking at an unlocked screen. It does not
 encrypt the database, so recovery can be offered without weakening the real

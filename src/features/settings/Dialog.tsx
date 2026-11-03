@@ -1,0 +1,77 @@
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
+
+const FOCUSABLE = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "a[href]",
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
+
+/**
+ * Modal dialog in the S3 style (backdrop, raised card). Focus moves to the dialog
+ * itself, not to a button, so digits typed for a PIN and Enter never press Cancel.
+ * Tab and Shift+Tab stay inside the dialog; on close, focus goes back to the control
+ * that was focused when it opened. Escape calls `onEscape` when given.
+ */
+export function Dialog({
+  titleId,
+  onEscape,
+  className,
+  children,
+}: {
+  titleId: string;
+  onEscape?: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    ref.current?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") {
+      onEscape?.();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const dialog = ref.current;
+    if (!dialog) return;
+    const items = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    e.preventDefault();
+    if (items.length === 0) {
+      dialog.focus();
+      return;
+    }
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = e.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : at === -1 || at === items.length - 1 ? 0 : at + 1;
+    items[next]!.focus();
+  }
+
+  return (
+    <div
+      className="dn-modal-backdrop"
+      onKeyDown={onKeyDown}
+      // A click on the backdrop keeps focus in the dialog.
+      onMouseDown={(e) => e.target === e.currentTarget && e.preventDefault()}
+    >
+      <div
+        ref={ref}
+        className={`dn-modal${className ? ` ${className}` : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}

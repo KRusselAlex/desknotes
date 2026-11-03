@@ -87,18 +87,51 @@ fn geometry_of(
     Some(Rect::new(pos.x, pos.y, size.width, size.height))
 }
 
+/// Note ids after a save-all round.
+#[derive(Debug, Default)]
+pub struct SaveAllOutcome {
+    /// Windows that answered that their text could not be saved.
+    pub unsaved: Vec<String>,
+    /// Windows that did not answer in time.
+    pub silent: Vec<String>,
+}
+
 /// Ask every open note window to save and wait (blocking, at most `timeout`)
-/// for their answers. Returns how many still hold unsaved text. Never call it
-/// on the main thread.
-pub fn save_all_open_notes(app: &AppHandle, timeout: std::time::Duration) -> usize {
+/// for their answers. Never call it on the main thread.
+pub fn save_all_open_notes_detailed(
+    app: &AppHandle,
+    timeout: std::time::Duration,
+) -> SaveAllOutcome {
     let labels = open_note_labels(app);
     if labels.is_empty() {
-        return 0;
+        return SaveAllOutcome::default();
     }
-    let state = app.state::<AppState>();
-    state.quit.begin(labels);
-    let _ = app.emit(SAVE_ALL_NOTES, ());
-    state.quit.wait(timeout)
+    let outcome = app.state::<AppState>().quit.run(
+        labels,
+        || {
+            let _ = app.emit(SAVE_ALL_NOTES, ());
+        },
+        timeout,
+    );
+    let ids = |labels: Vec<String>| -> Vec<String> {
+        labels
+            .iter()
+            .filter_map(|l| note_id_from_label(l).map(str::to_owned))
+            .collect()
+    };
+    SaveAllOutcome {
+        unsaved: ids(outcome.unsaved),
+        silent: ids(outcome.silent),
+    }
+}
+
+/// Ask every open note window to save and wait (blocking, at most `timeout`).
+/// Returns the ids of the notes that answered that their text is not saved.
+/// Windows that never answer are not included: an unresponsive webview cannot
+/// save anyway, and it must not block quitting forever. Never call it on the
+/// main thread.
+pub fn save_all_open_notes(app: &AppHandle, timeout: std::time::Duration) -> Vec<String> {
+    save_all_open_notes_detailed(app, timeout).unsaved
 }
 
 /// Labels of all open note windows.
@@ -165,25 +198,53 @@ where
 }
 
 pub const SETTINGS: &str = "settings";
+/// Sent to an open Settings window: show the section named in the payload.
+pub const SETTINGS_SECTION: &str = "settings-section";
 
-/// Open (or focus) the Settings window (design S1–S4, 680 × 520).
-pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
+/// Sections Settings can be opened at (R19). "privacy-new-pin" opens Privacy at
+/// "choose a new PIN" after a forgotten-PIN proof; `choose_new_pin` still
+/// refuses without that proof, so the name grants nothing by itself.
+pub const SETTINGS_SECTIONS: [&str; 5] =
+    ["general", "privacy", "privacy-new-pin", "backup", "about"];
+
+/// The known section called `name`, or `None`.
+pub fn settings_section(name: &str) -> Option<&'static str> {
+    SETTINGS_SECTIONS.iter().copied().find(|s| *s == name)
+}
+
+/// Page loaded by a new Settings window; the webview reads `section` from it.
+fn settings_url(section: Option<&'static str>) -> String {
+    match section {
+        Some(s) => format!("index.html?section={s}"),
+        None => "index.html".into(),
+    }
+}
+
+/// Open (or focus) the Settings window (design S1–S4, 680 × 520), at `section`
+/// when given (one of [`SETTINGS_SECTIONS`]).
+pub fn open_settings(app: &AppHandle, section: Option<&'static str>) -> tauri::Result<()> {
     if let Some(existing) = app.get_webview_window(SETTINGS) {
         existing.show()?;
         existing.unminimize()?;
+        if let Some(s) = section {
+            app.emit_to(SETTINGS, SETTINGS_SECTION, s)?;
+        }
         return existing.set_focus();
     }
     let handle = app.clone();
     build_sharing_process(app, move |related| {
         if let Some(existing) = handle.get_webview_window(SETTINGS) {
+            if let Some(s) = section {
+                handle.emit_to(SETTINGS, SETTINGS_SECTION, s)?;
+            }
             return existing.set_focus();
         }
-        let mut builder =
-            WebviewWindowBuilder::new(&handle, SETTINGS, WebviewUrl::App("index.html".into()))
-                .title("Settings")
-                .inner_size(680.0, 520.0)
-                .min_inner_size(560.0, 420.0)
-                .center();
+        let url = WebviewUrl::App(settings_url(section).into());
+        let mut builder = WebviewWindowBuilder::new(&handle, SETTINGS, url)
+            .title("Settings")
+            .inner_size(680.0, 520.0)
+            .min_inner_size(560.0, 420.0)
+            .center();
         #[cfg(target_os = "linux")]
         if let Some(view) = related {
             builder = builder.with_related_view(view);
@@ -412,6 +473,14 @@ pub fn after_note_hidden(app: &AppHandle, hidden_note_id: &str) {
     }
 }
 
+/// Whether the manager is shown at startup rather than only created: when no
+/// note opens (so DeskNotes is reachable), when there are errors to report, and
+/// when "The PIN was reset on …" is waiting to be seen (design D11) — notes on
+/// screen must not hide that notice, which only the manager shows.
+fn manager_shown_at_startup(notes_to_show: usize, has_errors: bool, pin_reset: bool) -> bool {
+    notes_to_show == 0 || has_errors || pin_reset
+}
+
 /// Open saved notes and the manager at startup.
 pub fn restore_on_startup(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -424,14 +493,19 @@ pub fn restore_on_startup(app: &AppHandle) {
             }
             notes
         }
-        Err(e) if e.code == "database_unavailable" => Vec::new(), // already reported
+        Err(e) if e.code == crate::state::DATABASE_UNAVAILABLE => Vec::new(), // already reported
         Err(e) => {
             state.push_error(format!("Saved notes could not be loaded: {}", e.message));
             Vec::new()
         }
     };
+    // A failure to read it is not a reason to show the manager: it is reported
+    // when the manager asks for the privacy status.
+    let pin_reset = state
+        .with_db(|db| db.pin_reset_at())
+        .is_ok_and(|at| at.is_some());
     // The manager comes first: note windows share its web process.
-    let show_manager = notes.is_empty() || !state.errors().is_empty();
+    let show_manager = manager_shown_at_startup(notes.len(), !state.errors().is_empty(), pin_reset);
     if let Err(e) = ensure_manager(app, show_manager) {
         eprintln!("DeskNotes: could not create the manager window: {e}");
     }
@@ -463,6 +537,13 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                     .update(id, position, r.width, r.height);
             }
         }
+        WindowEvent::Destroyed => {
+            // A note kept open at the last lock no longer has an editor that
+            // could save it: lock it now (design §4.3).
+            if let Some(id) = note_id_from_label(window.label()) {
+                crate::privacy::release_kept_open(window.app_handle(), id);
+            }
+        }
         WindowEvent::CloseRequested { api, .. } if window.label() == MANAGER => {
             // Closing the manager hides it while notes are on screen; with no
             // notes showing it quits, so no invisible process is left behind.
@@ -475,5 +556,48 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_known_settings_sections_are_accepted() {
+        for name in SETTINGS_SECTIONS {
+            assert_eq!(settings_section(name), Some(name));
+        }
+        for bad in [
+            "",
+            "Privacy",
+            "privacy ",
+            "privacy&x=1",
+            "../privacy",
+            "lock",
+        ] {
+            assert_eq!(settings_section(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_manager_shows_at_startup_when_there_is_something_to_see() {
+        assert!(manager_shown_at_startup(0, false, false), "no notes open");
+        assert!(!manager_shown_at_startup(2, false, false), "notes only");
+        assert!(manager_shown_at_startup(2, true, false), "errors to report");
+        // `--reset-pin` ran while DeskNotes was closed: its notice must be seen
+        // even when notes open (D11).
+        assert!(manager_shown_at_startup(2, false, true), "PIN was reset");
+        assert!(manager_shown_at_startup(0, false, true));
+    }
+
+    #[test]
+    fn a_new_settings_window_loads_its_section_from_the_url() {
+        assert_eq!(settings_url(None), "index.html");
+        assert_eq!(settings_url(Some("privacy")), "index.html?section=privacy");
+        assert_eq!(
+            settings_url(settings_section("privacy-new-pin")),
+            "index.html?section=privacy-new-pin"
+        );
     }
 }

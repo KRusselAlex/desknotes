@@ -69,9 +69,11 @@ pub async fn export_backup(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> IpcResult<Option<ExportResult>> {
+    // Ask for the PIN before the file dialog, not after (design D12, §4.4).
+    state.with_db(|db| db.refuse_if_any_private_locked())?;
     let unsaved = windows::save_all_open_notes(&app, SAVE_TIMEOUT);
-    if unsaved > 0 {
-        return Err(unsaved_error(unsaved));
+    if !unsaved.is_empty() {
+        return Err(unsaved_error(unsaved.len()));
     }
     let Some(chosen) = app
         .dialog()
@@ -109,6 +111,8 @@ pub async fn choose_backup(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> IpcResult<Option<RestorePreview>> {
+    // Ask for the PIN before the file dialog, not after (design D12).
+    state.with_db(|db| db.refuse_if_any_private_locked())?;
     let Some(chosen) = app
         .dialog()
         .file()
@@ -166,9 +170,11 @@ pub async fn restore_backup(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> IpcResult<RestoreResult> {
+    // The core refuses too; checking first keeps the open notes untouched.
+    state.with_db(|db| db.refuse_if_any_private_locked())?;
     let unsaved = windows::save_all_open_notes(&app, SAVE_TIMEOUT);
-    if unsaved > 0 {
-        return Err(unsaved_error(unsaved));
+    if !unsaved.is_empty() {
+        return Err(unsaved_error(unsaved.len()));
     }
     let pending = state
         .pending_restore

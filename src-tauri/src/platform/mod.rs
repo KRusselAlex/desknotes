@@ -2,6 +2,9 @@
 
 #[cfg(target_os = "linux")]
 pub mod gnome_shortcut;
+pub mod lock_triggers;
+pub mod single_instance;
+pub mod system_auth;
 
 /// On Linux Wayland sessions, run through XWayland unless the user opted out,
 /// because native Wayland does not let apps place windows or keep them on top.
@@ -38,5 +41,62 @@ pub fn window_positioning_supported() -> bool {
     #[cfg(not(target_os = "linux"))]
     {
         true
+    }
+}
+
+/// The folder holding every app's data for this user, as Tauri finds it
+/// (`dirs::data_dir`): `$XDG_DATA_HOME` when absolute, else `~/.local/share`.
+/// Used where no Tauri app exists yet (`desknotes --reset-pin`). `None` off
+/// Linux and when neither variable gives a folder.
+pub fn user_data_dir() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::env;
+        data_dir_from(env::var_os("XDG_DATA_HOME"), env::var_os("HOME"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn data_dir_from(
+    xdg_data_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    xdg_data_home
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| {
+            home.filter(|h| !h.is_empty())
+                .map(|h| PathBuf::from(h).join(".local/share"))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::data_dir_from;
+    use std::path::PathBuf;
+
+    #[test]
+    fn data_dir_follows_xdg_like_tauri() {
+        let some = |s: &str| Some(s.into());
+        assert_eq!(
+            data_dir_from(some("/data"), some("/home/a")),
+            Some(PathBuf::from("/data"))
+        );
+        // A relative XDG_DATA_HOME is ignored, as in `dirs`.
+        assert_eq!(
+            data_dir_from(some("data"), some("/home/a")),
+            Some(PathBuf::from("/home/a/.local/share"))
+        );
+        assert_eq!(
+            data_dir_from(None, some("/home/a")),
+            Some(PathBuf::from("/home/a/.local/share"))
+        );
+        assert_eq!(data_dir_from(None, some("")), None);
+        assert_eq!(data_dir_from(None, None), None);
     }
 }

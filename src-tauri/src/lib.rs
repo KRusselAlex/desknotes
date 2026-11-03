@@ -4,7 +4,9 @@
 mod commands;
 mod error;
 pub mod platform;
+mod privacy;
 mod quit;
+mod reset_pin;
 mod state;
 mod tray;
 mod windows;
@@ -16,7 +18,23 @@ use crate::state::AppState;
 /// Command-line flag for the show / hide all keyboard shortcut (DES-27).
 pub const TOGGLE_NOTES_ARG: &str = "--toggle-notes";
 
+/// Lock private notes on sleep, screen lock and inactivity (design D3). Each
+/// watcher has its own thread; none can stop or slow the app.
+fn start_lock_triggers(app: &tauri::AppHandle) {
+    let on_event = app.clone();
+    platform::lock_triggers::watch(move || {
+        privacy::lock_automatically(&on_event);
+    });
+    let on_tick = app.clone();
+    platform::lock_triggers::watch_inactivity(move || privacy::lock_if_inactive(&on_tick));
+}
+
 pub fn run() {
+    // `desknotes --reset-pin` (design D11) works in the terminal only: it must
+    // not start the app, open a window or reach a running DeskNotes.
+    if reset_pin::requested(std::env::args_os()) {
+        std::process::exit(reset_pin::run());
+    }
     let app = tauri::Builder::default()
         // Must be registered first. A second launch hands its arguments to this
         // one: `--toggle-notes` (the show / hide all shortcut) hides or shows the
@@ -36,9 +54,12 @@ pub fn run() {
         ))
         .setup(|app| {
             let handle = app.handle().clone();
+            // Opening the state also turns the privacy lock on when a PIN is set,
+            // before any note window can ask for its text.
             app.manage(AppState::open(&handle));
             windows::restore_on_startup(&handle);
             tray::install(&handle);
+            start_lock_triggers(&handle);
             Ok(())
         })
         .on_window_event(windows::on_window_event)
@@ -79,6 +100,20 @@ pub fn run() {
             commands::backup::choose_backup,
             commands::backup::cancel_restore,
             commands::backup::restore_backup,
+            commands::privacy::privacy_status,
+            commands::privacy::unlock,
+            commands::privacy::lock_now,
+            commands::privacy::setup_pin,
+            commands::privacy::change_pin,
+            commands::privacy::turn_off_lock,
+            commands::privacy::set_recovery_method,
+            commands::privacy::set_lock_after,
+            commands::privacy::set_note_private,
+            commands::privacy::report_activity,
+            commands::privacy::acknowledge_pin_reset,
+            commands::privacy::forgot_pin_system,
+            commands::privacy::recover_with_code,
+            commands::privacy::choose_new_pin,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");
