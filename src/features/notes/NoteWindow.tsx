@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
 import { noteDateLabel } from "../../app/time";
@@ -8,8 +8,8 @@ import { Menu, type MenuItem } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
 import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
-import { PRIVATE_FALLBACK_LABEL, type Note } from "../../types/note";
-import { headerShade } from "../appearance/colors";
+import { PRIVATE_FALLBACK_LABEL, type Appearance, type Note } from "../../types/note";
+import { APPEARANCE_DEFAULTS, appearanceStyle, isSeeThrough } from "../appearance/appearance";
 import { ForgotPin } from "../privacy/ForgotPin";
 import { PinPad } from "../privacy/PinPad";
 import { PrivateLabelDialog } from "../privacy/PrivateLabelDialog";
@@ -34,8 +34,15 @@ export const LOCK_HOLD_MS = 5_000;
 
 type Popover = "none" | "color" | "menu" | "link";
 
-function noteStyle(color: string): CSSProperties {
-  return { "--note-bg": color, "--note-hd": headerShade(color) } as CSSProperties;
+const NO_APPEARANCE: Appearance = {};
+
+/** The native window is transparent only below 100 % opacity; then the page must be too. */
+function useSeeThrough(appearance: Appearance) {
+  const see = isSeeThrough(appearance);
+  useEffect(() => {
+    document.documentElement.classList.toggle("dn-see-through", see);
+    return () => document.documentElement.classList.remove("dn-see-through");
+  }, [see]);
 }
 
 export function NoteWindow({ noteId }: { noteId: string }) {
@@ -46,8 +53,8 @@ export function NoteWindow({ noteId }: { noteId: string }) {
     commands.getNote(noteId).then(setNote, () => setLoadError(true));
   }, [noteId]);
 
-  if (loadError) return <NoteLoadError noteId={noteId} color="#efe6d8" />;
-  if (!note) return <div className="dn-note" aria-busy="true" style={noteStyle("#fff4a3")} />;
+  if (loadError) return <NoteLoadError noteId={noteId} color="#efe6d8" appearance={NO_APPEARANCE} />;
+  if (!note) return <div className="dn-note" aria-busy="true" style={appearanceStyle("#fff4a3", NO_APPEARANCE)} />;
   // A locked private note never mounts the editor; its text never reached this window.
   if (note.locked) return <LockedNote note={note} onNote={setNote} />;
   return <LoadedNote note={note} onLocked={setNote} />;
@@ -62,6 +69,7 @@ export function NoteWindow({ noteId }: { noteId: string }) {
 function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void }) {
   const label = note.privateLabel || PRIVATE_FALLBACK_LABEL;
   const [forgot, setForgot] = useState(false);
+  useSeeThrough(note.appearance);
 
   const refresh = useCallback(() => {
     commands.getNote(note.id).then(onNote, () => undefined);
@@ -91,6 +99,8 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
       if (action === "hide") hide();
       else if (action === "archive") void commands.setArchived(note.id, true).catch(() => undefined);
       else if (action === "trash") void commands.trashNote(note.id).catch(() => undefined);
+      // Nothing to save while locked: the window can be recreated at once (opacity crossed 100 %).
+      else if (action === "reopen") void commands.reopenNote(note.id).catch(() => undefined);
     });
     return () => void unlisten.then((f) => f());
   }, [hide, note.id]);
@@ -132,7 +142,7 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
   if (note.window.collapsed) {
     const expand = () => void commands.setCollapsed(note.id, false).then(refresh, () => undefined);
     return (
-      <div className="dn-note is-collapsed" style={noteStyle(note.color)}>
+      <div className="dn-note is-collapsed" style={appearanceStyle(note.color, note.appearance)}>
         <div className="dn-collapsed-strip" data-tauri-drag-region onDoubleClick={expand}>
           <button type="button" className="dn-tool" aria-label="Expand" aria-expanded="false" title="Expand" onClick={expand}>
             <Icon name="chevright" />
@@ -147,7 +157,7 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
   }
 
   return (
-    <div className="dn-note is-private-locked" style={noteStyle(note.color)}>
+    <div className="dn-note is-private-locked" style={appearanceStyle(note.color, note.appearance)}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -174,9 +184,10 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
 }
 
 /** Design N7: keeps a note look, header still drags and hides. */
-function NoteLoadError({ noteId, color }: { noteId: string; color: string }) {
+function NoteLoadError({ noteId, color, appearance }: { noteId: string; color: string; appearance: Appearance }) {
+  useSeeThrough(appearance);
   return (
-    <div className="dn-note" style={noteStyle(color)}>
+    <div className="dn-note" style={appearanceStyle(color, appearance)}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -201,6 +212,8 @@ function NoteLoadError({ noteId, color }: { noteId: string; color: string }) {
 
 function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => void }) {
   const [color, setColor] = useState(note.color);
+  const [appearance, setAppearance] = useState(note.appearance);
+  useSeeThrough(appearance);
   const [updatedAt, setUpdatedAt] = useState(note.updatedAt);
   const [title, setTitle] = useState(note.title);
   const [pinned, setPinned] = useState(note.window.alwaysOnTop);
@@ -278,7 +291,9 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
     },
     onBlur: () => void autosave.flush(),
     editorProps: {
-      attributes: { "aria-label": "Note text", spellcheck: "true" },
+      // useEditor re-applies these options on every render, so `dir` follows the note's
+      // direction without recreating the editor or touching its content.
+      attributes: { "aria-label": "Note text", spellcheck: "true", dir: appearance.direction ?? APPEARANCE_DEFAULTS.direction },
       handleClick: (_view: EditorView, _pos: number, event: MouseEvent) => {
         const anchor = (event.target as HTMLElement | null)?.closest("a");
         if (!anchor) return false;
@@ -323,6 +338,8 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
       if (action === "hide") void hide();
       else if (action === "archive") void saveThen(() => commands.setArchived(note.id, true));
       else if (action === "trash") void saveThen(() => commands.trashNote(note.id));
+      // The opacity crossed 100 %: the shell recreates this window. Only after the text is saved.
+      else if (action === "reopen") void saveThen(() => commands.reopenNote(note.id));
     });
     return () => void unlisten.then((f) => f());
   }, [hide, note.id, saveThen]);
@@ -427,6 +444,8 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
               return;
             }
             setColor(n.color);
+            // Restyle only: the editor content is never reloaded from here.
+            setAppearance(n.appearance);
             setLocked(n.editLocked);
             setPinned(n.window.alwaysOnTop);
             setCollapsedView(n.window.collapsed);
@@ -588,12 +607,13 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
       checked: pinned,
       onSelect: () => void togglePinned(),
     },
+    { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
     { id: "manager", label: "Open manager", icon: "note", separatorBefore: true, onSelect: () => void commands.showManager() },
     { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
     { id: "trash", label: "Move to trash", icon: "trash", danger: true, onSelect: () => void act(() => commands.trashNote(note.id)) },
   ];
 
-  if (contentError) return <NoteLoadError noteId={note.id} color={color} />;
+  if (contentError) return <NoteLoadError noteId={note.id} color={color} appearance={appearance} />;
 
   const pinButton = pinned && (
     <button
@@ -612,7 +632,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   // (hidden) so nothing typed can be lost while collapsed.
   if (collapsed) {
     return (
-      <div className="dn-note is-collapsed" style={noteStyle(color)}>
+      <div className="dn-note is-collapsed" style={appearanceStyle(color, appearance)}>
         <div className="dn-collapsed-strip" data-tauri-drag-region onDoubleClick={() => void setCollapsed(false)}>
           <button
             type="button"
@@ -648,7 +668,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
     <div
       ref={rootRef}
       className={`dn-note${locked ? " is-readonly" : ""}${editing ? " is-editing" : ""}`}
-      style={noteStyle(color)}
+      style={appearanceStyle(color, appearance)}
       onFocus={() => setFocused(true)}
       onBlur={(e) => {
         if (!rootRef.current?.contains(e.relatedTarget as Node | null)) setFocused(false);

@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Appearance,
   ExportResult,
   Note,
   NoteCounts,
@@ -54,6 +55,18 @@ export const commands = {
   saveNoteContent: (id: string, content: string) =>
     call<SaveResult>("save_note_content", { id, content }),
   setNoteColor: (id: string, color: string) => call<void>("set_note_color", { id, color }),
+  /** Replaces the note's text styling and opacity. Crossing 100 % reopens an open note window. */
+  setNoteAppearance: (id: string, appearance: Appearance) =>
+    call<void>("set_note_appearance", { id, appearance }),
+  /** Resizes the note window; returns the size that was applied. */
+  setNoteSize: (id: string, width: number, height: number) =>
+    call<NoteSize>("set_note_size", { id, width, height }),
+  /** Font families installed on this computer, A to Z. */
+  listFonts: () => call<string[]>("list_fonts"),
+  /** Opens (or switches) the Note settings window for this note. */
+  openNoteSettings: (id: string) => call<void>("open_note_settings", { id }),
+  /** Closes and reopens the note window. Call only after this note saved itself. */
+  reopenNote: (id: string) => call<void>("reopen_note", { id }),
   duplicateNote: (id: string) => call<Note>("duplicate_note", { id }),
   setArchived: (id: string, archived: boolean) => call<void>("set_archived", { id, archived }),
   trashNote: (id: string) => call<void>("trash_note", { id }),

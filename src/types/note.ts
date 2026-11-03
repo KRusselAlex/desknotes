@@ -16,6 +16,24 @@ export interface NoteWindowState {
   collapsed: boolean;
 }
 
+export type TextDirection = "auto" | "ltr" | "rtl";
+
+/** Text styling and window opacity of one note (Rust `Appearance`). A missing
+ * field means the default; the native side omits fields that are at default. */
+export interface Appearance {
+  /** A font family installed on this computer; absent = the system font. */
+  font?: string;
+  /** Pixels, 10 to 32. */
+  fontSize?: number;
+  /** One of the four text colour presets, lower-case. */
+  textColor?: string;
+  /** Percent, 100 to 200 in steps of 5. */
+  lineSpacing?: number;
+  direction?: TextDirection;
+  /** Window opacity in percent, 80 to 100 in steps of 5. */
+  opacity?: number;
+}
+
 export interface Note {
   id: string;
   title: string;
@@ -33,6 +51,8 @@ export interface Note {
   privateLabel: string;
   /** Withheld by the native layer: `content` is empty and `title` is the label. */
   locked: boolean;
+  /** Always present; `{}` when nothing was changed. Revealed even while locked. */
+  appearance: Appearance;
   window: NoteWindowState;
 }
 

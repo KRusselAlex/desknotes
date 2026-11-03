@@ -61,6 +61,7 @@ const base = {
   private: false,
   privateLabel: "",
   locked: false,
+  appearance: {},
 };
 const win = { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false, collapsed: false };
 const notes: Note[] = [
@@ -225,6 +226,20 @@ mockIPC(
       }
       case "set_note_color":
         find(a.id).color = String(a.color);
+        return null;
+      case "set_note_appearance":
+        find(a.id).appearance = structuredClone(a.appearance) as Note["appearance"];
+        void emit("notes-changed", { id: a.id, kind: "other" });
+        return null;
+      case "set_note_size": {
+        const n = find(a.id);
+        n.window = { ...n.window, width: Number(a.width), height: Number(a.height) };
+        return { width: Number(a.width), height: Number(a.height) };
+      }
+      case "list_fonts":
+        return ["DejaVu Sans", "Noto Serif", "Ubuntu", "Ubuntu Mono"];
+      case "open_note_settings":
+      case "reopen_note":
         return null;
       case "hidden_note_count":
         return 0;

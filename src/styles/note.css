@@ -108,6 +108,11 @@
 .dn-note-body .tiptap {
   outline: none;
   min-height: 100%;
+  /* The note's own text styling (appearanceStyle); only the text uses it, never the controls. */
+  color: var(--note-ink, var(--dn-ink));
+  font-family: var(--note-font, var(--dn-font));
+  font-size: var(--note-font-size, var(--dn-text-base));
+  line-height: var(--note-leading, var(--dn-leading));
 }
 .dn-note-body .tiptap p {
   margin: 0 0 8px;
@@ -115,14 +120,14 @@
 .dn-note-body .tiptap h1,
 .dn-note-body .tiptap h2,
 .dn-note-body .tiptap h3 {
-  font-size: var(--dn-text-h);
+  font-size: calc(var(--note-font-size, var(--dn-text-base)) * 16.5 / 15);
   font-weight: 700;
   line-height: 1.3;
   margin: 4px 0;
 }
 /* The first line reads as the note's title (N1). */
 .dn-note-body .tiptap > :first-child:is(p, h1, h2, h3) {
-  font-size: var(--dn-text-title);
+  font-size: calc(var(--note-font-size, var(--dn-text-base)) * 18 / 15);
   font-weight: 700;
   line-height: 1.3;
   margin: 0 0 6px;
@@ -511,4 +516,12 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Opacity below 100 %: the native window is transparent, so the page must be too.
+   Only the note background (and header) carry the alpha; see appearanceStyle. */
+html.dn-see-through,
+html.dn-see-through body,
+html.dn-see-through #root {
+  background: transparent;
 }
