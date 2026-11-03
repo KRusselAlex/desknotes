@@ -9,19 +9,20 @@ use crate::geometry::enforce_min_size;
 use crate::model::*;
 use crate::now_ms;
 use crate::validation::{
-    derive_search_text, derive_snippet, derive_title, empty_doc, parse_content, validate_color,
-    validate_private_label,
+    derive_search_text, derive_snippet, derive_title, empty_doc, parse_appearance, parse_content,
+    validate_appearance, validate_color, validate_private_label,
 };
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
      n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top,
-     n.edit_locked, w.collapsed, n.private, n.private_label";
+     n.edit_locked, w.collapsed, n.private, n.private_label, n.appearance";
 
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
 
 fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
     let content_json: String = row.get(2)?;
+    let appearance: String = row.get(18)?;
     Ok((
         Note {
             id: row.get(0)?,
@@ -36,6 +37,9 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
             private: row.get(16)?,
             private_label: row.get(17)?,
             locked: false,
+            // Styling is cosmetic: a damaged value falls back to the defaults
+            // rather than stopping the note from opening.
+            appearance: parse_appearance(&appearance).unwrap_or_default(),
             window: NoteWindow {
                 x: row.get(8)?,
                 y: row.get(9)?,
@@ -48,6 +52,12 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
         },
         content_json,
     ))
+}
+
+/// The compact JSON stored in `notes.appearance`.
+fn appearance_json(appearance: &Appearance) -> CoreResult<String> {
+    serde_json::to_string(appearance)
+        .map_err(|e| CoreError::Validation(format!("appearance cannot be stored: {e}")))
 }
 
 /// What a locked private note shows instead of its title (design D2): its
@@ -97,7 +107,14 @@ impl Database {
             always_on_top: false,
             collapsed: false,
         };
-        self.insert_note(&empty_doc(), &color, &window, false, "")
+        self.insert_note(
+            &empty_doc(),
+            &color,
+            &window,
+            false,
+            "",
+            &Appearance::default(),
+        )
     }
 
     fn insert_note(
@@ -107,14 +124,15 @@ impl Database {
         window: &NoteWindow,
         private: bool,
         private_label: &str,
+        appearance: &Appearance,
     ) -> CoreResult<Note> {
         let id = Uuid::new_v4().to_string();
         let now = now_ms();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO notes (id, title, content_json, search_text, color, created_at, updated_at,
-                                private, private_label)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8)",
+                                private, private_label, appearance)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9)",
             params![
                 id,
                 derive_title(content),
@@ -123,7 +141,8 @@ impl Database {
                 color,
                 now,
                 private,
-                private_label
+                private_label,
+                appearance_json(appearance)?
             ],
         )?;
         tx.execute(
@@ -373,6 +392,17 @@ impl Database {
         self.expect_one(changed, id)
     }
 
+    /// Style a note's text and window. Not an edit, so `updated_at` stays, and
+    /// allowed while the note is locked: styling reveals nothing about the text.
+    pub fn set_appearance(&self, id: &str, appearance: &Appearance) -> CoreResult<()> {
+        let appearance = validate_appearance(appearance.clone())?;
+        let changed = self.conn.execute(
+            "UPDATE notes SET appearance = ?2 WHERE id = ?1",
+            params![id, appearance_json(&appearance)?],
+        )?;
+        self.expect_one(changed, id)
+    }
+
     /// Copy a note. A copy of a private note is private, with the same label.
     /// Refused for a note the lock withholds.
     pub fn duplicate_note(&self, id: &str) -> CoreResult<Note> {
@@ -392,6 +422,7 @@ impl Database {
             &window,
             original.private,
             &original.private_label,
+            &original.appearance,
         )
     }
 
@@ -532,7 +563,11 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Database, NoteFilter};
+    use rusqlite::Connection;
+
+    use crate::db::migrations;
+    use crate::db::privacy::PIN_HASH;
+    use crate::{Appearance, Database, NoteFilter, TextDirection};
 
     const FIXTURE: &str = include_str!("../../../../tests/fixtures/rich-doc.json");
 
@@ -878,5 +913,145 @@ mod tests {
             db.set_private("missing", true, "").unwrap_err().code(),
             "not_found"
         );
+    }
+
+    fn styled() -> Appearance {
+        Appearance {
+            font: Some("Ubuntu Mono".into()),
+            font_size: Some(18),
+            text_color: Some("#1d4f91".into()),
+            line_spacing: Some(150),
+            direction: Some(TextDirection::Rtl),
+            opacity: Some(90),
+        }
+    }
+
+    #[test]
+    fn migration_5_gives_existing_notes_default_appearance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        let content = r#"{"type":"doc","content":[{"type":"paragraph"}]}"#;
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply_until(&mut conn, 0, 4).unwrap();
+            conn.execute_batch(&format!(
+                "INSERT INTO notes (id, title, content_json, color, created_at, updated_at)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 'v4 note', '{content}',
+                         '#fff4a3', 1, 7);
+                 INSERT INTO note_windows (note_id, width, height)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 300, 280);"
+            ))
+            .unwrap();
+        }
+
+        let db = Database::open(&path, &backups).unwrap();
+        assert_eq!(db.schema_version().unwrap(), crate::db::LATEST_VERSION);
+        let note = db.get_note("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d").unwrap();
+        assert_eq!(note.appearance, Appearance::default());
+        assert_eq!(note.title, "v4 note");
+        assert_eq!(note.updated_at, 7);
+        assert_eq!(
+            serde_json::to_string(&note.content).unwrap(),
+            serde_json::to_string(&serde_json::from_str::<serde_json::Value>(content).unwrap())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn set_appearance_round_trips_without_touching_updated_at() {
+        let db = db();
+        let note = db.create_note(None).unwrap();
+        db.set_appearance(&note.id, &styled()).unwrap();
+        let after = db.get_note(&note.id).unwrap();
+        assert_eq!(after.appearance, styled());
+        assert_eq!(after.updated_at, note.updated_at);
+        assert_eq!(after.content, note.content);
+
+        // Values are normalised on the way in, and the default clears the style.
+        let loose = Appearance {
+            font: Some("  Lato ".into()),
+            text_color: Some("#8C491A".into()),
+            ..Default::default()
+        };
+        db.set_appearance(&note.id, &loose).unwrap();
+        let a = db.get_note(&note.id).unwrap().appearance;
+        assert_eq!(a.font.as_deref(), Some("Lato"));
+        assert_eq!(a.text_color.as_deref(), Some("#8c491a"));
+        db.set_appearance(&note.id, &Appearance::default()).unwrap();
+        assert_eq!(
+            db.get_note(&note.id).unwrap().appearance,
+            Appearance::default()
+        );
+    }
+
+    #[test]
+    fn set_appearance_refuses_invalid_and_unknown_note() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_appearance(&id, &styled()).unwrap();
+        let bad = Appearance {
+            font_size: Some(99),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.set_appearance(&id, &bad).unwrap_err().code(),
+            "validation"
+        );
+        assert_eq!(db.get_note(&id).unwrap().appearance, styled());
+        assert_eq!(
+            db.set_appearance("missing", &styled()).unwrap_err().code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn damaged_appearance_in_the_database_opens_with_defaults() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        for raw in [r#"{"fontSize":99}"#, "not json"] {
+            db.conn
+                .execute("UPDATE notes SET appearance = ?2 WHERE id = ?1", [&id, raw])
+                .unwrap();
+            let note = db.get_note(&id).unwrap();
+            assert_eq!(note.appearance, Appearance::default(), "{raw}");
+            let (shown, unreadable) = db.notes_to_show().unwrap();
+            assert!(unreadable.is_empty(), "{raw}");
+            assert_eq!(shown.len(), 1, "{raw}");
+            assert_eq!(shown[0].id, id);
+        }
+    }
+
+    #[test]
+    fn duplicate_keeps_appearance() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_appearance(&id, &styled()).unwrap();
+        let copy = db.duplicate_note(&id).unwrap();
+        assert_ne!(copy.id, id);
+        assert_eq!(copy.appearance, styled());
+    }
+
+    #[test]
+    fn locked_private_note_keeps_its_appearance() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_appearance(&id, &styled()).unwrap();
+        db.set_private(&id, true, "Bank").unwrap();
+        db.set_setting(PIN_HASH, "stand-in").unwrap();
+        db.set_privacy_locked(true, &[]);
+
+        let note = db.get_note(&id).unwrap();
+        assert!(note.locked);
+        assert_eq!(note.appearance, styled());
+        let (shown, _) = db.notes_to_show().unwrap();
+        assert_eq!(shown[0].appearance, styled());
+
+        let changed = Appearance {
+            font_size: Some(20),
+            ..Default::default()
+        };
+        db.set_appearance(&id, &changed).unwrap();
+        assert_eq!(db.get_note(&id).unwrap().appearance, changed);
     }
 }

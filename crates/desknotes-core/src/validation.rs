@@ -3,14 +3,27 @@
 //! The webview is treated as untrusted input: every document is checked here
 //! even though the editor already produces well-formed JSON.
 
+use std::ops::RangeInclusive;
+
 use serde_json::Value;
 
 use crate::error::{CoreError, CoreResult};
-use crate::model::PRIVATE_LABEL_MAX_CHARS;
+use crate::model::{Appearance, PRIVATE_LABEL_MAX_CHARS};
 
 pub const MAX_CONTENT_BYTES: usize = 1024 * 1024;
 pub const MAX_DEPTH: usize = 64;
 pub const TITLE_MAX_CHARS: usize = 80;
+
+/// Text size in px.
+pub const FONT_SIZES: RangeInclusive<u8> = 10..=32;
+/// The text colours the settings window offers (lower-case).
+pub const TEXT_COLORS: [&str; 4] = ["#201e1d", "#8c491a", "#56633f", "#1d4f91"];
+/// Line height in percent, in steps of 5.
+pub const LINE_SPACINGS: RangeInclusive<u16> = 100..=200;
+/// Window opacity in percent, in steps of 5.
+pub const OPACITIES: RangeInclusive<u8> = 80..=100;
+/// Longest font family name, in characters.
+pub const FONT_NAME_MAX_CHARS: usize = 100;
 
 /// Node types produced by the editor extensions we ship.
 /// Adding an editor extension means adding its node here (see tests/fixtures).
@@ -216,6 +229,78 @@ pub fn validate_private_label(label: &str) -> CoreResult<String> {
     Ok(label.to_string())
 }
 
+/// A font family name for a note: trimmed, at most `FONT_NAME_MAX_CHARS`
+/// characters, and free of anything that could break out of a CSS string
+/// (control characters, `"`, `\`, `;`). Empty means "system default" (`None`).
+pub fn validate_font_name(name: &str) -> CoreResult<Option<String>> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > FONT_NAME_MAX_CHARS {
+        return Err(invalid(format!(
+            "font name must be at most {FONT_NAME_MAX_CHARS} characters"
+        )));
+    }
+    if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '"' | '\\' | ';'))
+    {
+        return Err(invalid(
+            "font name contains characters that are not allowed",
+        ));
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// Check every set field of an appearance and normalise it: the font is
+/// trimmed (blank becomes the default) and the text colour lower-cased.
+pub fn validate_appearance(mut a: Appearance) -> CoreResult<Appearance> {
+    if let Some(font) = a.font.take() {
+        a.font = validate_font_name(&font)?;
+    }
+    if a.font_size.is_some_and(|v| !FONT_SIZES.contains(&v)) {
+        return Err(invalid(format!(
+            "font size must be {} to {}",
+            FONT_SIZES.start(),
+            FONT_SIZES.end()
+        )));
+    }
+    if let Some(color) = a.text_color.take() {
+        let color = color.to_ascii_lowercase();
+        if !TEXT_COLORS.contains(&color.as_str()) {
+            return Err(invalid("text colour is not one of the offered colours"));
+        }
+        a.text_color = Some(color);
+    }
+    if a.line_spacing
+        .is_some_and(|v| !LINE_SPACINGS.contains(&v) || v % 5 != 0)
+    {
+        return Err(invalid(format!(
+            "line spacing must be {} to {} in steps of 5",
+            LINE_SPACINGS.start(),
+            LINE_SPACINGS.end()
+        )));
+    }
+    if a.opacity
+        .is_some_and(|v| !OPACITIES.contains(&v) || v % 5 != 0)
+    {
+        return Err(invalid(format!(
+            "opacity must be {} to {} in steps of 5",
+            OPACITIES.start(),
+            OPACITIES.end()
+        )));
+    }
+    Ok(a)
+}
+
+/// Parse and validate a stored or received appearance (JSON object, known keys only).
+pub fn parse_appearance(raw: &str) -> CoreResult<Appearance> {
+    let a: Appearance =
+        serde_json::from_str(raw).map_err(|e| invalid(format!("appearance is not valid: {e}")))?;
+    validate_appearance(a)
+}
+
 /// Text of each top-level block, in order.
 fn block_texts(doc: &Value) -> Vec<String> {
     fn collect(node: &Value, out: &mut String) {
@@ -314,6 +399,8 @@ fn invalid(msg: impl Into<String>) -> CoreError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    use crate::model::TextDirection;
 
     const FIXTURE: &str = include_str!("../../../tests/fixtures/rich-doc.json");
 
@@ -483,5 +570,106 @@ mod tests {
         assert!(validate_color("red").is_err());
         assert!(validate_color("#12345g").is_err());
         assert!(validate_color("#1234567").is_err());
+    }
+
+    fn appearance(json: &str) -> CoreResult<Appearance> {
+        parse_appearance(json)
+    }
+
+    #[test]
+    fn appearance_defaults_are_empty() {
+        assert_eq!(serde_json::to_string(&Appearance::default()).unwrap(), "{}");
+    }
+
+    #[test]
+    fn appearance_accepts_the_spec_values() {
+        let a = appearance(
+            r##"{"font":"  Ubuntu Mono ","fontSize":10,"textColor":"#8C491A",
+                "lineSpacing":145,"direction":"rtl","opacity":80}"##,
+        )
+        .unwrap();
+        assert_eq!(a.font.as_deref(), Some("Ubuntu Mono"));
+        assert_eq!(a.font_size, Some(10));
+        assert_eq!(a.text_color.as_deref(), Some("#8c491a"));
+        assert_eq!(a.line_spacing, Some(145));
+        assert_eq!(a.direction, Some(TextDirection::Rtl));
+        assert_eq!(a.opacity, Some(80));
+
+        assert_eq!(
+            appearance(r#"{"fontSize":32}"#).unwrap().font_size,
+            Some(32)
+        );
+        assert_eq!(
+            appearance(r#"{"lineSpacing":100}"#).unwrap().line_spacing,
+            Some(100)
+        );
+        assert_eq!(
+            appearance(r#"{"lineSpacing":200}"#).unwrap().line_spacing,
+            Some(200)
+        );
+        assert_eq!(appearance(r#"{"opacity":100}"#).unwrap().opacity, Some(100));
+        assert_eq!(appearance("{}").unwrap(), Appearance::default());
+    }
+
+    #[test]
+    fn appearance_refuses_out_of_range() {
+        for bad in [
+            r#"{"fontSize":9}"#,
+            r#"{"fontSize":33}"#,
+            r#"{"lineSpacing":95}"#,
+            r#"{"lineSpacing":205}"#,
+            r#"{"lineSpacing":147}"#,
+            r#"{"opacity":75}"#,
+            r#"{"opacity":101}"#,
+            r#"{"opacity":83}"#,
+            r##"{"textColor":"#ffffff"}"##,
+            r#"{"direction":"sideways"}"#,
+        ] {
+            assert_eq!(appearance(bad).unwrap_err().code(), "validation", "{bad}");
+        }
+    }
+
+    #[test]
+    fn appearance_refuses_unsafe_font_names() {
+        for bad in ["a\"b", "a;b", "a\\b", "a\u{7}b"] {
+            let a = Appearance {
+                font: Some(bad.to_string()),
+                ..Default::default()
+            };
+            assert!(validate_appearance(a).is_err(), "{bad:?}");
+        }
+        let long = Appearance {
+            font: Some("x".repeat(FONT_NAME_MAX_CHARS + 1)),
+            ..Default::default()
+        };
+        assert!(validate_appearance(long).is_err());
+        let longest = Appearance {
+            font: Some("x".repeat(FONT_NAME_MAX_CHARS)),
+            ..Default::default()
+        };
+        assert!(validate_appearance(longest).is_ok());
+        for blank in ["", "   "] {
+            let a = Appearance {
+                font: Some(blank.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(validate_appearance(a).unwrap().font, None);
+        }
+    }
+
+    #[test]
+    fn font_names_are_trimmed_and_checked() {
+        assert_eq!(
+            validate_font_name(" Noto Sans ").unwrap().as_deref(),
+            Some("Noto Sans")
+        );
+        assert_eq!(validate_font_name("  ").unwrap(), None);
+        assert!(validate_font_name("a\"b").is_err());
+    }
+
+    #[test]
+    fn appearance_refuses_unknown_keys() {
+        assert!(appearance(r#"{"fontSize":15,"glow":1}"#).is_err());
+        assert!(appearance("not json").is_err());
     }
 }
