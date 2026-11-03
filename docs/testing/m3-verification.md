@@ -46,11 +46,11 @@ These touch the owner's own session or need a real person at the password prompt
 | Check | Result |
 |---|---|
 | Install `.deb`: `pkaction --verbose --action-id io.github.krusselalex.desknotes.reset-pin` shows `auth_self` | Passed 2026-11-03: `.deb` reinstalled (binary and policy dated 3 Nov 00:29); `implicit active: auth_self`, `implicit any/inactive: no` |
-| Set up with "Use my computer password"; "Forgot your PIN?" opens Ubuntu's password dialog (accept → choose a new PIN in Settings; cancel → nothing changes; asked again each time) | pending |
-| Super+L (screen lock) locks private notes; only one lock | pending |
-| Suspend and resume locks private notes | pending |
-| `desknotes --reset-pin` with polkit installed asks for the Ubuntu password | Passed 2026-11-03 on the owner's data (installed `.deb`, database upgraded to version 4 with a backup first): refused three times while DeskNotes ran (started by the show/hide shortcut; the open window was not the app); after tray → Quit DeskNotes it printed "Enter your Ubuntu password in the window that opens.", the owner authenticated, then "The PIN was removed …". Read-only check: `pin_hash` and recovery hash gone, `pin_reset_at` recorded, the private note keeps `private = 1` |
-| Copy and Print of a recovery code (clipboard, print dialog) | pending |
+| Set up with "Use my computer password"; "Forgot your PIN?" opens Ubuntu's password dialog (accept → choose a new PIN in Settings; cancel → nothing changes; asked again each time) | Passed 2026-11-03 (owner): polkit journal shows two cancelled attempts (07:14:35, 07:14:39, "FAILED to authenticate") then "ONE-SHOT authorization" at 07:14:57 for `/usr/bin/desknotes`; a new Argon2id PIN stored with `recovery_method = system` |
+| Super+L (screen lock) locks private notes; only one lock | Passed 2026-11-03 (owner): a D-Bus watcher saw two screen locks (07:33:51, 07:34:18: `ScreenSaver.ActiveChanged(true)` and logind `LockedHint` true) and the unlocks; the owner saw the private note locked each time |
+| Suspend and resume locks private notes | **Not run** with this build: no suspend in the system log since the `.deb` was installed (last one 2026-11-02 22:28, older build); the watcher saw no `PrepareForSleep`. The lock path is the same as for the screen lock (`lock_automatically`) |
+| `desknotes --reset-pin` with polkit installed asks for the Ubuntu password | Passed 2026-11-03 on the owner's data (installed `.deb`, database upgraded to version 4 with a backup first): refused three times while DeskNotes ran (started by the show/hide shortcut; the open window was not the app); after tray → Quit DeskNotes it printed "Enter your Ubuntu password in the window that opens.", the owner authenticated, then "The PIN was removed …". Read-only check: `pin_hash` and recovery hash gone, `pin_reset_at` recorded, the private note keeps `private = 1`. Next start (by the show/hide shortcut, a note on screen): the manager opened by itself with the "PIN was reset" notice (owner confirmed) |
+| Copy and Print of a recovery code (clipboard, print dialog) | **Not confirmed**: no recovery code is stored (`recovery_method = system`). The code screen and its Copy / Print buttons were seen in the scratch-data run above, not pressed |
 
 ## Automated tests at the end of the branch
 
