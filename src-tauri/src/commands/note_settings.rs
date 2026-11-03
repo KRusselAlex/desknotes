@@ -3,13 +3,34 @@
 
 use desknotes_core::geometry::Rect;
 use desknotes_core::validation::parse_note_id;
-use desknotes_core::{Appearance, NoteSize};
+use desknotes_core::{Appearance, COLLAPSED_HEIGHT, NoteSize};
 use tauri::{AppHandle, LogicalSize, Manager, State, WebviewWindow};
 
 use crate::error::{IpcError, IpcResult};
 use crate::platform::fonts;
 use crate::state::AppState;
 use crate::windows::{self, emit_changed};
+
+/// How a size change reaches a note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SizePlan {
+    /// Open and expanded: resize the window; its resize event saves the size.
+    Live,
+    /// Open and collapsed: save the (expanded) size, and give the strip the new
+    /// width now. Otherwise the strip's next move or resize would write its old
+    /// width over the new one.
+    SavedAndStrip,
+    /// Closed: save the size; it is used when the note opens.
+    SavedOnly,
+}
+
+fn size_plan(open: bool, collapsed: bool) -> SizePlan {
+    match (open, collapsed) {
+        (true, false) => SizePlan::Live,
+        (true, true) => SizePlan::SavedAndStrip,
+        (false, _) => SizePlan::SavedOnly,
+    }
+}
 
 /// Whether a note window needs transparency: its opacity is below 100 %
 /// (no opacity set means 100 %).
@@ -66,12 +87,20 @@ pub fn set_note_size(
     );
     let area = windows::work_area_for(&app, &here);
     let (w, h) = clamp_note_size((width, height), min, (area.width, area.height));
-    let live = app
-        .get_webview_window(&windows::note_label(&id))
-        .filter(|_| !note.window.collapsed);
-    match live {
-        Some(window) => window.set_size(LogicalSize::new(w, h))?,
-        None => state.with_db(|db| db.set_window_size(&id, w, h))?,
+    let window = app.get_webview_window(&windows::note_label(&id));
+    match size_plan(window.is_some(), note.window.collapsed) {
+        SizePlan::Live => {
+            if let Some(window) = &window {
+                window.set_size(LogicalSize::new(w, h))?;
+            }
+        }
+        plan => {
+            // Saved first: the strip's own resize event then only repeats its width.
+            state.with_db(|db| db.set_window_size(&id, w, h))?;
+            if let (SizePlan::SavedAndStrip, Some(window)) = (plan, &window) {
+                window.set_size(LogicalSize::new(w, COLLAPSED_HEIGHT))?;
+            }
+        }
     }
     // Whole pixels by construction, inside the u32 range after clamping.
     Ok(NoteSize {
@@ -114,6 +143,14 @@ mod tests {
         height: 180,
     };
     const SCREEN: (f64, f64) = (1920.0, 1040.0);
+
+    #[test]
+    fn a_collapsed_open_note_gets_its_strip_resized_as_well_as_saved() {
+        assert_eq!(size_plan(true, false), SizePlan::Live);
+        assert_eq!(size_plan(true, true), SizePlan::SavedAndStrip);
+        assert_eq!(size_plan(false, false), SizePlan::SavedOnly);
+        assert_eq!(size_plan(false, true), SizePlan::SavedOnly);
+    }
 
     #[test]
     fn only_an_opacity_below_100_needs_a_see_through_window() {
