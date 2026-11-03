@@ -298,6 +298,106 @@ describe("NoteSettingsWindow", () => {
     expect(commands.setNoteAppearance).toHaveBeenCalledWith("other", { fontSize: 16 });
   });
 
+  describe("switching note", () => {
+    function deferred<T>() {
+      let resolve!: (v: T) => void;
+      const promise = new Promise<T>((r) => (resolve = r));
+      return { promise, resolve };
+    }
+    const OTHER = "other";
+    const other = (over: Partial<Note> = {}) => note({ id: OTHER, color: "#ffd6e0", ...over });
+
+    it("sends a waiting slider value to the old note only and shows the new note's settings", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(commands.getNote).mockResolvedValue(note());
+        render(<NoteSettingsWindow noteId={ID} />);
+        await act(async () => {
+          await vi.runOnlyPendingTimersAsync();
+        });
+        const slider = screen.getByRole("slider", { name: "Line spacing" });
+        fireEvent.pointerDown(slider);
+        fireEvent.change(slider, { target: { value: "150" } });
+        fireEvent.change(slider, { target: { value: "160" } }); // waiting for the 100 ms
+        vi.mocked(commands.getNote).mockResolvedValue(other({ appearance: { fontSize: 20 } }));
+        act(() => handlers.switchNote?.(OTHER));
+        expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { lineSpacing: 160 });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(500);
+        });
+        expect(screen.getByText("145 %")).toBeInTheDocument();
+        expect(screen.getByText("20")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Larger text" }));
+        expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(OTHER, { fontSize: 21 });
+        const toOther = vi.mocked(commands.setNoteAppearance).mock.calls.filter(([id]) => id === OTHER);
+        expect(toOther).toEqual([[OTHER, { fontSize: 21 }]]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shows the new note's settings even while a change to the old note is unanswered", async () => {
+      await open();
+      const oldSend = deferred<void>();
+      vi.mocked(commands.setNoteAppearance).mockReturnValueOnce(oldSend.promise);
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 16 });
+
+      const read = deferred<Note>();
+      vi.mocked(commands.getNote).mockReturnValueOnce(read.promise);
+      act(() => handlers.switchNote?.(OTHER));
+      // Nothing of the old note can be changed or seen while the new one is read.
+      expect(screen.queryByRole("button", { name: "Larger text" })).toBeNull();
+      expect(screen.queryByRole("img", { name: "Note colour" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Reset to defaults" })).toBeDisabled();
+
+      await act(async () => read.resolve(other({ appearance: { opacity: 90 }, editLocked: true })));
+      expect(screen.getByText("90 %")).toBeInTheDocument();
+      expect(screen.getByText("15")).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Note colour" })).toHaveStyle({ backgroundColor: "#ffd6e0" });
+      expect(screen.getByRole("switch", { name: "Lock editing" })).toHaveAttribute("aria-checked", "true");
+      await act(async () => oldSend.resolve());
+
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(OTHER, { opacity: 90, fontSize: 16 });
+    });
+
+    it("does not show the old note's error on the new note", async () => {
+      await open();
+      const oldSend = deferred<void>();
+      vi.mocked(commands.setNoteAppearance).mockReturnValueOnce(
+        oldSend.promise.then(() => Promise.reject(new Error("old note refused"))),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      vi.mocked(commands.getNote).mockResolvedValue(other());
+      act(() => handlers.switchNote?.(OTHER));
+      await screen.findByRole("img", { name: "Note colour" });
+      await act(async () => oldSend.resolve());
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("ignores a resize of the old note that answers after the switch", async () => {
+      await open();
+      const oldResize = deferred<{ width: number; height: number }>();
+      vi.mocked(commands.setNoteSize).mockReturnValueOnce(oldResize.promise);
+      const width = screen.getByRole("textbox", { name: "Width" });
+      await userEvent.clear(width);
+      await userEvent.type(width, "500{Enter}");
+      expect(commands.setNoteSize).toHaveBeenCalledWith(ID, 500, 280);
+
+      vi.mocked(commands.getNote).mockResolvedValue(other({ window: { ...note().window, width: 444, height: 333 } }));
+      act(() => handlers.switchNote?.(OTHER));
+      await waitFor(() => expect(screen.getByRole("textbox", { name: "Width" })).toHaveValue("444"));
+      await act(async () => oldResize.resolve({ width: 500, height: 280 }));
+      expect(screen.getByRole("textbox", { name: "Width" })).toHaveValue("444");
+      expect(screen.getByRole("textbox", { name: "Height" })).toHaveValue("333");
+
+      await userEvent.click(screen.getByRole("textbox", { name: "Width" }));
+      await userEvent.tab(); // leaving an unchanged field sends nothing
+      expect(vi.mocked(commands.setNoteSize).mock.calls.filter(([id]) => id === OTHER)).toEqual([]);
+    });
+  });
+
   it("closes with the Close button and with Esc", async () => {
     await open();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));

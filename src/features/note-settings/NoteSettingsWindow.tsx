@@ -70,8 +70,10 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
 
   // Latest values for sends that happen later (throttled sliders, async results).
   const idRef = useRef(noteId);
+  /** Counts note switches. An answer that belongs to an earlier note is ignored. */
+  const generation = useRef(0);
   const appearanceRef = useRef<Appearance>({});
-  /** Appearance changes sent and not answered yet, or waiting to be sent. */
+  /** Appearance changes to the shown note sent and not answered yet. */
   const inFlight = useRef(0);
   const dragging = useRef(false);
   const lastSend = useRef(0);
@@ -84,38 +86,47 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   }, []);
 
   /** Read the note again. A missing, hidden, archived or trashed note closes the window.
-   * The size is read only when a note is first shown: the saved size can lag behind the
+   * `first`: the note is being shown (opened or switched to); its saved settings and size
+   * are taken as they are. The size is read only then: the saved size can lag behind the
    * window, so afterwards the size comes from `setNoteSize` results and `note-resized`. */
   const refresh = useCallback(
-    (id: string, withSize: boolean) => {
+    (id: string, first: boolean) => {
+      const gen = generation.current;
       commands.getNote(id).then(
         (n) => {
-          if (idRef.current !== id) return;
+          if (generation.current !== gen) return;
           if (isGone(n)) {
             void closeCurrentWindow();
             return;
           }
           setColor(n.color);
           // A slider being moved, or a change on its way, wins over what was saved before it.
-          if (!dragging.current && !pending.current && inFlight.current === 0) showAppearance(n.appearance);
+          if (first || (!dragging.current && !pending.current && inFlight.current === 0)) {
+            showAppearance(n.appearance);
+          }
           setEditLocked(n.editLocked);
           setOnTop(n.window.alwaysOnTop);
-          if (withSize) setSize({ width: n.window.width, height: n.window.height });
+          if (first) setSize({ width: n.window.width, height: n.window.height });
         },
         () => {
-          if (idRef.current === id) void closeCurrentWindow();
+          if (generation.current === gen) void closeCurrentWindow();
         },
       );
     },
     [showAppearance],
   );
 
-  /** Run a change; on refusal show why and read the note again. */
+  /** Run a change to the shown note; on refusal show why and read the note again.
+   * The answer is ignored if another note is shown by then. */
   const run = useCallback(
     (action: () => Promise<unknown>) => {
+      const gen = generation.current;
       action().then(
-        () => setError(null),
+        () => {
+          if (generation.current === gen) setError(null);
+        },
         (e: Error) => {
+          if (generation.current !== gen) return;
           setError(e.message);
           refresh(idRef.current, false);
         },
@@ -131,8 +142,13 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     lastSend.current = Date.now();
     const id = idRef.current;
     const value = appearanceRef.current;
+    const gen = generation.current;
     inFlight.current += 1;
-    run(() => commands.setNoteAppearance(id, value).finally(() => (inFlight.current -= 1)));
+    run(() =>
+      commands.setNoteAppearance(id, value).finally(() => {
+        if (generation.current === gen) inFlight.current -= 1;
+      }),
+    );
   }, [run]);
 
   /** Send what a slider shows: at once if nothing went out in the last 100 ms, else when that time is up. */
@@ -168,17 +184,20 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     run(() => commands.setNoteColor(id, next));
   }
 
-  /** Resize the note and show the size that was applied (limited by the native side). */
+  /** Resize the note and show the size that was applied (limited by the native side).
+   * Null when it was refused, or when another note is shown by the time it answers. */
   function resize(width: number, height: number): Promise<NoteSize | null> {
     const id = idRef.current;
+    const gen = generation.current;
     return commands.setNoteSize(id, width, height).then(
       (applied) => {
-        if (idRef.current === id) setSize(applied);
+        if (generation.current !== gen) return null;
+        setSize(applied);
         setError(null);
         return applied;
       },
       (e: Error) => {
-        setError(e.message);
+        if (generation.current === gen) setError(e.message);
         return null;
       },
     );
@@ -215,14 +234,23 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
         if (e.id === idRef.current) setSize({ width: Math.round(e.width), height: Math.round(e.height) });
       }),
       onNoteSettingsNote((id) => {
-        flushAppearance(); // a slider value still waiting belongs to the previous note
+        flushAppearance(); // a slider value still waiting goes to the previous note
+        // From here on nothing of the previous note is shown or sent: answers for it are
+        // ignored, and the controls stay hidden until the new note has been read.
+        generation.current += 1;
+        idRef.current = id;
+        inFlight.current = 0;
+        pending.current = false;
+        dragging.current = false;
+        showAppearance({});
+        setColor(null);
         setAspect(null);
         setError(null);
         setNoteId(id);
       }),
     ].map((p) => p.catch(() => null));
     return () => unlisteners.forEach((p) => void p.then((f) => f?.()));
-  }, [refresh, flushAppearance]);
+  }, [refresh, flushAppearance, showAppearance]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -396,7 +424,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
             </Card>
 
             <Card title="Size">
-              <SizeFields size={size} aspect={aspect} onResize={resize} />
+              <SizeFields key={noteId} size={size} aspect={aspect} onResize={resize} />
               <div className="dn-ns-row">
                 <span>Lock aspect ratio</span>
                 <Switch
@@ -528,6 +556,8 @@ function SizeFields({
   }
 
   function apply(width: number, height: number) {
+    // On refusal show the current size again. An answer for another note gives null
+    // too, but this component belongs to one note (keyed by its id) and is gone by then.
     void onResize(width, height).then((applied) => setDraft(toDraft(applied ?? size)));
   }
 
