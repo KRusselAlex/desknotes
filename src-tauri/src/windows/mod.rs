@@ -226,8 +226,10 @@ where
 }
 
 pub const SETTINGS: &str = "settings";
-/// The per-note settings window (one at a time).
-pub const NOTE_SETTINGS: &str = "note-settings";
+/// The per-note settings window (one at a time). The label deliberately does
+/// not start with `NOTE_PREFIX` ("note-"): code keyed on that prefix would take
+/// this window for a note.
+pub const NOTE_SETTINGS: &str = "note_settings";
 /// Sent to an open Settings window: show the section named in the payload.
 pub const SETTINGS_SECTION: &str = "settings-section";
 
@@ -608,6 +610,12 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_note_settings_window_is_not_taken_for_a_note() {
+        assert_eq!(note_id_from_label(NOTE_SETTINGS), None);
+        assert_eq!(note_id_from_label(&note_label("abc")), Some("abc"));
+    }
 
     #[test]
     fn a_note_belongs_to_the_screen_it_mostly_overlaps() {
