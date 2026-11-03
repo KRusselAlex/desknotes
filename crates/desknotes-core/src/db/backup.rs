@@ -5,10 +5,11 @@ use std::path::Path;
 use rusqlite::params;
 
 use super::Database;
+use super::notes::appearance_json;
 use crate::backup::{BACKUP_FORMAT, BACKUP_VERSION, Backup, BackupNote};
 use crate::error::CoreResult;
 use crate::now_ms;
-use crate::validation::{derive_search_text, derive_title};
+use crate::validation::{derive_search_text, derive_title, parse_appearance};
 
 /// Settings key holding the time of the last successful export (Unix ms).
 pub const LAST_BACKUP_AT: &str = "last_backup_at";
@@ -35,7 +36,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.content_json, n.color, n.created_at, n.updated_at, n.archived_at,
                     n.deleted_at, n.edit_locked, w.x, w.y, w.width, w.height, w.visible,
-                    w.always_on_top, w.collapsed, n.private, n.private_label
+                    w.always_on_top, w.collapsed, n.private, n.private_label, n.appearance
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              ORDER BY n.created_at",
         )?;
@@ -54,6 +55,8 @@ impl Database {
                     edit_locked: r.get(7)?,
                     private: r.get(15)?,
                     private_label: r.get(16)?,
+                    // Same leniency as reading a note: damaged text means defaults.
+                    appearance: parse_appearance(&r.get::<_, String>(17)?).unwrap_or_default(),
                     window: crate::model::NoteWindow {
                         x: r.get(8)?,
                         y: r.get(9)?,
@@ -109,8 +112,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO notes (id, title, content_json, search_text, color, created_at,
                                     updated_at, archived_at, deleted_at, edit_locked, private,
-                                    private_label)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                    private_label, appearance)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     n.id,
                     derive_title(&n.content),
@@ -123,7 +126,8 @@ impl Database {
                     n.deleted_at,
                     n.edit_locked,
                     n.private,
-                    n.private_label
+                    n.private_label,
+                    appearance_json(&n.appearance)?
                 ],
             )?;
             let w = &n.window;
@@ -143,6 +147,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use crate::backup::parse_backup;
+    use crate::model::{Appearance, TextDirection};
     use crate::{Database, NoteFilter};
 
     const FIXTURE: &str = include_str!("../../../../tests/fixtures/rich-doc.json");
@@ -227,6 +232,68 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn version_3_round_trip_keeps_appearance() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = Database::open_in_memory().unwrap();
+        let (a, b, c) = sample(&src);
+        let styled = Appearance {
+            font: Some("Lora".into()),
+            font_size: Some(20),
+            text_color: Some("#1d4f91".into()),
+            line_spacing: Some(150),
+            direction: Some(TextDirection::Rtl),
+            opacity: Some(80),
+        };
+        src.set_appearance(&a, &styled).unwrap();
+        // A private note keeps its styling in a backup too.
+        src.set_private(&c, true, "").unwrap();
+        src.set_appearance(
+            &c,
+            &Appearance {
+                opacity: Some(85),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let export = src.export_backup("0.3.0").unwrap();
+        assert_eq!(export.backup.version, 3);
+        let text = serde_json::to_string(&export.backup).unwrap();
+
+        let dst = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        dst.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        assert_eq!(dst.get_note(&a).unwrap().appearance, styled);
+        assert_eq!(dst.get_note(&c).unwrap().appearance.opacity, Some(85));
+        assert_eq!(dst.get_note(&b).unwrap().appearance, Appearance::default());
+        for id in [&a, &b, &c] {
+            assert_eq!(dst.get_note(id).unwrap(), src.get_note(id).unwrap());
+        }
+    }
+
+    #[test]
+    fn old_files_restore_notes_with_default_appearance() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
+        let v2 = serde_json::json!({
+            "format": "desknotes-backup", "version": 2, "appVersion": "0.2.0", "exportedAt": 3,
+            "notes": [{
+                "id": id,
+                "content": {"type":"doc","content":[{"type":"paragraph"}]},
+                "color": "#fff4a3", "createdAt": 1, "updatedAt": 2,
+                "archivedAt": null, "deletedAt": null, "editLocked": false,
+                "private": false, "privateLabel": "",
+                "window": {"x": 10.0, "y": 20.0, "width": 300.0, "height": 280.0,
+                           "visible": true, "alwaysOnTop": false, "collapsed": false}
+            }]
+        })
+        .to_string();
+        let db = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        db.restore_backup(&parse_backup(&v2).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        assert_eq!(db.get_note(id).unwrap().appearance, Appearance::default());
     }
 
     #[test]

@@ -2,8 +2,9 @@
 //!
 //! A backup is one UTF-8 JSON file holding every note, including archived and
 //! trashed ones, with its window state and privacy flag. It contains no
-//! settings and no PIN. Version 2 added `private` and `privateLabel`; version 1
-//! files still restore, with every note not private.
+//! settings and no PIN. Version 3 added `appearance` (per-note text and window
+//! styling); version 2 added `private` and `privateLabel`. Older files still
+//! restore, with every note not private and default appearance.
 //! Everything read from a backup file is validated before anything is changed.
 
 use std::collections::HashSet;
@@ -12,11 +13,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::enforce_min_size;
-use crate::model::NoteWindow;
-use crate::validation::{parse_content, parse_note_id, validate_color, validate_private_label};
+use crate::model::{Appearance, NoteWindow};
+use crate::validation::{
+    parse_content, parse_note_id, validate_appearance, validate_color, validate_private_label,
+};
 
 pub const BACKUP_FORMAT: &str = "desknotes-backup";
-pub const BACKUP_VERSION: u32 = 2;
+pub const BACKUP_VERSION: u32 = 3;
 /// Refuse files larger than this before parsing them.
 pub const MAX_BACKUP_BYTES: usize = 200 * 1024 * 1024;
 pub const MAX_BACKUP_NOTES: usize = 100_000;
@@ -53,6 +56,9 @@ pub struct BackupNote {
     /// Neutral label shown for a locked private note (version 2; absent = "").
     #[serde(default)]
     pub private_label: String,
+    /// Text and window styling (version 3; absent in older files = defaults).
+    #[serde(default)]
+    pub appearance: Appearance,
     pub window: NoteWindow,
 }
 
@@ -89,6 +95,8 @@ pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
         parse_content(&note.content.to_string()).map_err(|e| invalid(format!("note {n}: {e}")))?;
         note.color = validate_color(&note.color).map_err(|e| invalid(format!("note {n}: {e}")))?;
         note.private_label = validate_private_label(&note.private_label)
+            .map_err(|e| invalid(format!("note {n}: {e}")))?;
+        note.appearance = validate_appearance(std::mem::take(&mut note.appearance))
             .map_err(|e| invalid(format!("note {n}: {e}")))?;
         let times = [
             Some(note.created_at),
@@ -170,12 +178,57 @@ mod tests {
         assert!(parse_backup(&file_v2(vec![control])).is_err());
     }
 
+    fn file_v3(notes: Vec<serde_json::Value>) -> String {
+        json!({"format": BACKUP_FORMAT, "version": 3, "appVersion": "0.3.0", "exportedAt": 3, "notes": notes})
+            .to_string()
+    }
+
+    #[test]
+    fn version_2_file_restores_default_appearance() {
+        let mut private = note(A);
+        private["private"] = json!(true);
+        for raw in [file(vec![note(A)]), file_v2(vec![private])] {
+            let b = parse_backup(&raw).unwrap();
+            assert_eq!(b.notes[0].appearance, Appearance::default());
+        }
+    }
+
+    #[test]
+    fn version_3_keeps_and_normalises_appearance() {
+        let mut styled = note(A);
+        styled["appearance"] = json!({"fontSize": 18, "textColor": "#1D4F91", "direction": "rtl"});
+        let b = parse_backup(&file_v3(vec![styled, note(B)])).unwrap();
+        assert_eq!(b.notes[0].appearance.font_size, Some(18));
+        assert_eq!(
+            b.notes[0].appearance.text_color.as_deref(),
+            Some("#1d4f91"),
+            "colour is normalised"
+        );
+        assert_eq!(b.notes[1].appearance, Appearance::default());
+        let out = serde_json::to_value(&b).unwrap();
+        assert_eq!(out["notes"][1]["appearance"], json!({}));
+    }
+
+    #[test]
+    fn backup_refuses_invalid_appearance() {
+        let mut bad = note(A);
+        bad["appearance"] = json!({"fontSize": 99});
+        let err = parse_backup(&file_v3(vec![note(B), bad])).unwrap_err();
+        assert!(err.to_string().contains("note 2"), "names the note: {err}");
+
+        let mut unknown = note(A);
+        unknown["appearance"] = json!({"css": "x"});
+        let err = parse_backup(&file_v3(vec![unknown])).unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "{err}");
+    }
+
     #[test]
     fn written_backups_name_the_new_fields() {
         let b = parse_backup(&file_v2(vec![note(A)])).unwrap();
         let out = serde_json::to_value(&b).unwrap();
         assert_eq!(out["notes"][0]["private"], json!(false));
         assert_eq!(out["notes"][0]["privateLabel"], json!(""));
+        assert_eq!(out["notes"][0]["appearance"], json!({}));
     }
 
     #[test]

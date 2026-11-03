@@ -55,7 +55,7 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
 }
 
 /// The compact JSON stored in `notes.appearance`.
-fn appearance_json(appearance: &Appearance) -> CoreResult<String> {
+pub(super) fn appearance_json(appearance: &Appearance) -> CoreResult<String> {
     serde_json::to_string(appearance)
         .map_err(|e| CoreError::Validation(format!("appearance cannot be stored: {e}")))
 }

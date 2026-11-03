@@ -1,13 +1,13 @@
-# DeskNotes backup format (version 2)
+# DeskNotes backup format (version 3)
 
 A backup is one UTF-8 JSON file, usually named `desknotes-YYYY-MM-DD.json`. It holds
-every note — active, archived and in the trash — with its window state and whether it
-is private. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
+every note — active, archived and in the trash — with its window state, its text and
+window styling, and whether it is private. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
 
 ```json
 {
   "format": "desknotes-backup",
-  "version": 2,
+  "version": 3,
   "appVersion": "0.1.0",
   "exportedAt": 1793520000000,
   "notes": [
@@ -22,6 +22,7 @@ is private. It holds no settings, no PIN and no recovery code. The same file wor
       "editLocked": false,
       "private": true,
       "privateLabel": "Bank",
+      "appearance": { "fontSize": 18, "textColor": "#1d4f91", "opacity": 90 },
       "window": { "x": 130, "y": 96, "width": 300, "height": 280,
                   "visible": true, "alwaysOnTop": false, "collapsed": false }
     }
@@ -38,6 +39,13 @@ is private. It holds no settings, no PIN and no recovery code. The same file wor
   trimmed, at most 40 characters, no control characters. The label is kept when a note
   is no longer private. A backup is **not** encrypted: private notes are stored in it as
   plain text, like every other note.
+- `appearance` (optional, default `{}`) is the note's own styling. Every key is optional
+  and a missing key means the default: `font` (a font family name, trimmed, at most 100
+  characters, never CSS), `fontSize` (10 to 32 px), `textColor` (one of `#201e1d`,
+  `#8c491a`, `#56633f`, `#1d4f91`; upper case is accepted and lower-cased),
+  `lineSpacing` (100 to 200 percent, steps of 5), `direction` (`auto`, `ltr` or `rtl`)
+  and `opacity` (80 to 100 percent, steps of 5). Unknown keys and out-of-range values
+  refuse the whole file (an out-of-range value names the note). The background colour is the note's `color`.
 
 ## Versions
 
@@ -45,9 +53,11 @@ is private. It holds no settings, no PIN and no recovery code. The same file wor
 |---|---|
 | 1 | First format. |
 | 2 | Adds the optional `private` and `privateLabel` fields per note. |
+| 3 | Adds the optional `appearance` object per note. |
 
-DeskNotes writes version 2 and still restores version 1 files; their notes come back
-not private, with an empty label.
+DeskNotes writes version 3 and still restores version 1 and 2 files; their notes come
+back with default appearance, and version 1 notes also come back not private, with an
+empty label.
 
 ## Exporting
 
