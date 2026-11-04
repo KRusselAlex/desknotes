@@ -141,6 +141,25 @@ describe("NoteWindow", () => {
     expect(commands.saveNoteContent).not.toHaveBeenCalled();
   });
 
+  // Saved before text style existed: no textAlign and none of the new marks.
+  it("opening an old note does not save", async () => {
+    vi.mocked(commands.getNote).mockResolvedValue(
+      note({
+        content: {
+          type: "doc",
+          content: [
+            { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Groceries for Saturday" }] },
+            { type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "old" }] },
+          ],
+        },
+      }),
+    );
+    render(<NoteWindow noteId={ID} />);
+    await screen.findByText("old");
+    await new Promise((r) => setTimeout(r, 700));
+    expect(commands.saveNoteContent).not.toHaveBeenCalled();
+  });
+
   it("changes colour from the picker and saves it natively", async () => {
     await openNote();
     await userEvent.click(screen.getByRole("button", { name: "Colour" }));

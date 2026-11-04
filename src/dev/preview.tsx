@@ -17,6 +17,9 @@
 // Note settings: ?w=note-settings opens the Note settings window for &id= (default a2), as the
 // native side does with ?note=<id>. Changes apply to the fake note; reload to start again.
 //
+// Text style (N14): ?w=note&textStyle=1 focuses the note, selects its second line and opens
+// the Aa popover (through "More formatting" → "Text style…" when the window is under 260 px).
+//
 // Forgotten PIN: "Forgot your PIN?" uses the computer password (accepted after a second;
 // &systemcancel: refused, as when its dialog is cancelled), the recovery code with
 // &method=code or &nosystem (K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ), or explains --reset-pin with
@@ -400,6 +403,31 @@ mockIPC(
 );
 
 followSystemTheme();
+
+if (which === "note" && params.has("textStyle")) void openTextStyle();
+
+/** Clicks through to the Aa popover once the note is on screen, as a person would. */
+async function openTextStyle() {
+  const wait = async <T,>(get: () => T | null | undefined): Promise<T> => {
+    for (;;) {
+      const found = get();
+      if (found) return found;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  const editor = await wait(() => document.querySelector<HTMLElement>(".ProseMirror"));
+  editor.focus();
+  const line = await wait(() => editor.querySelectorAll("p")[1]?.firstChild);
+  getSelection()?.setBaseAndExtent(line, 0, line, 11);
+  const aa = await wait(() => document.querySelector<HTMLElement>('[aria-label="Text style"], [aria-label="More formatting"]'));
+  aa.click();
+  if (aa.getAttribute("aria-label") === "More formatting") {
+    const item = await wait(() =>
+      Array.from(document.querySelectorAll<HTMLElement>("[data-menu-item]")).find((b) => b.textContent === "Text style…"),
+    );
+    item.click();
+  }
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -799,7 +799,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
         />
       )}
       {showBar && editor && (
-        <FormatBar editor={editor} narrow={narrow} onLink={() => setPopover("link")} />
+        <FormatBar editor={editor} narrow={narrow} appearance={appearance} onLink={() => setPopover("link")} />
       )}
       {!showBar && saveState !== "error" && !refusal && (
         <span className="dn-resize-mark" aria-hidden="true">

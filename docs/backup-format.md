@@ -34,6 +34,10 @@ window styling, and whether it is private. It holds no settings, no PIN and no r
 - `x`/`y` are logical pixels and may be `null` (the note is placed automatically).
 - `content` follows the same rules as notes in the app: node and mark allowlist, links
   limited to `http`, `https` and `mailto`, at most 1 MiB per note.
+  Content may also contain the `textStyle` mark (optional `fontFamily`, `fontSize` from
+  `10px` to `32px`, `fontWeight` `300`/`400`/`500`/`600`, and `color` from the six text
+  colours), the `highlight` mark (`color` from the four highlight colours) and a `textAlign`
+  of `left`, `center` or `right` on paragraphs and headings. The format number stays 3.
 - `private` (optional, default `false`) marks a note hidden behind the privacy lock.
   `privateLabel` (optional, default `""`) is the neutral name shown while it is locked:
   trimmed, at most 40 characters, no control characters. The label is kept when a note

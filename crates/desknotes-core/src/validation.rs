@@ -45,7 +45,36 @@ const ALLOWED_NODES: &[&str] = &[
 
 /// Must equal the marks the editor schema can load. A mark accepted here but
 /// unknown to the editor would make the note open empty (and be overwritten).
-const ALLOWED_MARKS: &[&str] = &["bold", "italic", "underline", "strike", "code", "link"];
+const ALLOWED_MARKS: &[&str] = &[
+    "bold",
+    "italic",
+    "underline",
+    "strike",
+    "code",
+    "link",
+    "textStyle",
+    "highlight",
+];
+
+/// The six text colours of the Aa popover (design N14), lower case.
+pub const TEXT_STYLE_COLORS: [&str; 6] = [
+    "#201e1d", "#8c491a", "#56633f", "#1d4f91", "#7a1b14", "#5b3a8c",
+];
+
+/// The four highlight colours of the Aa popover (design N14), lower case.
+pub const HIGHLIGHT_COLORS: [&str; 4] = ["#ffe36e", "#ffc6a5", "#ccdbb2", "#bcd9ff"];
+
+/// Font weights the Aa popover can set on a selection.
+pub const FONT_WEIGHTS: [&str; 4] = ["300", "400", "500", "600"];
+
+/// Font size range of a selection, in px (the Note settings range).
+const TEXT_STYLE_SIZES: std::ops::RangeInclusive<u32> = 10..=32;
+
+/// Attributes a `textStyle` mark may carry, each optional or null.
+const TEXT_STYLE_ATTRS: &[&str] = &["fontFamily", "fontSize", "fontWeight", "color"];
+
+/// Values of the `textAlign` attribute on paragraphs and headings.
+const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
 
 /// Attributes a link mark may carry. `class` must stay null so pasted HTML
 /// cannot give note text the app's own CSS classes.
@@ -95,6 +124,7 @@ fn validate_node(node: &Value, depth: usize) -> CoreResult<()> {
     }
 
     validate_attrs(obj.get("attrs"))?;
+    validate_text_align(kind, obj.get("attrs"))?;
 
     match kind {
         "text" => {
@@ -167,6 +197,94 @@ fn validate_mark(mark: &Value) -> CoreResult<()> {
         {
             return Err(invalid("link target must be _blank or empty"));
         }
+    }
+    match kind {
+        "textStyle" => validate_text_style(attrs)?,
+        "highlight" => validate_highlight(attrs)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// `textAlign` is allowed on paragraphs and headings only: `left`, `center`,
+/// `right` or null. Nothing here rewrites the document.
+fn validate_text_align(kind: &str, attrs: Option<&Value>) -> CoreResult<()> {
+    let Some(align) = attrs.and_then(|a| a.get("textAlign")) else {
+        return Ok(());
+    };
+    if !matches!(kind, "paragraph" | "heading") {
+        return Err(invalid(format!("\"{kind}\" cannot be aligned")));
+    }
+    match align {
+        Value::Null => Ok(()),
+        Value::String(a) if TEXT_ALIGNS.contains(&a.as_str()) => Ok(()),
+        _ => Err(invalid("text alignment must be left, center or right")),
+    }
+}
+
+/// A `textStyle` mark carries only `fontFamily`, `fontSize`, `fontWeight` and
+/// `color`, each optional or null, and each limited to what the Aa popover sets.
+fn validate_text_style(attrs: Option<&Value>) -> CoreResult<()> {
+    // Attributes are optional, so a missing object is as good as an empty one.
+    let Some(attrs) = attrs.and_then(Value::as_object) else {
+        return Ok(());
+    };
+    for (key, value) in attrs {
+        if !TEXT_STYLE_ATTRS.contains(&key.as_str()) {
+            return Err(invalid(format!(
+                "unsupported textStyle attribute \"{key}\""
+            )));
+        }
+        if value.is_null() {
+            continue;
+        }
+        let text = value
+            .as_str()
+            .ok_or_else(|| invalid(format!("textStyle {key} must be text")))?;
+        match key.as_str() {
+            "fontFamily" => {
+                validate_font_name(text)?;
+            }
+            "fontSize" => {
+                // Compare with the canonical spelling so "015px" and "+15px" are refused.
+                if !TEXT_STYLE_SIZES.clone().any(|n| text == format!("{n}px")) {
+                    return Err(invalid("font size must be 10px to 32px in whole pixels"));
+                }
+            }
+            "fontWeight" => {
+                if !FONT_WEIGHTS.contains(&text) {
+                    return Err(invalid("font weight must be 300, 400, 500 or 600"));
+                }
+            }
+            _ => {
+                if !TEXT_STYLE_COLORS.contains(&text.to_ascii_lowercase().as_str()) {
+                    return Err(invalid("text colour is not one of the allowed colours"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A `highlight` mark has exactly one attribute, `color`, set to one of the
+/// four highlight colours.
+fn validate_highlight(attrs: Option<&Value>) -> CoreResult<()> {
+    let attrs = attrs
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid("highlight without attributes"))?;
+    if let Some(key) = attrs.keys().find(|k| k.as_str() != "color") {
+        return Err(invalid(format!(
+            "unsupported highlight attribute \"{key}\""
+        )));
+    }
+    let color = attrs
+        .get("color")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid("highlight without a colour"))?;
+    if !HIGHLIGHT_COLORS.contains(&color.to_ascii_lowercase().as_str()) {
+        return Err(invalid(
+            "highlight colour is not one of the allowed colours",
+        ));
     }
     Ok(())
 }
@@ -466,11 +584,116 @@ mod tests {
 
     #[test]
     fn marks_the_editor_cannot_load_are_rejected() {
-        for mark in ["textStyle", "highlight"] {
+        for mark in ["subscript", "superscript"] {
             let doc = json!({"type":"doc","content":[{"type":"paragraph","content":[
                 {"type":"text","text":"x","marks":[{"type":mark}]}]}]});
             assert!(validate_doc(&doc).is_err(), "{mark} must be rejected");
         }
+    }
+
+    fn doc_with_marks(marks: Value) -> Value {
+        json!({"type":"doc","content":[{"type":"paragraph","content":[
+            {"type":"text","text":"x","marks":marks}]}]})
+    }
+
+    fn text_style(attrs: Value) -> Value {
+        doc_with_marks(json!([{"type":"textStyle","attrs":attrs}]))
+    }
+
+    fn highlight(attrs: Value) -> Value {
+        doc_with_marks(json!([{"type":"highlight","attrs":attrs}]))
+    }
+
+    fn doc_with_align(kind: &str, align: Value) -> Value {
+        let mut attrs = json!({ "textAlign": align });
+        if kind == "heading" {
+            attrs["level"] = json!(2);
+        }
+        json!({"type":"doc","content":[{"type":kind,"attrs":attrs}]})
+    }
+
+    #[test]
+    fn text_style_accepts_the_spec_values() {
+        for color in [
+            "#201e1d", "#8c491a", "#56633f", "#1d4f91", "#7a1b14", "#5b3a8c",
+        ] {
+            assert!(validate_doc(&text_style(json!({ "color": color }))).is_ok());
+        }
+        for size in ["10px", "15px", "32px"] {
+            assert!(validate_doc(&text_style(json!({ "fontSize": size }))).is_ok());
+        }
+        for weight in ["300", "400", "500", "600"] {
+            assert!(validate_doc(&text_style(json!({ "fontWeight": weight }))).is_ok());
+        }
+        assert!(validate_doc(&text_style(json!({ "fontFamily": "Amiri" }))).is_ok());
+        assert!(
+            validate_doc(&text_style(json!({
+                "fontFamily": null, "fontSize": null, "fontWeight": null, "color": null
+            })))
+            .is_ok()
+        );
+        // Colours compare case-insensitively, like validate_color.
+        assert!(validate_doc(&text_style(json!({ "color": "#1D4F91" }))).is_ok());
+    }
+
+    #[test]
+    fn text_style_refuses_other_values() {
+        let long_name = "a".repeat(FONT_NAME_MAX_CHARS + 1);
+        let bad = [
+            json!({ "color": "#000000" }),
+            json!({ "color": "red" }),
+            json!({ "color": "#201E1D; x" }),
+            json!({ "fontSize": "9px" }),
+            json!({ "fontSize": "33px" }),
+            json!({ "fontSize": "15.5px" }),
+            json!({ "fontSize": "15" }),
+            json!({ "fontSize": "15pt" }),
+            json!({ "fontSize": 15 }),
+            json!({ "fontWeight": "700" }),
+            json!({ "fontWeight": "bold" }),
+            json!({ "fontWeight": 400 }),
+            json!({ "fontFamily": "a;b" }),
+            json!({ "fontFamily": "a\"b" }),
+            json!({ "fontFamily": long_name }),
+            json!({ "lineHeight": "2" }),
+        ];
+        for attrs in bad {
+            assert!(
+                validate_doc(&text_style(attrs.clone())).is_err(),
+                "{attrs} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn highlight_accepts_only_the_four_colours() {
+        for color in ["#ffe36e", "#ffc6a5", "#ccdbb2", "#bcd9ff", "#FFE36E"] {
+            assert!(validate_doc(&highlight(json!({ "color": color }))).is_ok());
+        }
+        assert!(validate_doc(&highlight(json!({ "color": "#ffff00" }))).is_err());
+        assert!(validate_doc(&doc_with_marks(json!([{"type":"highlight"}]))).is_err());
+        assert!(validate_doc(&highlight(json!({ "color": null }))).is_err());
+        assert!(validate_doc(&highlight(json!({ "color": "#ffe36e", "x": "y" }))).is_err());
+    }
+
+    #[test]
+    fn text_align_values() {
+        for kind in ["paragraph", "heading"] {
+            for align in [json!("left"), json!("center"), json!("right"), Value::Null] {
+                assert!(
+                    validate_doc(&doc_with_align(kind, align.clone())).is_ok(),
+                    "{kind} {align}"
+                );
+            }
+            for align in [json!("justify"), json!("start")] {
+                assert!(
+                    validate_doc(&doc_with_align(kind, align.clone())).is_err(),
+                    "{kind} {align}"
+                );
+            }
+        }
+        // Not allowed on other nodes.
+        assert!(validate_doc(&doc_with_align("blockquote", json!("left"))).is_err());
     }
 
     #[test]

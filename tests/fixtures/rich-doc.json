@@ -3,11 +3,12 @@
   "content": [
     {
       "type": "heading",
-      "attrs": { "level": 2 },
+      "attrs": { "level": 2, "textAlign": null },
       "content": [{ "type": "text", "text": "Groceries for Saturday" }]
     },
     {
       "type": "paragraph",
+      "attrs": { "textAlign": null },
       "content": [
         { "type": "text", "marks": [{ "type": "bold" }], "text": "Bold" },
         { "type": "text", "text": " " },
@@ -36,11 +37,29 @@
       ]
     },
     {
+      "type": "paragraph",
+      "attrs": { "textAlign": "center" },
+      "content": [
+        {
+          "type": "text",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": { "fontFamily": "DejaVu Sans", "fontSize": "18px", "fontWeight": "600", "color": "#1d4f91" }
+            }
+          ],
+          "text": "Styled"
+        },
+        { "type": "text", "text": " and " },
+        { "type": "text", "marks": [{ "type": "highlight", "attrs": { "color": "#ffe36e" } }], "text": "highlighted" }
+      ]
+    },
+    {
       "type": "bulletList",
       "content": [
         {
           "type": "listItem",
-          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "bread" }] }]
+          "content": [{ "type": "paragraph", "attrs": { "textAlign": null }, "content": [{ "type": "text", "text": "bread" }] }]
         }
       ]
     },
@@ -50,7 +69,7 @@
       "content": [
         {
           "type": "listItem",
-          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "first" }] }]
+          "content": [{ "type": "paragraph", "attrs": { "textAlign": null }, "content": [{ "type": "text", "text": "first" }] }]
         }
       ]
     },
@@ -60,12 +79,12 @@
         {
           "type": "taskItem",
           "attrs": { "checked": true },
-          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "milk" }] }]
+          "content": [{ "type": "paragraph", "attrs": { "textAlign": null }, "content": [{ "type": "text", "text": "milk" }] }]
         },
         {
           "type": "taskItem",
           "attrs": { "checked": false },
-          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "eggs" }] }]
+          "content": [{ "type": "paragraph", "attrs": { "textAlign": null }, "content": [{ "type": "text", "text": "eggs" }] }]
         }
       ]
     }

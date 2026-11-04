@@ -3,6 +3,8 @@ import { useEditorState, type Editor } from "@tiptap/react";
 import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
 import { Menu, type MenuItem } from "../../components/Menu";
+import type { Appearance } from "../../types/note";
+import { TextStylePopover } from "./TextStylePopover";
 
 export type ListType = "taskList" | "bulletList" | "orderedList";
 
@@ -43,16 +45,18 @@ function Tool({ label, icon, title, active, onPress }: ToolProps) {
   );
 }
 
-type Open = "none" | "lists" | "overflow";
+type Open = "none" | "lists" | "overflow" | "textStyle";
 
-/** Bottom formatting bar shown while editing (design N2, N12, N15). */
+/** Bottom formatting bar shown while editing (design N2, N12, N14, N15). */
 export function FormatBar({
   editor,
   narrow,
+  appearance,
   onLink,
 }: {
   editor: Editor;
   narrow: boolean;
+  appearance: Appearance;
   onLink: () => void;
 }) {
   const [open, setOpen] = useState<Open>("none");
@@ -89,10 +93,16 @@ export function FormatBar({
     { id: "underline", label: "Underline", icon: "underline", shortcut: "Ctrl+U", onSelect: () => run().toggleUnderline().run() },
     { id: "strike", label: "Strikethrough", icon: "strike", onSelect: () => run().toggleStrike().run() },
     { id: "heading", label: "Heading", icon: "heading", onSelect: () => run().toggleHeading({ level: 2 }).run() },
+    { id: "textStyle", label: "Text style…", icon: "type", onSelect: () => setOpen("textStyle") },
   ];
 
   const close = () => {
     setOpen("none");
+    editor.commands.focus();
+  };
+  // The menu closes itself after any item; "Text style…" has just replaced it by the popover.
+  const closeOverflow = () => {
+    setOpen((o) => (o === "overflow" ? "none" : o));
     editor.commands.focus();
   };
 
@@ -124,6 +134,24 @@ export function FormatBar({
         </>
       )}
       <Tool label="Link" icon="link" title="Link (Ctrl+K)" active={s.link} onPress={onLink} />
+      {!narrow && (
+        <>
+          <span className="dn-format-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="dn-tool dn-tool-text"
+            aria-label="Text style"
+            title="Text style"
+            aria-haspopup="dialog"
+            aria-expanded={open === "textStyle"}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => (open === "textStyle" ? close() : setOpen("textStyle"))}
+            data-popover-toggle
+          >
+            Aa
+          </button>
+        </>
+      )}
       {narrow && (
         <>
           <span className="dn-spacer" />
@@ -146,8 +174,9 @@ export function FormatBar({
         <Menu label="List type" radio items={listItems} onClose={close} className="dn-menu-lists" />
       )}
       {open === "overflow" && (
-        <Menu label="More formatting" items={overflowItems} onClose={close} className="dn-menu-overflow" />
+        <Menu label="More formatting" items={overflowItems} onClose={closeOverflow} className="dn-menu-overflow" />
       )}
+      {open === "textStyle" && <TextStylePopover editor={editor} appearance={appearance} onClose={close} />}
     </div>
   );
 }
