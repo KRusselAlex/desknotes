@@ -256,8 +256,14 @@ pub const SETTINGS_SECTION: &str = "settings-section";
 /// Sections Settings can be opened at (R19). "privacy-new-pin" opens Privacy at
 /// "choose a new PIN" after a forgotten-PIN proof; `choose_new_pin` still
 /// refuses without that proof, so the name grants nothing by itself.
-pub const SETTINGS_SECTIONS: [&str; 5] =
-    ["general", "privacy", "privacy-new-pin", "backup", "about"];
+pub const SETTINGS_SECTIONS: [&str; 6] = [
+    "general",
+    "appearance",
+    "privacy",
+    "privacy-new-pin",
+    "backup",
+    "about",
+];
 
 /// The known section called `name`, or `None`.
 pub fn settings_section(name: &str) -> Option<&'static str> {
@@ -695,9 +701,12 @@ mod tests {
         for name in SETTINGS_SECTIONS {
             assert_eq!(settings_section(name), Some(name));
         }
+        assert_eq!(settings_section("appearance"), Some("appearance"));
         for bad in [
             "",
             "Privacy",
+            "Appearance",
+            "appearance ",
             "privacy ",
             "privacy&x=1",
             "../privacy",

@@ -8,6 +8,8 @@ vi.mock("../../ipc/commands", () => ({
     setLaunchAtLogin: vi.fn(),
     setNewNoteColor: vi.fn().mockResolvedValue(undefined),
     setMinNoteSize: vi.fn(),
+    setAppAppearance: vi.fn(),
+    listFonts: vi.fn().mockResolvedValue(["Atkinson Hyperlegible", "Fira Sans"]),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
     setRecoveryMethod: vi.fn().mockResolvedValue({ check: { kind: "ok" }, recoveryCode: "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ" }),
     privacyStatus: vi.fn().mockResolvedValue({
@@ -144,11 +146,12 @@ describe("SettingsWindow", () => {
     expect(commands.openDataFolder).toHaveBeenCalled();
   });
 
-  it("has Privacy between General and Backup", async () => {
+  it("lists General, Appearance, Privacy, Backup, About, with Privacy still opening its pane", async () => {
     render(<SettingsWindow />);
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect([...nav.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
       "General",
+      "Appearance",
       "Privacy",
       "Backup",
       "About",
@@ -161,6 +164,7 @@ describe("SettingsWindow", () => {
     expect(parseSection("privacy")).toEqual({ section: "privacy", newPin: false });
     expect(parseSection("privacy-new-pin")).toEqual({ section: "privacy", newPin: true });
     expect(parseSection("about")).toEqual({ section: "about", newPin: false });
+    expect(parseSection("appearance")).toEqual({ section: "appearance", newPin: false });
     for (const bad of [null, undefined, "", "Privacy", "lock", "privacy "]) expect(parseSection(bad)).toBeNull();
   });
 
@@ -209,6 +213,150 @@ describe("SettingsWindow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByText("Save your recovery code")).toBeNull();
+  });
+
+  describe("Appearance", () => {
+    const defaults = settings.appAppearance;
+    const openAppearance = async () => {
+      render(<SettingsWindow />);
+      await userEvent.click(await screen.findByRole("button", { name: "Appearance" }));
+      return screen.findByRole("heading", { name: "Appearance" });
+    };
+
+    it("opens at ?section=appearance", async () => {
+      window.history.replaceState(null, "", "/?section=appearance");
+      try {
+        render(<SettingsWindow />);
+        expect(screen.getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-current", "page");
+        expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+        expect(screen.getByRole("switch", { name: "High-contrast notes" })).toHaveAttribute("aria-checked", "false");
+      } finally {
+        window.history.replaceState(null, "", "/");
+      }
+    });
+
+    it("shows the saved values", async () => {
+      vi.mocked(commands.getSettings).mockResolvedValue({
+        ...settings,
+        appAppearance: { highContrast: true, layout: "compact", defaultFont: "Fira Sans", defaultSize: 18 },
+      });
+      await openAppearance();
+      expect(screen.getByRole("switch", { name: "High-contrast notes" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("radio", { name: "Compact" })).toHaveAttribute("aria-checked", "true");
+      expect(await screen.findByRole("combobox", { name: "Default font" })).toHaveValue("Fira Sans");
+      expect(screen.getByText("18")).toBeInTheDocument();
+    });
+
+    it("turns high contrast on and saves the whole appearance", async () => {
+      vi.mocked(commands.setAppAppearance).mockResolvedValue({ ...defaults, highContrast: true });
+      await openAppearance();
+      const sw = screen.getByRole("switch", { name: "High-contrast notes" });
+      await userEvent.click(sw);
+      expect(commands.setAppAppearance).toHaveBeenCalledWith({ ...defaults, highContrast: true });
+      await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+    });
+
+    it("saves Compact as the layout", async () => {
+      vi.mocked(commands.setAppAppearance).mockResolvedValue({ ...defaults, layout: "compact" });
+      await openAppearance();
+      await userEvent.click(screen.getByRole("radio", { name: "Compact" }));
+      expect(commands.setAppAppearance).toHaveBeenCalledWith({ ...defaults, layout: "compact" });
+      await waitFor(() => expect(screen.getByRole("radio", { name: "Compact" })).toHaveAttribute("aria-checked", "true"));
+    });
+
+    it("lists System default, then the installed fonts, and saves the one chosen", async () => {
+      vi.mocked(commands.setAppAppearance).mockResolvedValue({ ...defaults, defaultFont: "Fira Sans" });
+      await openAppearance();
+      const select = await screen.findByRole("combobox", { name: "Default font" });
+      await waitFor(() =>
+        expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+          "System default",
+          "Atkinson Hyperlegible",
+          "Fira Sans",
+        ]),
+      );
+      await userEvent.selectOptions(select, "Fira Sans");
+      expect(commands.setAppAppearance).toHaveBeenCalledWith({ ...defaults, defaultFont: "Fira Sans" });
+      await waitFor(() => expect(select).toHaveValue("Fira Sans"));
+    });
+
+    it("saves System default as no font", async () => {
+      vi.mocked(commands.getSettings).mockResolvedValue({ ...settings, appAppearance: { ...defaults, defaultFont: "Fira Sans" } });
+      vi.mocked(commands.setAppAppearance).mockResolvedValue(defaults);
+      await openAppearance();
+      await userEvent.selectOptions(await screen.findByRole("combobox", { name: "Default font" }), "System default");
+      expect(commands.setAppAppearance).toHaveBeenCalledWith({ ...defaults, defaultFont: null });
+    });
+
+    it("steps the size by one and stops at 10 and 32", async () => {
+      vi.mocked(commands.getSettings).mockResolvedValue({ ...settings, appAppearance: { ...defaults, defaultSize: 10 } });
+      vi.mocked(commands.setAppAppearance).mockImplementation(async (a) => a);
+      await openAppearance();
+      expect(screen.getByRole("button", { name: "Smaller default size" })).toBeDisabled();
+      await userEvent.click(screen.getByRole("button", { name: "Larger default size" }));
+      expect(commands.setAppAppearance).toHaveBeenLastCalledWith({ ...defaults, defaultSize: 11 });
+      await waitFor(() => expect(screen.getByRole("button", { name: "Smaller default size" })).toBeEnabled());
+    });
+
+    it("disables the larger button at 32", async () => {
+      vi.mocked(commands.getSettings).mockResolvedValue({ ...settings, appAppearance: { ...defaults, defaultSize: 32 } });
+      await openAppearance();
+      expect(screen.getByRole("button", { name: "Larger default size" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Smaller default size" })).toBeEnabled();
+    });
+
+    it("keeps every click when the size is stepped faster than it saves", async () => {
+      const release: (() => void)[] = [];
+      vi.mocked(commands.setAppAppearance).mockImplementation(
+        (a) => new Promise((resolve) => release.push(() => resolve(a))),
+      );
+      await openAppearance();
+      const bigger = screen.getByRole("button", { name: "Larger default size" });
+      await userEvent.click(bigger);
+      await userEvent.click(bigger);
+      await userEvent.click(bigger);
+      expect(screen.getByText("18")).toBeInTheDocument(); // shows what was asked for
+      expect(commands.setAppAppearance).toHaveBeenCalledTimes(1); // one save at a time
+      release[0]!();
+      await waitFor(() => expect(commands.setAppAppearance).toHaveBeenCalledTimes(2));
+      expect(commands.setAppAppearance).toHaveBeenLastCalledWith({ ...defaults, defaultSize: 18 });
+      release[1]!();
+      await waitFor(() => expect(screen.getByText("18")).toBeInTheDocument());
+    });
+
+    it("Reset appearance saves the defaults without asking", async () => {
+      vi.mocked(commands.getSettings).mockResolvedValue({
+        ...settings,
+        appAppearance: { highContrast: true, layout: "compact", defaultFont: "Fira Sans", defaultSize: 20 },
+      });
+      vi.mocked(commands.setAppAppearance).mockResolvedValue(defaults);
+      await openAppearance();
+      await userEvent.click(screen.getByRole("button", { name: "Reset appearance" }));
+      expect(commands.setAppAppearance).toHaveBeenCalledWith(defaults);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await waitFor(() => expect(screen.getByRole("switch", { name: "High-contrast notes" })).toHaveAttribute("aria-checked", "false"));
+      expect(screen.getByRole("radio", { name: "Comfortable" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByText("15")).toBeInTheDocument();
+    });
+
+    it("shows the error and goes back to the saved value when a save fails", async () => {
+      vi.mocked(commands.setAppAppearance).mockRejectedValue(new Error("The default size must be 10 to 32."));
+      await openAppearance();
+      const sw = screen.getByRole("switch", { name: "High-contrast notes" });
+      await userEvent.click(sw);
+      expect(await screen.findByRole("alert")).toHaveTextContent("The default size must be 10 to 32.");
+      expect(sw).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("clears the error after the next save works", async () => {
+      vi.mocked(commands.setAppAppearance).mockRejectedValueOnce(new Error("no"));
+      vi.mocked(commands.setAppAppearance).mockResolvedValueOnce({ ...defaults, layout: "compact" });
+      await openAppearance();
+      await userEvent.click(screen.getByRole("switch", { name: "High-contrast notes" }));
+      await screen.findByRole("alert");
+      await userEvent.click(screen.getByRole("radio", { name: "Compact" }));
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    });
   });
 
   describe("while a recovery code or a call that may issue one is up", () => {

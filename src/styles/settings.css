@@ -546,3 +546,44 @@
     letter-spacing: 0.12em;
   }
 }
+
+/* Appearance (design S4): rows sit straight on the pane, no card. */
+.dn-ap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14px;
+  max-width: 460px;
+}
+.dn-ap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dn-ap-label {
+  font-weight: 600;
+}
+.dn-ap .dn-segmented {
+  background: var(--dn-app-surface);
+}
+.dn-ap .dn-segmented > button {
+  padding: 0 10px;
+}
+.dn-ap .dn-ns-select {
+  width: 170px;
+}
+.dn-ap .dn-ns-stepper {
+  font-size: 13px;
+}
+.dn-ap .dn-ns-stepper > button {
+  width: 28px;
+}
+.dn-ap .dn-ns-stepper-value {
+  width: 26px;
+}
+.dn-ap-reset {
+  align-self: flex-start;
+  padding: 0;
+  font-size: 13.5px;
+}
