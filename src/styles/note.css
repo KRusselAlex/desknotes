@@ -703,3 +703,101 @@ html.dn-see-through body,
 html.dn-see-through #root {
   background: transparent;
 }
+
+/* Settings → Appearance (design "B · High contrast" and B4). Classes from appClasses();
+   only the drawing changes: the note's own colour, opacity, text colours and highlights
+   stay stored and come back when these are turned off. */
+
+/* High contrast: any colour → white, black ink, 2 px rules, 3 px focus ring (21:1).
+   The --note-* variables are set inline by appearanceStyle, so only !important beats them.
+   The background is painted opaque here, over the see-through body-only fill. */
+.dn-note.is-high-contrast {
+  --note-bg: var(--dn-hc-bg) !important;
+  --note-hd: var(--dn-hc-bg) !important;
+  --note-ink: var(--dn-hc-ink) !important;
+  --dn-ink: var(--dn-hc-ink);
+  --dn-ink-muted: var(--dn-hc-ink);
+  --dn-ink-line: var(--dn-hc-line);
+  --dn-focus: var(--dn-hc-ink);
+  /* Status and app-coloured parts (save error, link error, danger menu items, the PIN and
+     private-label dialogs) would keep their red or, under a dark system theme, their dark
+     values inside this white note: they become black on white too, whatever the theme. */
+  --dn-danger: var(--dn-hc-ink);
+  --dn-danger-hover: var(--dn-hc-ink);
+  --dn-danger-press: var(--dn-hc-ink);
+  --dn-danger-ink: var(--dn-hc-ink);
+  --dn-danger-bg: var(--dn-hc-bg);
+  --dn-accent-ink: var(--dn-hc-ink);
+  --dn-app-bg: var(--dn-hc-bg);
+  --dn-app-surface: var(--dn-hc-bg);
+  --dn-app-raised: var(--dn-hc-bg);
+  --dn-app-text: var(--dn-hc-ink);
+  --dn-app-muted: var(--dn-hc-ink);
+  --dn-app-line: var(--dn-hc-line);
+  --dn-app-hover: var(--dn-ink-hover);
+  --dn-app-press: var(--dn-ink-press);
+  color-scheme: light;
+  background: var(--note-bg);
+  color: var(--dn-hc-ink);
+}
+.dn-note.is-high-contrast ::selection {
+  background: var(--dn-hc-ink);
+  color: var(--dn-hc-bg);
+}
+/* Drawn as inset shadows, not borders, so the header and the bar keep their height
+   (a 28 px Compact header still fits its 28 px buttons). */
+.dn-note.is-high-contrast .dn-note-header {
+  box-shadow: inset 0 calc(-1 * var(--dn-hc-rule)) 0 var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-format-bar {
+  box-shadow: inset 0 var(--dn-hc-rule) 0 var(--dn-hc-line);
+}
+/* Without its tint, an error stands out by a rule. */
+.dn-note.is-high-contrast :is(.dn-save-error, .dn-pin-message) {
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-save-error button {
+  border-color: var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-modal {
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-note-body ul[data-type="taskList"] input[type="checkbox"]:not(:checked) {
+  border-width: var(--dn-hc-rule);
+}
+.dn-note.is-high-contrast .dn-popover {
+  background: var(--dn-hc-bg);
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-link-editor {
+  background: var(--dn-hc-bg);
+}
+/* Text colours and highlights of a selection are inline styles on their marks. */
+.dn-note.is-high-contrast .tiptap [style*="color"] {
+  color: var(--dn-hc-ink) !important;
+}
+.dn-note.is-high-contrast .tiptap mark {
+  background: transparent !important;
+}
+/* Only widens the rings that are drawn: an element that draws none (the editor) or draws
+   its own (menu items, the link field, the PIN code groups) keeps `outline: none`. */
+.dn-note.is-high-contrast :focus-visible {
+  outline-width: var(--dn-hc-focus);
+}
+.dn-note.is-high-contrast .dn-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 var(--dn-hc-focus) var(--dn-hc-ink);
+}
+.dn-note.is-high-contrast :is(.dn-link-field:focus-within, .dn-code-group.is-current) {
+  box-shadow: 0 0 0 2px var(--dn-hc-bg), 0 0 0 calc(2px + var(--dn-hc-focus)) var(--dn-hc-ink);
+}
+
+/* Compact: 28 px header, 10 px side padding; the text size comes from effectiveAppearance
+   (default × 0.9), so a note's own size stays exact. Buttons stay --dn-btn. The strip of a
+   rolled-up note keeps the 32 px the native window is pinned to. */
+.dn-note.is-compact:not(.is-collapsed) {
+  --dn-header-h: var(--dn-compact-header);
+}
+.dn-note.is-compact .dn-note-body {
+  padding-left: var(--dn-compact-pad);
+  padding-right: var(--dn-compact-pad);
+}

@@ -1,0 +1,40 @@
+# Milestone 3 — Settings → Appearance: verification on Ubuntu
+
+Date: 2026-11-04 · Branch: `feat/m3-appearance` (f6e9655) · Jira: DES-34
+Design: `docs/superpowers/specs/2026-11-04-appearance-settings-design.md` (owner's designs S4, B4 and High contrast)
+
+## Machine and conditions
+
+| Item | Value |
+|---|---|
+| OS | Ubuntu 24.04.5 LTS, GNOME 46 on Wayland; DeskNotes through XWayland (ADR-0002) |
+| Build | release binary (`npm run tauri build -- --no-bundle`), not the `.deb` |
+| Data | isolated scratch folder (`XDG_DATA_HOME`), not the owner's notes. The owner's DeskNotes was quit for the run, with their agreement, and restarted afterwards. |
+| Test notes | **A:** peach, see-through 80 %, no font or size of its own; title line, three lines, yellow highlight and red text. **B:** blue, its own font Amiri and size 20. |
+| Method | The Settings window did not receive synthetic clicks (other windows covered it on the owner's screen), and the owner asked the run to go ahead without them. Each combination was written into the scratch settings table, the test build was restarted, and both note windows were captured. The note rows in the database were read before and after. |
+
+## Checked in the real app
+
+| Check | Result |
+|---|---|
+| High contrast on | Both notes white, black ink, 2 px black line under the header. Note A (peach, see-through) painted solid white; its highlight and red text shown as plain black text. Note B keeps its own font and size (Amiri 20). |
+| High contrast off, Compact, default font DejaVu Serif, size 18 | Note A in DejaVu Serif at 16.2 px (18 × 0.9), 10 px side padding, 28 px header; peach see-through, highlight and red text back. Note B unchanged: Amiri at 20 px, the title the same width as before. |
+| Reset (off, Comfortable, System default, 15) | Both notes as in the first capture; note B's body pixel-identical |
+| Notes never written | After all three combinations the note rows are unchanged: colour, `appearance` (`{"opacity": 80}`, `{"font": "Amiri", "fontSize": 20}`) and `updated_at = created_at` |
+| Settings kept after a restart | Each combination was read from the settings table at start-up and drawn from the first paint |
+| Settings sidebar | "Appearance" second in General · Appearance · Privacy · Backup · About, with the sun icon |
+
+## Not checked in the real app (owner checks)
+
+| Item | Why |
+|---|---|
+| The Appearance pane controls in the real window: the switch, Compact/Comfortable, the font list, the size stepper, Reset appearance, and an error on a refused save | Clicks did not reach the Settings window. The pane is covered by unit tests through the Settings window, including the save queue and revert on failure, and was checked in the browser preview in light and dark. |
+| The live change reaching open notes without a restart (`app-appearance-changed`) | Needs the pane. Unit tests cover the event, the listener and the note re-styling. |
+| High contrast with a dark system theme: "Move to trash", the link error, selected text, keyboard focus rings | Needs menus, selection and keyboard. Covered by stylesheet tests and the preview with a dark theme. |
+| Note settings showing "Amiri (default)" when a default font is set | Needs the Note settings window. Covered by unit tests. |
+| A flash of the lemon loading colour when a note opens in high contrast | Not seen in the captures, which were taken after start-up. A note opened while the app is running was not watched. |
+
+## Automated tests at the end of the branch
+
+513 frontend tests, `cargo test --workspace`, `cargo clippy -D warnings`, `npm run lint` and `npm run typecheck` all pass.
+Each task was reviewed separately, then the whole branch; findings were fixed and re-reviewed.

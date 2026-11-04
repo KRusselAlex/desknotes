@@ -4,24 +4,26 @@ import type { IconName } from "../../components/icons";
 import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
 import { onSettingsSection } from "../../ipc/events";
-import type { SettingsSection, SettingsView } from "../../types/note";
+import type { AppAppearance, SettingsSection, SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
+import { AppearancePane } from "./AppearancePane";
 import { BackupPane } from "./BackupPane";
 import { MinNoteSize } from "./MinNoteSize";
 import { PrivacyPane } from "./PrivacyPane";
 import { SettingsHold } from "./hold";
 import { ShortcutRow } from "./ShortcutRow";
 
-type Section = "general" | "privacy" | "backup" | "about";
+type Section = "general" | "appearance" | "privacy" | "backup" | "about";
 
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "general", label: "General", icon: "settings" },
+  { id: "appearance", label: "Appearance", icon: "sun" },
   { id: "privacy", label: "Privacy", icon: "lock" },
   { id: "backup", label: "Backup", icon: "download" },
   { id: "about", label: "About", icon: "info" },
 ];
 
-const SECTION_NAMES: readonly SettingsSection[] = ["general", "privacy", "privacy-new-pin", "backup", "about"];
+const SECTION_NAMES: readonly SettingsSection[] = ["general", "appearance", "privacy", "privacy-new-pin", "backup", "about"];
 
 /** The section another window asked for (`open_settings(section)`), or null if unknown. */
 export function parseSection(name: string | null | undefined): { section: Section; newPin: boolean } | null {
@@ -94,6 +96,37 @@ export function SettingsWindow() {
       return false;
     }
   }
+
+  // Appearance saves the whole value. The pane shows what was asked for at once; a change made
+  // while a save runs waits (only the newest is kept) so saves never overlap. If one is refused,
+  // the saved value comes back and the reason is shown.
+  const [asked, setAsked] = useState<AppAppearance | null>(null);
+  const saving = useRef(false);
+  const waiting = useRef<AppAppearance | null>(null);
+  const saveAppearance = useCallback(async (next: AppAppearance) => {
+    setAsked(next);
+    if (saving.current) {
+      waiting.current = next;
+      return;
+    }
+    saving.current = true;
+    let sending: AppAppearance | null = next;
+    while (sending) {
+      waiting.current = null;
+      try {
+        const saved = await commands.setAppAppearance(sending);
+        setSettings((s) => (s ? { ...s, appAppearance: saved } : s));
+        setError(null);
+        if (!waiting.current) setAsked(null);
+      } catch (e) {
+        setError((e as Error).message);
+        waiting.current = null;
+        setAsked(null);
+      }
+      sending = waiting.current;
+    }
+    saving.current = false;
+  }, []);
 
   return (
     <SettingsHold.Provider value={hold}>
@@ -173,6 +206,9 @@ export function SettingsWindow() {
                 <ShortcutRow />
               </div>
             </>
+          )}
+          {settings && section === "appearance" && (
+            <AppearancePane value={asked ?? settings.appAppearance} onChange={(next) => void saveAppearance(next)} />
           )}
           {section === "privacy" && (
             <PrivacyPane key={newPinRequest} startNewPin={newPinPending} onNewPinStarted={newPinStarted} />

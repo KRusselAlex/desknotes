@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NoteResized, NotesChanged } from "../../ipc/events";
-import type { Note } from "../../types/note";
+import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Note } from "../../types/note";
 
 const handlers: {
+  appAppearance?: (a: AppAppearance) => void;
   notesChanged?: (e: NotesChanged) => void;
   resized?: (e: NoteResized) => void;
   switchNote?: (id: string) => void;
@@ -21,6 +22,10 @@ vi.mock("../../ipc/events", () => ({
     handlers.switchNote = h;
     return Promise.resolve(() => undefined);
   },
+  onAppAppearanceChanged: (h: (a: AppAppearance) => void) => {
+    handlers.appAppearance = h;
+    return Promise.resolve(() => undefined);
+  },
 }));
 vi.mock("../../ipc/window", () => ({ closeCurrentWindow: vi.fn() }));
 vi.mock("../../ipc/commands", () => ({
@@ -32,6 +37,7 @@ vi.mock("../../ipc/commands", () => ({
     setNoteColor: vi.fn().mockResolvedValue(undefined),
     setEditLocked: vi.fn().mockResolvedValue(undefined),
     setAlwaysOnTop: vi.fn().mockResolvedValue(undefined),
+    getAppAppearance: vi.fn(),
   },
 }));
 
@@ -70,6 +76,7 @@ async function open(n: Note = note()) {
 describe("NoteSettingsWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(commands.getAppAppearance).mockResolvedValue({ ...APP_APPEARANCE_DEFAULTS });
     vi.mocked(commands.listFonts).mockResolvedValue(["DejaVu Sans", "Ubuntu"]);
     vi.mocked(commands.setNoteSize).mockImplementation(async (_id, width, height) => ({ width, height }));
   });
@@ -473,5 +480,95 @@ describe("NoteSettingsWindow", () => {
     vi.mocked(commands.setNoteAppearance).mockRejectedValueOnce(new Error("font size out of range"));
     await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("font size out of range");
+  });
+
+  describe("app appearance", () => {
+    const appLook = (over: Partial<AppAppearance> = {}): AppAppearance => ({ ...APP_APPEARANCE_DEFAULTS, ...over });
+    const sizeShown = () =>
+      within(screen.getByRole("group", { name: "Size" })).getByText(/^\d+$/).textContent;
+
+    it("popover and note settings use the effective size: Size shows the app default", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 18 }));
+      await open();
+      expect(sizeShown()).toBe("18");
+      // The stepper steps from the shown value and stores the note's own size only.
+      await userEvent.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 17 });
+    });
+
+    it("keeps a note's own 15 when the app default is not 15", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 16 }));
+      await open();
+      await userEvent.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 15 });
+      expect(sizeShown()).toBe("15");
+      // Back to the app default: the note follows the app again.
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, {});
+    });
+
+    it("shows the compact default size rounded to whole pixels, and steps from it", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ layout: "compact" }));
+      await open();
+      expect(sizeShown()).toBe("14"); // 13.5 drawn
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 15 });
+    });
+
+    it("in Compact, stepping back to the shown default returns the note to following the app", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ layout: "compact" }));
+      await open();
+      expect(sizeShown()).toBe("14"); // 13.5 drawn
+      await userEvent.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 13 });
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, {});
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 15 });
+      await userEvent.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, {});
+    });
+
+    it("names the app's default font as the first font option", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultFont: "Amiri" }));
+      await open(note({ appearance: { fontSize: 20 } }));
+      const font = screen.getByRole("combobox", { name: "Font" });
+      await waitFor(() => expect(within(font).getByRole("option", { name: "Ubuntu" })).toBeInTheDocument());
+      expect(within(font).getAllByRole("option")[0]).toHaveTextContent("Amiri (default)");
+      expect(within(font).queryByRole("option", { name: "System default" })).toBeNull();
+      expect(font).toHaveValue("");
+      // Choosing it means "no font of its own": nothing is stored for the font.
+      await userEvent.selectOptions(font, "Ubuntu");
+      await userEvent.selectOptions(font, "Amiri (default)");
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 20 });
+    });
+
+    it("keeps \"System default\" as the first font option when the app has no default font", async () => {
+      await open();
+      const font = screen.getByRole("combobox", { name: "Font" });
+      expect(within(font).getAllByRole("option")[0]).toHaveTextContent("System default");
+      expect(within(font).queryByRole("option", { name: /\(default\)/ })).toBeNull();
+    });
+
+    it("never drops a note's own size equal to the app default when something else changes", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 18 }));
+      await open(note({ appearance: { fontSize: 18 } }));
+      await userEvent.click(screen.getByRole("radio", { name: "Blue text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 18, textColor: "#1d4f91" });
+    });
+
+    it("shows the note's own size over the app default", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 18, layout: "compact" }));
+      await open(note({ appearance: { fontSize: 20 } }));
+      expect(sizeShown()).toBe("20");
+    });
+
+    it("follows the app default while open, without storing anything", async () => {
+      await open();
+      expect(sizeShown()).toBe("15");
+      await act(async () => handlers.appAppearance?.(appLook({ defaultSize: 22 })));
+      expect(sizeShown()).toBe("22");
+      expect(commands.setNoteAppearance).not.toHaveBeenCalled();
+    });
   });
 });

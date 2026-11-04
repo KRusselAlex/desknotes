@@ -546,3 +546,22 @@
     letter-spacing: 0.12em;
   }
 }
+
+/* Appearance (design S4): the rows sit in a card like the other panes (ruling R7). The font
+   select keeps the 170 px of .dn-ns-select (R8). */
+.dn-ap .dn-segmented > button {
+  padding: 0 10px;
+}
+.dn-ap .dn-ns-stepper {
+  font-size: 13px;
+}
+.dn-ap .dn-ns-stepper > button {
+  width: 28px;
+}
+.dn-ap .dn-ns-stepper-value {
+  width: 26px;
+}
+.dn-ap-reset {
+  padding: 0;
+  font-size: 13.5px;
+}

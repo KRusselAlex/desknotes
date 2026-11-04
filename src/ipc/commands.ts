@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppAppearance,
   Appearance,
   ExportResult,
   Note,
@@ -94,6 +95,10 @@ export const commands = {
   /** Applies to open notes too. Returns the size that was saved. */
   setMinNoteSize: (width: number, height: number) =>
     call<NoteSize>("set_min_note_size", { width, height }),
+  getAppAppearance: () => call<AppAppearance>("get_app_appearance"),
+  /** Saves and tells every window. Returns the normalised value; a refused value throws. */
+  setAppAppearance: (appearance: AppAppearance) =>
+    call<AppAppearance>("set_app_appearance", { appearance }),
   getToggleShortcut: () => call<ToggleShortcut>("get_toggle_shortcut"),
   /** Adds or changes DeskNotes' GNOME shortcut. Call only after the person confirmed. */
   setToggleShortcut: (binding: string) => call<ToggleShortcut>("set_toggle_shortcut", { binding }),

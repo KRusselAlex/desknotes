@@ -29,6 +29,10 @@ All notable changes are documented here. The format follows
   narrow note): font, size, weight, six text colours, four highlights, align left / centre /
   right, UPPERCASE / lowercase, undo / redo. Text pasted from other apps takes the note's
   look; formatting copied inside DeskNotes is kept. Ctrl+Shift+H highlights in yellow.
+- Settings → Appearance: high-contrast notes (white, black ink, thick lines and focus
+  rings), compact or comfortable layout, a default font and text size for notes without
+  their own, and Reset appearance. Applies to every open note at once; a note's own Note
+  settings still win, and nothing is changed in the notes themselves.
 
 ### Changed
 - Settings opens at a given section from other windows (for example Privacy).

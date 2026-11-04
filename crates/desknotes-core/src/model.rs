@@ -85,6 +85,45 @@ pub struct Appearance {
     pub opacity: Option<u8>,
 }
 
+/// How roomy notes are. Compact tightens padding, header and text size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Layout {
+    Comfortable,
+    Compact,
+}
+
+/// Smallest and largest app default text size, in px.
+pub const MIN_DEFAULT_SIZE: u8 = 10;
+pub const MAX_DEFAULT_SIZE: u8 = 32;
+pub const DEFAULT_TEXT_SIZE: u8 = 15;
+
+/// App-wide look of every note window (Settings → Appearance). Stored in the
+/// settings table; never written to a note. Validated by
+/// `Database::set_app_appearance`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppAppearance {
+    /// Black on white notes with heavier rules and focus rings.
+    pub high_contrast: bool,
+    pub layout: Layout,
+    /// A font family name; `None` is the system default.
+    pub default_font: Option<String>,
+    /// Default text size in px, `MIN_DEFAULT_SIZE`–`MAX_DEFAULT_SIZE`.
+    pub default_size: u8,
+}
+
+impl Default for AppAppearance {
+    fn default() -> Self {
+        Self {
+            high_contrast: false,
+            layout: Layout::Comfortable,
+            default_font: None,
+            default_size: DEFAULT_TEXT_SIZE,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {

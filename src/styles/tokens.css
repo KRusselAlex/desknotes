@@ -31,8 +31,10 @@
   --dn-text-blue: #1d4f91; --dn-text-red: #7a1b14;   --dn-text-violet: #5b3a8c;
   --dn-highlight-yellow: #ffe36e; --dn-highlight-peach: #ffc6a5;
   --dn-highlight-sage: #ccdbb2;   --dn-highlight-sky: #bcd9ff;
-  /* High contrast note */
+  /* High contrast note (Settings → Appearance, design "B · High contrast"): white,
+     black ink, 2 px rules, 3 px focus ring. */
   --dn-hc-bg: #ffffff; --dn-hc-ink: #000000; --dn-hc-line: #000000;
+  --dn-hc-rule: 2px; --dn-hc-focus: 3px;
 
   /* Ink used on any note colour */
   --dn-ink: #201e1d;
@@ -76,6 +78,9 @@
 
   /* Sizes */
   --dn-header-h: 32px; --dn-bar-h: 36px; --dn-btn: 28px; --dn-btn-lg: 36px; --dn-hit-min: 24px;
+  /* Compact layout (design B4): text = default size × 0.9 (computed by effectiveAppearance),
+     10 px side padding, 28 px header; buttons stay --dn-btn. */
+  --dn-compact-text-scale: 0.9; --dn-compact-pad: 10px; --dn-compact-header: 28px;
   --dn-note-w: 300px; --dn-note-h: 280px; --dn-note-min-w: 180px; --dn-note-min-h: 120px;
   --dn-mgr-w: 560px; --dn-mgr-h: 620px; --dn-mgr-min-w: 400px; --dn-mgr-min-h: 360px;
 

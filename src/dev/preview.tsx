@@ -10,6 +10,9 @@
 // machine where the Ubuntu password cannot be used (the recovery code only). In the console,
 // previewLock() locks and previewUnlock() unlocks as the native side would.
 //
+// Settings → Appearance: ?w=settings&section=appearance. Notes and Note settings take &hc=1
+// (high contrast), &compact=1 (compact layout) and &font=Ubuntu (default font) as if set there.
+//
 // Settings: ?w=settings&section=privacy opens at Privacy (&nopin: lock off, &nosystem: no
 // computer-password route, &method=code: recovery code chosen); &section=privacy-new-pin opens
 // "choose a new PIN" as after a forgotten-PIN proof. 123456 is refused as too easy.
@@ -34,7 +37,9 @@ import fixture from "../../tests/fixtures/rich-doc.json";
 import { App } from "../app/App";
 import { followSystemTheme } from "../app/theme";
 import {
+  APP_APPEARANCE_DEFAULTS,
   PRIVATE_FALLBACK_LABEL,
+  type AppAppearance,
   type Note,
   type NoteFilter,
   type PinCheck,
@@ -204,6 +209,15 @@ let shortcut: { available: boolean; binding: string | null; label: string | null
   label: null,
 };
 
+// Settings → Appearance, kept in memory like the app keeps it in its database.
+// &hc=1 starts with high contrast on, &compact=1 with the compact layout, &font= with a default font.
+let appAppearance: AppAppearance = {
+  ...APP_APPEARANCE_DEFAULTS,
+  highContrast: params.get("hc") === "1",
+  layout: params.get("compact") === "1" ? "compact" : "comfortable",
+  defaultFont: params.get("font") || null,
+};
+
 mockIPC(
   (cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -256,7 +270,18 @@ mockIPC(
       case "hidden_note_count":
         return 0;
       case "get_settings":
-        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, appAppearance: { ...appAppearance }, version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+      case "get_app_appearance":
+        return { ...appAppearance };
+      case "set_app_appearance": {
+        const next = a.appearance as AppAppearance;
+        if (!Number.isInteger(next.defaultSize) || next.defaultSize < 10 || next.defaultSize > 32) {
+          throw { code: "validation", message: "default text size must be 10–32 px" };
+        }
+        appAppearance = { ...next, defaultFont: next.defaultFont?.trim() || null };
+        void emit("app-appearance-changed", { ...appAppearance });
+        return { ...appAppearance };
+      }
       case "get_toggle_shortcut":
         return { ...shortcut };
       case "set_toggle_shortcut": {

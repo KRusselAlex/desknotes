@@ -1,12 +1,14 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
 // @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
 import { readFileSync } from "node:fs";
 import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
-import type { Note, PrivacyStatus } from "../../types/note";
+import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Note, type PrivacyStatus } from "../../types/note";
+import { appearanceStyle } from "../appearance/appearance";
 
 const handlers: {
+  appAppearance?: (a: AppAppearance) => void;
   noteAction?: (a: NoteAction) => void;
   willQuit?: () => void;
   privacy?: (e: PrivacyChanged) => void;
@@ -27,6 +29,10 @@ vi.mock("../../ipc/events", () => ({
   },
   onNoteAction: (h: (a: NoteAction) => void) => {
     handlers.noteAction = h;
+    return Promise.resolve(() => undefined);
+  },
+  onAppAppearanceChanged: (h: (a: AppAppearance) => void) => {
+    handlers.appAppearance = h;
     return Promise.resolve(() => undefined);
   },
 }));
@@ -58,6 +64,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     duplicateNote: vi.fn().mockResolvedValue({}),
     openNoteSettings: vi.fn().mockResolvedValue(undefined),
     reopenNote: vi.fn().mockResolvedValue(undefined),
+    getAppAppearance: vi.fn(),
+    listFonts: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -125,6 +133,7 @@ async function typeIntoNote(container: HTMLElement, text: string) {
 describe("NoteWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(commands.getAppAppearance).mockResolvedValue({ ...APP_APPEARANCE_DEFAULTS });
     // Like the core: the title is derived from the first line of the note.
     vi.mocked(commands.saveNoteContent).mockResolvedValue({ title: "Groceries for Saturday", updatedAt: Date.now() });
   });
@@ -803,6 +812,180 @@ describe("NoteWindow", () => {
       expect(await screen.findByText(/Not saved/)).toBeInTheDocument();
       expect(commands.reopenNote).not.toHaveBeenCalled();
       expect(container.querySelector(".tiptap")).toHaveTextContent("precious");
+    });
+  });
+
+  describe("app appearance", () => {
+    const appLook = (over: Partial<AppAppearance> = {}): AppAppearance => ({ ...APP_APPEARANCE_DEFAULTS, ...over });
+    const rootOf = (container: HTMLElement) => container.querySelector(".dn-note") as HTMLElement;
+    const vars = (el: HTMLElement) =>
+      Object.fromEntries(["--note-bg", "--note-hd", "--note-ink", "--note-font-size", "--note-font"].map((k) => [k, el.style.getPropertyValue(k)]));
+
+    it("high contrast hides but never changes the note's own values", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ highContrast: true }));
+      const own = { opacity: 80, textColor: "#1d4f91", fontSize: 20 };
+      const { container } = await openNote({ color: "#ffd8b1", appearance: own });
+      const root = rootOf(container);
+      expect(root).toHaveClass("is-high-contrast");
+      // The inline variables are still the note's own: only the stylesheet paints it white.
+      const expected = appearanceStyle("#ffd8b1", own) as Record<string, string>;
+      expect(vars(root)).toEqual({
+        "--note-bg": expected["--note-bg"],
+        "--note-hd": expected["--note-hd"],
+        "--note-ink": "#1d4f91",
+        "--note-font-size": "20px",
+        "--note-font": "var(--dn-font)",
+      });
+      expect(root.style.getPropertyValue("--note-bg")).toBe("rgba(255, 216, 177, 0.8)");
+      const before = vars(root);
+
+      await act(async () => handlers.appAppearance?.(appLook({ highContrast: false })));
+      expect(root).not.toHaveClass("is-high-contrast");
+      expect(root).toHaveClass("is-see-through");
+      expect(vars(root)).toEqual(before);
+      expect(commands.saveNoteContent).not.toHaveBeenCalled();
+      expect(commands.setNoteColor).not.toHaveBeenCalled();
+    });
+
+    it("note reads app appearance before it renders", async () => {
+      let answer: (a: AppAppearance) => void = () => undefined;
+      vi.mocked(commands.getAppAppearance).mockReturnValue(new Promise((r) => (answer = r)));
+      vi.mocked(commands.getNote).mockResolvedValue(note());
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await waitFor(() => expect(commands.getNote).toHaveBeenCalled());
+      await act(async () => undefined);
+      expect(screen.queryByText("Groceries for Saturday")).toBeNull();
+      expect(editorBox()).toBeNull();
+      expect(rootOf(container)).toHaveAttribute("aria-busy", "true");
+
+      await act(async () => answer(appLook({ highContrast: true, layout: "compact" })));
+      await screen.findByText("Groceries for Saturday");
+      const root = rootOf(container);
+      expect(root).toHaveClass("is-high-contrast", "is-compact");
+      expect(root.style.getPropertyValue("--note-font-size")).toBe("13.5px");
+    });
+
+    it("opens with the defaults when the app appearance cannot be read", async () => {
+      vi.mocked(commands.getAppAppearance).mockRejectedValue(new Error("database is locked"));
+      const { container } = await openNote();
+      expect(rootOf(container)).not.toHaveClass("is-high-contrast");
+      expect(rootOf(container)).not.toHaveClass("is-compact");
+      expect(rootOf(container).style.getPropertyValue("--note-font-size")).toBe("15px");
+    });
+
+    it("follows a change at once without reloading the editor", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "typed-before ");
+      await act(async () => handlers.appAppearance?.(appLook({ layout: "compact", defaultSize: 20, defaultFont: "Ubuntu" })));
+      const root = rootOf(container);
+      expect(root).toHaveClass("is-compact");
+      expect(root.style.getPropertyValue("--note-font-size")).toBe("18px");
+      expect(root.style.getPropertyValue("--note-font")).toBe('"Ubuntu", var(--dn-font)');
+      expect(container.querySelector(".tiptap")).toHaveTextContent("typed-before");
+    });
+
+    it("keeps the note's own font and size over the app defaults", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 18, defaultFont: "DejaVu Sans", layout: "compact" }));
+      const { container } = await openNote({ appearance: { fontSize: 20, font: "Amiri" } });
+      expect(rootOf(container).style.getPropertyValue("--note-font-size")).toBe("20px");
+      expect(rootOf(container).style.getPropertyValue("--note-font")).toBe('"Amiri", var(--dn-font)');
+    });
+
+    it("applies the app look to the collapsed strip, the private lock and the load error (R3)", async () => {
+      const look = appLook({ highContrast: true, layout: "compact", defaultSize: 20 });
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(look);
+
+      vi.mocked(commands.getNote).mockResolvedValue(note({ window: { ...note().window, collapsed: true } }));
+      const strip = render(<NoteWindow noteId={ID} />);
+      await screen.findByRole("button", { name: "Expand" });
+      expect(rootOf(strip.container)).toHaveClass("is-collapsed", "is-high-contrast", "is-compact");
+      expect(rootOf(strip.container).style.getPropertyValue("--note-font-size")).toBe("18px");
+      strip.unmount();
+
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      const locked = render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      expect(rootOf(locked.container)).toHaveClass("is-private-locked", "is-high-contrast", "is-compact");
+      locked.unmount();
+
+      vi.mocked(commands.getNote).mockRejectedValue(new Error("unreadable"));
+      const failed = render(<NoteWindow noteId={ID} />);
+      await screen.findByText("This note could not be opened.");
+      expect(rootOf(failed.container)).toHaveClass("is-high-contrast", "is-compact");
+    });
+
+    it("popover and note settings use the effective size: Aa shows the app default on a paragraph", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 18 }));
+      const { container } = await openNote();
+      const el = container.querySelector(".tiptap") as HTMLElement & {
+        editor?: { commands: { setTextSelection: (p: number) => void } };
+      };
+      await act(async () => el.focus());
+      await act(async () => el.editor!.commands.setTextSelection(26)); // inside "Bold", the first paragraph
+      await userEvent.click(await screen.findByRole("button", { name: "Text style" }));
+      const dialog = screen.getByRole("dialog", { name: "Text style" });
+      const size = within(dialog).getByRole("group", { name: "Size" });
+      expect(within(size).getByText("18")).toBeInTheDocument();
+    });
+
+    it("keeps high contrast black on white whatever the system theme, with one focus ring", () => {
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const tokens = readFileSync("src/styles/tokens.css", "utf8");
+      const hc = /\.dn-note\.is-high-contrast\s*\{([^}]*)\}/.exec(noteCss)![1]!;
+      const set = (name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(hc)?.[1]?.trim();
+      // Every colour token the dark theme changes and a note uses resolves to the HC ink or ground.
+      const dark = /\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(tokens)![1]!;
+      const darkColours = [...dark.matchAll(/(--dn-[a-z-]+):/g)].map((m) => m[1]!);
+      const usedInNote = darkColours.filter((t) =>
+        /^--dn-(danger|focus|accent-ink|app-(bg|surface|raised|text|muted|line|hover|press))/.test(t),
+      );
+      expect(usedInNote).toEqual(expect.arrayContaining(["--dn-danger", "--dn-danger-ink", "--dn-danger-bg", "--dn-focus"]));
+      for (const token of usedInNote) expect(set(token), token).toBeDefined();
+      for (const token of ["--dn-danger", "--dn-danger-hover", "--dn-danger-press", "--dn-danger-ink", "--dn-focus"]) {
+        expect(set(token), token).toBe("var(--dn-hc-ink)");
+      }
+      expect(set("--dn-danger-bg")).toBe("var(--dn-hc-bg)");
+      // The save error keeps standing out without its tint.
+      expect(noteCss).toMatch(/\.dn-note\.is-high-contrast :is\(\.dn-save-error[^)]*\)\s*\{\s*border:\s*var\(--dn-hc-rule\) solid/);
+      // Selected text is white on black.
+      expect(noteCss).toMatch(
+        /\.dn-note\.is-high-contrast ::selection\s*\{\s*background:\s*var\(--dn-hc-ink\);\s*color:\s*var\(--dn-hc-bg\);\s*\}/,
+      );
+      // No broad rule that puts an outline back on controls that draw their own ring.
+      expect(noteCss).not.toMatch(/is-high-contrast[^{]*:is\(button/);
+      expect(noteCss).not.toMatch(/is-high-contrast[^{]*\{[^}]*outline:\s*var\(--dn-hc-focus\)/);
+    });
+
+    it("styles high contrast and compact from the tokens, in the stylesheet", () => {
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const tokens = readFileSync("src/styles/tokens.css", "utf8");
+      for (const token of [
+        "--dn-hc-bg: #ffffff",
+        "--dn-hc-ink: #000000",
+        "--dn-hc-rule: 2px",
+        "--dn-hc-focus: 3px",
+        "--dn-compact-text-scale: 0.9",
+        "--dn-compact-pad: 10px",
+        "--dn-compact-header: 28px",
+      ]) {
+        expect(tokens).toContain(token);
+      }
+      const hc = /\.dn-note\.is-high-contrast\s*\{([^}]*)\}/.exec(noteCss);
+      expect(hc).not.toBeNull();
+      expect(hc![1]).toMatch(/--note-bg:\s*var\(--dn-hc-bg\)/);
+      expect(hc![1]).toMatch(/--note-hd:\s*var\(--dn-hc-bg\)/);
+      expect(hc![1]).toMatch(/--note-ink:\s*var\(--dn-hc-ink\)/);
+      // The rules are inset shadows, so a 28 px Compact header still fits its 28 px buttons.
+      expect(noteCss).toMatch(
+        /\.dn-note\.is-high-contrast \.dn-note-header\s*\{\s*box-shadow:\s*inset 0 calc\(-1 \* var\(--dn-hc-rule\)\) 0 var\(--dn-hc-line\);\s*\}/,
+      );
+      expect(noteCss).toMatch(
+        /\.dn-note\.is-high-contrast \.dn-format-bar\s*\{\s*box-shadow:\s*inset 0 var\(--dn-hc-rule\) 0 var\(--dn-hc-line\);\s*\}/,
+      );
+      expect(noteCss).toMatch(/\.dn-note\.is-high-contrast :focus-visible\s*\{\s*outline-width:\s*var\(--dn-hc-focus\);\s*\}/);
+      const compact = /\.dn-note\.is-compact:not\(\.is-collapsed\)\s*\{([^}]*)\}/.exec(noteCss);
+      expect(compact![1]).toMatch(/--dn-header-h:\s*var\(--dn-compact-header\)/);
+      expect(noteCss).toMatch(/\.dn-note\.is-compact \.dn-note-body\s*\{[^}]*var\(--dn-compact-pad\)/);
     });
   });
 });

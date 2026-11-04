@@ -1,4 +1,4 @@
-use desknotes_core::{CoreError, NoteSize};
+use desknotes_core::{AppAppearance, CoreError, NoteSize};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt as _;
@@ -6,7 +6,7 @@ use tauri_plugin_opener::OpenerExt as _;
 
 use crate::error::{IpcError, IpcResult};
 use crate::state::AppState;
-use crate::windows::{self, emit_changed};
+use crate::windows::{self, emit_app_appearance_changed, emit_changed};
 
 /// Everything the Settings window shows.
 #[derive(Serialize)]
@@ -15,6 +15,8 @@ pub struct SettingsView {
     pub launch_at_login: bool,
     pub new_note_color: String,
     pub min_note_size: NoteSize,
+    /// App-wide look of every note window (Settings → Appearance).
+    pub app_appearance: AppAppearance,
     pub version: String,
     pub data_dir: String,
     /// Time of the last successful export (Unix ms), if any.
@@ -50,6 +52,7 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Set
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
         new_note_color: state.with_db(|db| db.new_note_color())?,
         min_note_size: state.with_db(|db| db.min_note_size())?,
+        app_appearance: state.with_db(|db| db.app_appearance())?,
         version: app.package_info().version.to_string(),
         data_dir,
         last_backup_at: state
@@ -226,6 +229,25 @@ pub fn set_min_note_size(
     Ok(size)
 }
 
+/// The app-wide note appearance. Note windows read it before their first paint.
+#[tauri::command]
+pub fn get_app_appearance(state: State<'_, AppState>) -> IpcResult<AppAppearance> {
+    state.with_db(|db| db.app_appearance())
+}
+
+/// Save the app-wide note appearance, then tell every window the normalised
+/// value. A refused value stores nothing and sends nothing.
+#[tauri::command]
+pub fn set_app_appearance(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    appearance: AppAppearance,
+) -> IpcResult<AppAppearance> {
+    let saved = state.with_db(|db| db.set_app_appearance(appearance))?;
+    emit_app_appearance_changed(&app, &saved);
+    Ok(saved)
+}
+
 /// Show the folder that holds the notes database in the file manager.
 #[tauri::command]
 pub fn open_data_folder(app: AppHandle) -> IpcResult<()> {
@@ -252,5 +274,60 @@ mod section_tests {
         );
         let err = parse_section(Some("index.html")).unwrap_err();
         assert_eq!(err.code, "validation");
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use crate::error::IpcError;
+    use desknotes_core::{AppAppearance, Database, Layout};
+
+    /// What `set_app_appearance` does with the database, as the webview sees it.
+    fn save(db: &Database, a: AppAppearance) -> Result<AppAppearance, IpcError> {
+        Ok(db.set_app_appearance(a)?)
+    }
+
+    #[test]
+    fn a_refused_appearance_is_a_validation_error_and_stores_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let bad_font = AppAppearance {
+            high_contrast: true,
+            layout: Layout::Compact,
+            default_font: Some("Evil;Font".into()),
+            default_size: 15,
+        };
+        assert_eq!(save(&db, bad_font).unwrap_err().code, "validation");
+        let too_big = AppAppearance {
+            default_size: 99,
+            ..AppAppearance::default()
+        };
+        assert_eq!(save(&db, too_big).unwrap_err().code, "validation");
+        assert_eq!(db.app_appearance().unwrap(), AppAppearance::default());
+    }
+
+    #[test]
+    fn a_saved_appearance_is_returned_normalised_and_serialises_camel_case() {
+        let db = Database::open_in_memory().unwrap();
+        let saved = save(
+            &db,
+            AppAppearance {
+                high_contrast: true,
+                layout: Layout::Compact,
+                default_font: Some("  Ubuntu  ".into()),
+                default_size: 18,
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.default_font.as_deref(), Some("Ubuntu"));
+        assert_eq!(db.app_appearance().unwrap(), saved);
+        assert_eq!(
+            serde_json::to_value(&saved).unwrap(),
+            serde_json::json!({
+                "highContrast": true,
+                "layout": "compact",
+                "defaultFont": "Ubuntu",
+                "defaultSize": 18
+            })
+        );
     }
 }

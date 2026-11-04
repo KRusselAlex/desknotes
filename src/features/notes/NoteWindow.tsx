@@ -8,8 +8,16 @@ import { Menu, type MenuItem } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
 import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
-import { PRIVATE_FALLBACK_LABEL, type Appearance, type Note } from "../../types/note";
-import { APPEARANCE_DEFAULTS, appearanceStyle, isSeeThrough, seeThroughClass } from "../appearance/appearance";
+import { PRIVATE_FALLBACK_LABEL, type AppAppearance, type Appearance, type Note } from "../../types/note";
+import {
+  APPEARANCE_DEFAULTS,
+  appClasses,
+  appearanceStyle,
+  effectiveAppearance,
+  isSeeThrough,
+  seeThroughClass,
+} from "../appearance/appearance";
+import { useAppAppearance } from "../appearance/useAppAppearance";
 import { ForgotPin } from "../privacy/ForgotPin";
 import { PinPad } from "../privacy/PinPad";
 import { PrivateLabelDialog } from "../privacy/PrivateLabelDialog";
@@ -45,19 +53,29 @@ function useSeeThrough(appearance: Appearance) {
   }, [see]);
 }
 
+/** Root class and CSS variables of a note: its own values over the app defaults,
+ * and the app's high contrast and layout as classes (CSS only, nothing stored). */
+function noteLook(color: string, appearance: Appearance, app: AppAppearance) {
+  return { classes: appClasses(app), style: appearanceStyle(color, effectiveAppearance(appearance, app)) };
+}
+
 export function NoteWindow({ noteId }: { noteId: string }) {
   const [note, setNote] = useState<Note | null>(null);
   const [loadError, setLoadError] = useState(false);
+  // Read before anything is drawn, so a note opened after a change never shows the old look.
+  const app = useAppAppearance();
 
   useEffect(() => {
     commands.getNote(noteId).then(setNote, () => setLoadError(true));
   }, [noteId]);
 
-  if (loadError) return <NoteLoadError noteId={noteId} color="#efe6d8" appearance={NO_APPEARANCE} />;
-  if (!note) return <div className="dn-note" aria-busy="true" style={appearanceStyle("#fff4a3", NO_APPEARANCE)} />;
+  if (!app || (!note && !loadError)) {
+    return <div className="dn-note" aria-busy="true" style={appearanceStyle("#fff4a3", NO_APPEARANCE)} />;
+  }
+  if (!note) return <NoteLoadError noteId={noteId} color="#efe6d8" appearance={NO_APPEARANCE} app={app} />;
   // A locked private note never mounts the editor; its text never reached this window.
-  if (note.locked) return <LockedNote note={note} onNote={setNote} />;
-  return <LoadedNote note={note} onLocked={setNote} />;
+  if (note.locked) return <LockedNote note={note} onNote={setNote} app={app} />;
+  return <LoadedNote note={note} onLocked={setNote} app={app} />;
 }
 
 /**
@@ -66,8 +84,9 @@ export function NoteWindow({ noteId }: { noteId: string }) {
  * as the body. `onNote` receives the note again after any change; once it is
  * unlocked the editor mounts with the real text.
  */
-function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void }) {
+function LockedNote({ note, onNote, app }: { note: Note; onNote: (n: Note) => void; app: AppAppearance }) {
   const label = note.privateLabel || PRIVATE_FALLBACK_LABEL;
+  const look = noteLook(note.color, note.appearance, app);
   const [forgot, setForgot] = useState(false);
   useSeeThrough(note.appearance);
 
@@ -142,7 +161,7 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
   if (note.window.collapsed) {
     const expand = () => void commands.setCollapsed(note.id, false).then(refresh, () => undefined);
     return (
-      <div className="dn-note is-collapsed" style={appearanceStyle(note.color, note.appearance)}>
+      <div className={`dn-note is-collapsed${look.classes}`} style={look.style}>
         <div className="dn-collapsed-strip" data-tauri-drag-region onDoubleClick={expand}>
           <button type="button" className="dn-tool" aria-label="Expand" aria-expanded="false" title="Expand" onClick={expand}>
             <Icon name="chevright" />
@@ -157,7 +176,7 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
   }
 
   return (
-    <div className={`dn-note is-private-locked${seeThroughClass(note.appearance)}`} style={appearanceStyle(note.color, note.appearance)}>
+    <div className={`dn-note is-private-locked${seeThroughClass(note.appearance)}${look.classes}`} style={look.style}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -184,10 +203,21 @@ function LockedNote({ note, onNote }: { note: Note; onNote: (n: Note) => void })
 }
 
 /** Design N7: keeps a note look, header still drags and hides. */
-function NoteLoadError({ noteId, color, appearance }: { noteId: string; color: string; appearance: Appearance }) {
+function NoteLoadError({
+  noteId,
+  color,
+  appearance,
+  app,
+}: {
+  noteId: string;
+  color: string;
+  appearance: Appearance;
+  app: AppAppearance;
+}) {
   useSeeThrough(appearance);
+  const look = noteLook(color, appearance, app);
   return (
-    <div className={`dn-note${seeThroughClass(appearance)}`} style={appearanceStyle(color, appearance)}>
+    <div className={`dn-note${seeThroughClass(appearance)}${look.classes}`} style={look.style}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
@@ -210,10 +240,13 @@ function NoteLoadError({ noteId, color, appearance }: { noteId: string; color: s
   );
 }
 
-function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => void }) {
+function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) => void; app: AppAppearance }) {
   const [color, setColor] = useState(note.color);
   const [appearance, setAppearance] = useState(note.appearance);
   useSeeThrough(appearance);
+  /** The note's own values over the app defaults: what is drawn, never what is stored. */
+  const shown = useMemo(() => effectiveAppearance(appearance, app), [appearance, app]);
+  const look = { classes: appClasses(app), style: appearanceStyle(color, shown) };
   const [updatedAt, setUpdatedAt] = useState(note.updatedAt);
   const [title, setTitle] = useState(note.title);
   const [pinned, setPinned] = useState(note.window.alwaysOnTop);
@@ -614,7 +647,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
     { id: "trash", label: "Move to trash", icon: "trash", danger: true, onSelect: () => void act(() => commands.trashNote(note.id)) },
   ];
 
-  if (contentError) return <NoteLoadError noteId={note.id} color={color} appearance={appearance} />;
+  if (contentError) return <NoteLoadError noteId={note.id} color={color} appearance={appearance} app={app} />;
 
   const pinButton = pinned && (
     <button
@@ -633,7 +666,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   // (hidden) so nothing typed can be lost while collapsed.
   if (collapsed) {
     return (
-      <div className="dn-note is-collapsed" style={appearanceStyle(color, appearance)}>
+      <div className={`dn-note is-collapsed${look.classes}`} style={look.style}>
         <div className="dn-collapsed-strip" data-tauri-drag-region onDoubleClick={() => void setCollapsed(false)}>
           <button
             type="button"
@@ -668,8 +701,8 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
   return (
     <div
       ref={rootRef}
-      className={`dn-note${locked ? " is-readonly" : ""}${editing ? " is-editing" : ""}${seeThroughClass(appearance)}${showBar ? " has-bar" : ""}`}
-      style={appearanceStyle(color, appearance)}
+      className={`dn-note${locked ? " is-readonly" : ""}${editing ? " is-editing" : ""}${seeThroughClass(appearance)}${showBar ? " has-bar" : ""}${look.classes}`}
+      style={look.style}
       onFocus={() => setFocused(true)}
       onBlur={(e) => {
         if (!rootRef.current?.contains(e.relatedTarget as Node | null)) setFocused(false);
@@ -799,7 +832,7 @@ function LoadedNote({ note, onLocked }: { note: Note; onLocked: (n: Note) => voi
         />
       )}
       {showBar && editor && (
-        <FormatBar editor={editor} narrow={narrow} appearance={appearance} onLink={() => setPopover("link")} />
+        <FormatBar editor={editor} narrow={narrow} appearance={shown} onLink={() => setPopover("link")} />
       )}
       {!showBar && saveState !== "error" && !refusal && (
         <span className="dn-resize-mark" aria-hidden="true">
