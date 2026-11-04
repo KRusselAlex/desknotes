@@ -6,9 +6,10 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu, type MenuItem } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged } from "../../ipc/events";
+import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged, onRemindersChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import { PRIVATE_FALLBACK_LABEL, type AppAppearance, type Appearance, type Note } from "../../types/note";
+import type { ReminderView } from "../../types/reminder";
 import {
   APPEARANCE_DEFAULTS,
   appClasses,
@@ -30,6 +31,8 @@ import { FormatBar } from "./FormatBar";
 import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
 import { isSafeLink } from "./links";
+import { chipText } from "./reminderText";
+import { ReminderPopover } from "./ReminderPopover";
 import { NoteNotice, SaveError, SaveIndicator } from "./SaveStatus";
 
 /** Below this width the date hides and the bar keeps only List, B, I, Link. */
@@ -43,6 +46,37 @@ export const LOCK_HOLD_MS = 5_000;
 type Popover = "none" | "color" | "menu" | "link";
 
 const NO_APPEARANCE: Appearance = {};
+
+/** How often the chip looks again, so "today" and "overdue" stay right while the window is open. */
+const REMINDER_REFRESH_MS = 60_000;
+
+/**
+ * The note's reminder, read again when it changes (reminders-changed for this note, or for
+ * several) and every minute. `null` while it has none, or while it cannot be read.
+ */
+function useReminder(noteId: string): ReminderView | null {
+  const [reminder, setReminder] = useState<ReminderView | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      commands.getReminder(noteId).then(
+        (r) => live && setReminder(r),
+        () => undefined,
+      );
+    };
+    load();
+    const timer = setInterval(load, REMINDER_REFRESH_MS);
+    const unlisten = onRemindersChanged(({ noteId: changed }) => {
+      if (changed === null || changed === noteId) load();
+    });
+    return () => {
+      live = false;
+      clearInterval(timer);
+      void unlisten.then((f) => f());
+    };
+  }, [noteId]);
+  return reminder;
+}
 
 /** The native window is transparent only below 100 % opacity; then the page must be too. */
 function useSeeThrough(appearance: Appearance) {
@@ -270,6 +304,14 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** The last save was refused because private notes are locked (its error code, R20). */
   const [saveRefusedByLock, setSaveRefusedByLock] = useState(false);
   const [popover, setPopover] = useState<Popover>("none");
+  /** The reminder popover (design R1); apart from `popover` because the menu closes itself after a pick. */
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const reminder = useReminder(note.id);
+  /** Opens one of the header popovers; only one is open at a time. */
+  const openPopover = useCallback((next: Popover) => {
+    setReminderOpen(false);
+    setPopover(next);
+  }, []);
   const [focused, setFocused] = useState(false);
   const [, setTick] = useState(0); // refreshes the relative date chip
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
@@ -518,6 +560,11 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     editor?.commands.focus();
   }, [editor]);
 
+  const closeReminder = useCallback(() => {
+    setReminderOpen(false);
+    editor?.commands.focus();
+  }, [editor]);
+
   async function setEditLock(value: boolean) {
     if (value) await autosave.flush();
     await commands.setEditLocked(note.id, value);
@@ -537,12 +584,12 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         void hide();
       } else if (key === "k" && !locked) {
         e.preventDefault();
-        setPopover("link");
+        openPopover("link");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [hide, locked]);
+  }, [hide, locked, openPopover]);
 
   /** A refused action (e.g. Duplicate while private notes are locked, D12) says why. */
   async function act(action: () => Promise<unknown>) {
@@ -641,6 +688,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       checked: pinned,
       onSelect: () => void togglePinned(),
     },
+    { id: "reminder", label: "Set reminder…", icon: "bell", onSelect: () => setReminderOpen(true) },
     { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
     { id: "manager", label: "Open manager", icon: "note", separatorBefore: true, onSelect: () => void commands.showManager() },
     { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
@@ -723,6 +771,23 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
             Read-only
           </button>
         )}
+        {reminder && !narrow && (
+          <button
+            type="button"
+            className={`dn-reminder-chip${reminder.overdue ? " is-overdue" : ""}`}
+            aria-label={`Reminder ${chipText(reminder.dueAt, new Date())}`}
+            title={reminder.overdue ? "Overdue · click to change" : "Reminder · click to change"}
+            aria-expanded={reminderOpen}
+            data-popover-toggle
+            onClick={() => {
+              setPopover("none");
+              setReminderOpen(!reminderOpen);
+            }}
+          >
+            <Icon name="bell" size={13} />
+            {chipText(reminder.dueAt, new Date())}
+          </button>
+        )}
         <div className="dn-note-controls">
           <button
             type="button"
@@ -758,7 +823,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
               title="Colour"
               aria-expanded={popover === "color"}
               data-popover-toggle
-              onClick={() => setPopover(popover === "color" ? "none" : "color")}
+              onClick={() => openPopover(popover === "color" ? "none" : "color")}
             >
               <Icon name="colour" />
             </button>
@@ -771,7 +836,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
             aria-haspopup="menu"
             aria-expanded={popover === "menu"}
             data-popover-toggle
-            onClick={() => setPopover(popover === "menu" ? "none" : "menu")}
+            onClick={() => openPopover(popover === "menu" ? "none" : "menu")}
           >
             <Icon name="more" />
           </button>
@@ -792,6 +857,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
           }}
         />
       )}
+      {reminderOpen && <ReminderPopover noteId={note.id} initial={reminder} onClose={closeReminder} />}
       {popover === "menu" && <Menu label="Note actions" items={menuItems} onClose={closePopover} className="dn-note-menu" />}
       {popover === "link" && editor && <LinkEditor editor={editor} onClose={() => setPopover("none")} />}
       {labelDialog && (
@@ -832,7 +898,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         />
       )}
       {showBar && editor && (
-        <FormatBar editor={editor} narrow={narrow} appearance={shown} onLink={() => setPopover("link")} />
+        <FormatBar editor={editor} narrow={narrow} appearance={shown} onLink={() => openPopover("link")} />
       )}
       {!showBar && saveState !== "error" && !refusal && (
         <span className="dn-resize-mark" aria-hidden="true">

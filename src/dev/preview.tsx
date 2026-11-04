@@ -33,7 +33,10 @@
 // in-memory list seeded with an overdue one-off (a1), one later today (a2), a weekday
 // repeat tomorrow (a3) and a monthly one on an archived note (r1); &noreminders starts
 // empty. Changes emit reminders-changed like the native side. In the console,
-// previewFire("a2") makes a2's reminder overdue now, as if it had fired.
+// previewFire("a2") makes a2's reminder overdue now, as if it had fired. A note window shows
+// its reminder as a chip (B2): ?w=note&reminder=1 gives the note a reminder in three days at
+// 14:00 (a Tue-style "Fri 14:00" chip; click it or use ⋯ → Set reminder…), &reminder=open also
+// opens the popover (R1); without it a2's seeded one, later today, shows as "HH:MM".
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -263,6 +266,12 @@ if (params.get("noreminders") === null) {
   const later = today(14, 0);
   later.setDate(later.getDate() + 12);
   seed("r1", later, "monthly");
+}
+if (which === "note" && params.get("reminder")) {
+  const at = new Date(now);
+  at.setDate(at.getDate() + 3);
+  at.setHours(14, 0, 0, 0);
+  reminders.set(noteId, { date: ymd(at), time: hm(at), repeat: "none", dueAt: at.getTime() });
 }
 const reminderView = (r: FakeReminder): ReminderView => ({ ...r, overdue: r.dueAt <= Date.now() });
 const remindersChanged = (noteId: string | null) =>
@@ -531,6 +540,7 @@ mockIPC(
 followSystemTheme();
 
 if (which === "note" && params.has("textStyle")) void openTextStyle();
+if (which === "note" && params.get("reminder") === "open") void openReminder();
 
 /** Clicks through to the Aa popover once the note is on screen, as a person would. */
 async function openTextStyle() {
@@ -552,6 +562,15 @@ async function openTextStyle() {
       Array.from(document.querySelectorAll<HTMLElement>("[data-menu-item]")).find((b) => b.textContent === "Text style…"),
     );
     item.click();
+  }
+}
+
+/** Clicks the reminder chip once the note is on screen, as a person would. */
+async function openReminder() {
+  for (;;) {
+    const chip = document.querySelector<HTMLElement>(".dn-reminder-chip");
+    if (chip) return chip.click();
+    await new Promise((r) => setTimeout(r, 50));
   }
 }
 
