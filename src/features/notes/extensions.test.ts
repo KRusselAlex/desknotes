@@ -230,20 +230,76 @@ describe("pasted styles", () => {
   });
 });
 
-describe("highlight shortcut", () => {
+describe("highlight always carries an allowed colour", () => {
   const press = (editor: Editor) =>
     editor.view.dom.dispatchEvent(
       new KeyboardEvent("keydown", { key: "H", code: "KeyH", keyCode: 72, ctrlKey: true, shiftKey: true, bubbles: true }),
     );
-
-  it("always uses an allowed colour, never null", () => {
+  const marksOfFirst = (editor: Editor) => editor.getJSON().content![0]!.content![0]!.marks;
+  const yellow = [{ type: "highlight", attrs: { color: "#ffe36e" } }];
+  const withWord = () => {
     const editor = editorWith(para([{ type: "text", text: "word" }]));
     editor.commands.selectAll();
+    return editor;
+  };
+
+  it("Ctrl+Shift+H uses yellow and toggles off", () => {
+    const editor = withWord();
     press(editor);
-    const first = () => editor.getJSON().content![0]!.content![0]!;
-    expect(first().marks).toEqual([{ type: "highlight", attrs: { color: "#ffe36e" } }]);
+    expect(marksOfFirst(editor)).toEqual(yellow);
     press(editor);
-    expect(first().marks).toBeUndefined();
+    expect(marksOfFirst(editor)).toBeUndefined();
+    editor.destroy();
+  });
+
+  it("toggleHighlight() without a colour uses yellow and toggles off", () => {
+    const editor = withWord();
+    editor.commands.toggleHighlight();
+    expect(marksOfFirst(editor)).toEqual(yellow);
+    editor.commands.toggleHighlight();
+    expect(marksOfFirst(editor)).toBeUndefined();
+    editor.destroy();
+  });
+
+  it("setHighlight() without a colour uses yellow", () => {
+    const editor = withWord();
+    editor.commands.setHighlight();
+    expect(marksOfFirst(editor)).toEqual(yellow);
+    editor.destroy();
+  });
+
+  it("keeps a chosen colour and refuses an unknown one", () => {
+    const editor = withWord();
+    editor.commands.setHighlight({ color: "#CCDBB2" });
+    expect(marksOfFirst(editor)).toEqual([{ type: "highlight", attrs: { color: "#ccdbb2" } }]);
+    editor.commands.unsetHighlight();
+    expect(editor.commands.setHighlight({ color: "#123456" })).toBe(false);
+    expect(editor.commands.toggleHighlight({ color: "red" })).toBe(false);
+    expect(marksOfFirst(editor)).toBeUndefined();
+    editor.destroy();
+  });
+
+  it("the ==text== input rule highlights in yellow", () => {
+    const editor = editorWith(para([{ type: "text", text: "a ==x=" }]));
+    editor.commands.focus("end");
+    const { from, to } = editor.state.selection;
+    const handled = editor.view.someProp("handleTextInput", (f) => f(editor.view, from, to, "=", () => editor.state.tr));
+    expect(handled).toBe(true);
+    const nodes = editor.getJSON().content![0]!.content!;
+    expect(nodes.find((n: JSONContent) => n.text === "x")?.marks).toEqual(yellow);
+    expect(JSON.stringify(editor.getJSON())).not.toContain('"color":null');
+    editor.destroy();
+  });
+
+  it("the ==text== paste rule highlights in yellow", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    editor.commands.focus();
+    // jsdom has no ClipboardEvent, so send the transaction a paste produces.
+    const { tr } = editor.state;
+    editor.view.dispatch(tr.insertText("a ==x== b").setMeta("uiEvent", "paste"));
+    const nodes = editor.getJSON().content![0]!.content!;
+    expect(nodes.find((n: JSONContent) => n.text === "x")?.marks).toEqual(yellow);
+    expect(JSON.stringify(editor.getJSON())).not.toContain('"color":null');
     editor.destroy();
   });
 });
@@ -285,9 +341,14 @@ describe("editor commands for text style", () => {
     editor.destroy();
   });
 
-  it("justify shortcut is ignored", () => {
+  it("setTextAlign refuses justify, and Ctrl+Shift+J changes nothing", () => {
     const editor = editorWith(para([{ type: "text", text: "word" }]));
     expect(editor.commands.setTextAlign("justify")).toBe(false);
+    editor.view.dom.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "J", code: "KeyJ", keyCode: 74, ctrlKey: true, shiftKey: true, bubbles: true }),
+    );
+    expect(JSON.stringify(editor.getJSON())).not.toContain("justify");
+    expect(editor.getJSON().content![0]!.attrs?.textAlign ?? null).toBeNull();
     editor.destroy();
   });
 });

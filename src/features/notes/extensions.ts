@@ -1,8 +1,15 @@
-import { Extension, getStyleProperty, type Extensions, type JSONContent } from "@tiptap/core";
+import {
+  Extension,
+  getStyleProperty,
+  markInputRule,
+  markPasteRule,
+  type Extensions,
+  type JSONContent,
+} from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Bold from "@tiptap/extension-bold";
 import Link from "@tiptap/extension-link";
-import Highlight from "@tiptap/extension-highlight";
+import Highlight, { inputRegex, pasteRegex } from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import { Color, FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
@@ -195,6 +202,37 @@ const NoteHighlight = Highlight.extend({
   },
   parseHTML() {
     return [{ tag: "mark", getAttrs: (node) => (highlightColorOf(node as HTMLElement) ? null : false) }];
+  },
+  // Tiptap's commands and ==text== rules set no colour when none is given, and a
+  // highlight without one is refused by the core. No colour means yellow, and a
+  // colour outside the four is not stored.
+  addCommands() {
+    const colorOf = (attributes?: { color?: string }) =>
+      attributes?.color === undefined ? DEFAULT_HIGHLIGHT : normalizeHighlight(attributes.color);
+    return {
+      setHighlight:
+        (attributes) =>
+        ({ commands }) => {
+          const color = colorOf(attributes);
+          return color !== null && commands.setMark(this.name, { color });
+        },
+      toggleHighlight:
+        (attributes) =>
+        ({ commands }) => {
+          const color = colorOf(attributes);
+          return color !== null && commands.toggleMark(this.name, { color });
+        },
+      unsetHighlight:
+        () =>
+        ({ commands }) =>
+          commands.unsetMark(this.name),
+    };
+  },
+  addInputRules() {
+    return [markInputRule({ find: inputRegex, type: this.type, getAttributes: () => ({ color: DEFAULT_HIGHLIGHT }) })];
+  },
+  addPasteRules() {
+    return [markPasteRule({ find: pasteRegex, type: this.type, getAttributes: () => ({ color: DEFAULT_HIGHLIGHT }) })];
   },
   addKeyboardShortcuts() {
     return {
