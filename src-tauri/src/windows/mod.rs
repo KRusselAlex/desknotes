@@ -25,6 +25,9 @@ pub const SAVE_ALL_NOTES: &str = "save-all-notes";
 pub const QUIT_BLOCKED: &str = "quit-blocked";
 /// Sent to a note window: perform "hide", "archive" or "trash" after saving.
 pub const NOTE_ACTION: &str = "note-action";
+/// Sent to every window when the app-wide note appearance changes; the payload
+/// is the saved `AppAppearance`.
+pub const APP_APPEARANCE_CHANGED: &str = "app-appearance-changed";
 /// Sent to the note settings window when a note window changes size.
 pub const NOTE_RESIZED: &str = "note-resized";
 /// Sent to an open note settings window: show the note whose id is the payload.
@@ -54,6 +57,13 @@ pub fn emit_changed(app: &AppHandle, id: Option<&str>, kind: &'static str) {
     };
     if let Err(e) = app.emit(NOTES_CHANGED, payload) {
         eprintln!("DeskNotes: could not notify windows: {e}");
+    }
+}
+
+/// Tell every window the app-wide appearance now has this (normalised) value.
+pub fn emit_app_appearance_changed(app: &AppHandle, appearance: &desknotes_core::AppAppearance) {
+    if let Err(e) = app.emit(APP_APPEARANCE_CHANGED, appearance) {
+        eprintln!("DeskNotes: could not notify windows of the appearance: {e}");
     }
 }
 

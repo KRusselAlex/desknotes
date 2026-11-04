@@ -1,4 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { AppAppearance } from "../types/note";
 
 /** Emitted by Rust after any change. `id` is null when many notes changed.
  * `kind` is "content" for text saves and "other" for everything else. */
@@ -78,4 +79,11 @@ export const NOTE_SETTINGS_NOTE = "note-settings-note";
 /** The Note settings window was pointed at another note (its id; sent to that window only). */
 export function onNoteSettingsNote(handler: (id: string) => void): Promise<UnlistenFn> {
   return listen<string>(NOTE_SETTINGS_NOTE, (event) => handler(event.payload));
+}
+
+export const APP_APPEARANCE_CHANGED = "app-appearance-changed";
+
+/** The app-wide note appearance was saved in Settings (sent to every window). */
+export function onAppAppearanceChanged(handler: (a: AppAppearance) => void): Promise<UnlistenFn> {
+  return listen<AppAppearance>(APP_APPEARANCE_CHANGED, (event) => handler(event.payload));
 }

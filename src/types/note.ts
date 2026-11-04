@@ -99,12 +99,33 @@ export interface ToggleShortcut {
   label: string | null;
 }
 
+export type Layout = "comfortable" | "compact";
+
+/** App-wide look of every note window (Rust `AppAppearance`, Settings → Appearance). */
+export interface AppAppearance {
+  /** Black on white notes with heavier rules and focus rings. */
+  highContrast: boolean;
+  layout: Layout;
+  /** A font family installed on this computer; null = the system font. */
+  defaultFont: string | null;
+  /** Default text size in pixels, 10 to 32. */
+  defaultSize: number;
+}
+
+export const APP_APPEARANCE_DEFAULTS: AppAppearance = {
+  highContrast: false,
+  layout: "comfortable",
+  defaultFont: null,
+  defaultSize: 15,
+};
+
 /** What the Settings window shows (Rust `SettingsView`). */
 export interface SettingsView {
   launchAtLogin: boolean;
   newNoteColor: string;
   /** Smallest size a note window may take, in pixels. */
   minNoteSize: NoteSize;
+  appAppearance: AppAppearance;
   version: string;
   dataDir: string;
   /** Last successful export, Unix ms. */

@@ -37,6 +37,7 @@ const settings = {
   launchAtLogin: false,
   newNoteColor: "#fff4a3",
   minNoteSize: { width: 180, height: 120 },
+  appAppearance: { highContrast: false, layout: "comfortable" as const, defaultFont: null, defaultSize: 15 },
   version: "0.1.0",
   dataDir: "/home/me/.local/share/io.github.krusselalex.desknotes",
   lastBackupAt: null,
