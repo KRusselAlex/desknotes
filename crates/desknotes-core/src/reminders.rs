@@ -89,6 +89,53 @@ pub enum Snooze {
     Tomorrow,
 }
 
+/// A reminder as stored (spec §4). Times are UTC Unix milliseconds, like every other
+/// timestamp in the schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reminder {
+    pub note_id: String,
+    pub rule: ReminderRule,
+    /// The next occurrence of the rule (the anchor; a snooze never moves it).
+    pub due_at: i64,
+    pub snoozed_until: Option<i64>,
+    /// The effective due time already notified, so a restart never repeats it.
+    pub fired_at: Option<i64>,
+}
+
+impl Reminder {
+    /// When the reminder is next due: the snooze if there is one, else `due_at`.
+    pub fn effective_due(&self) -> i64 {
+        self.snoozed_until.unwrap_or(self.due_at)
+    }
+}
+
+/// One line of the manager's Reminders tab. The title is the note's real title: hiding
+/// it behind "Private note" while the lock is on needs the lock state, which the shell
+/// owns (ruling R1), so the shell masks `title` when `private` and the lock is engaged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReminderRow {
+    pub note_id: String,
+    pub title: String,
+    pub color: String,
+    pub private: bool,
+    pub repeat: Repeat,
+    /// UTC ms; the snooze if there is one, else the occurrence.
+    pub effective_due: i64,
+    /// `effective_due <= now`: due and not dismissed or rescheduled yet.
+    pub overdue: bool,
+}
+
+/// Stored and accepted reminder instants lie within this span of "now" (spec §4: ±100 years).
+const MAX_SPAN_MS: i64 = 100 * 366 * 24 * 3600 * 1000;
+
+/// Whether `at_ms` is within ±100 years of `now_ms`.
+pub fn within_range(at_ms: i64, now_ms: i64) -> bool {
+    at_ms
+        .checked_sub(now_ms)
+        .is_some_and(|d| d.abs() <= MAX_SPAN_MS)
+}
+
 /// The rule's own date and time in `tz`, with the DST gap and overlap rules applied.
 pub fn first_due<Tz: TimeZone>(rule: &ReminderRule, tz: &Tz) -> DateTime<Utc> {
     resolve_local(rule.local_date.and_time(rule.local_time), tz)

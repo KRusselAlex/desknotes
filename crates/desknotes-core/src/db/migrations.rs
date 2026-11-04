@@ -55,6 +55,19 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE notes ADD COLUMN appearance TEXT NOT NULL DEFAULT '{}';
     "#,
+    // v6 — one reminder per note. Times are UTC ms; the local date, time and repeat are
+    // kept so a repeat stays at the same wall-clock time. No existing data changes.
+    r#"
+    CREATE TABLE reminders (
+        note_id        TEXT PRIMARY KEY NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        local_date     TEXT NOT NULL,
+        local_time     TEXT NOT NULL,
+        repeat         TEXT NOT NULL,
+        due_at         INTEGER NOT NULL,
+        snoozed_until  INTEGER,
+        fired_at       INTEGER
+    );
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;

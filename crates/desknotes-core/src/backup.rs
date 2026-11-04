@@ -2,9 +2,10 @@
 //!
 //! A backup is one UTF-8 JSON file holding every note, including archived and
 //! trashed ones, with its window state and privacy flag. It contains no
-//! settings and no PIN. Version 3 added `appearance` (per-note text and window
-//! styling); version 2 added `private` and `privateLabel`. Older files still
-//! restore, with every note not private and default appearance.
+//! settings and no PIN. Version 4 added `reminder` (a note's reminder); version 3
+//! added `appearance` (per-note text and window styling); version 2 added
+//! `private` and `privateLabel`. Older files still restore, with every note not
+//! private, default appearance and no reminder.
 //! Everything read from a backup file is validated before anything is changed.
 
 use std::collections::HashSet;
@@ -14,12 +15,14 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::enforce_min_size;
 use crate::model::{Appearance, NoteWindow};
+use crate::now_ms;
+use crate::reminders::{validate_rule, within_range};
 use crate::validation::{
     parse_content, parse_note_id, validate_appearance, validate_color, validate_private_label,
 };
 
 pub const BACKUP_FORMAT: &str = "desknotes-backup";
-pub const BACKUP_VERSION: u32 = 3;
+pub const BACKUP_VERSION: u32 = 4;
 /// Refuse files larger than this before parsing them.
 pub const MAX_BACKUP_BYTES: usize = 200 * 1024 * 1024;
 pub const MAX_BACKUP_NOTES: usize = 100_000;
@@ -59,11 +62,48 @@ pub struct BackupNote {
     /// Text and window styling (version 3; absent in older files = defaults).
     #[serde(default)]
     pub appearance: Appearance,
+    /// The note's reminder (version 4; absent or null = none).
+    #[serde(default)]
+    pub reminder: Option<BackupReminder>,
     pub window: NoteWindow,
+}
+
+/// A reminder as written to a backup. `due_at`, `snoozed_until` and `fired_at` are
+/// Unix ms (UTC); the date, time and repeat are the user's local wall-clock choice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackupReminder {
+    /// `YYYY-MM-DD`.
+    pub local_date: String,
+    /// `HH:MM`, 24 h.
+    pub local_time: String,
+    /// `none`, `daily`, `weekdays`, `weekly` or `monthly`.
+    pub repeat: String,
+    pub due_at: i64,
+    #[serde(default)]
+    pub snoozed_until: Option<i64>,
+    #[serde(default)]
+    pub fired_at: Option<i64>,
 }
 
 fn invalid(msg: impl Into<String>) -> CoreError {
     CoreError::Validation(msg.into())
+}
+
+/// Same checks as setting a reminder: a real date and time, a known repeat, and every
+/// instant within 100 years of now.
+fn validate_backup_reminder(r: &BackupReminder) -> CoreResult<()> {
+    validate_rule(&r.local_date, &r.local_time, &r.repeat)?;
+    let now = now_ms();
+    let all_in_range = [Some(r.due_at), r.snoozed_until, r.fired_at]
+        .into_iter()
+        .flatten()
+        .all(|t| t >= 0 && within_range(t, now));
+    if all_in_range {
+        Ok(())
+    } else {
+        Err(invalid("invalid reminder time"))
+    }
 }
 
 /// Parse and fully validate a backup file. Nothing is changed on failure.
@@ -98,6 +138,9 @@ pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
             .map_err(|e| invalid(format!("note {n}: {e}")))?;
         note.appearance = validate_appearance(std::mem::take(&mut note.appearance))
             .map_err(|e| invalid(format!("note {n}: {e}")))?;
+        if let Some(r) = &note.reminder {
+            validate_backup_reminder(r).map_err(|e| invalid(format!("note {n}: {e}")))?;
+        }
         let times = [
             Some(note.created_at),
             Some(note.updated_at),
@@ -220,6 +263,70 @@ mod tests {
         unknown["appearance"] = json!({"css": "x"});
         let err = parse_backup(&file_v3(vec![unknown])).unwrap_err();
         assert!(err.to_string().contains("unknown field"), "{err}");
+    }
+
+    fn file_v4(notes: Vec<serde_json::Value>) -> String {
+        json!({"format": BACKUP_FORMAT, "version": 4, "appVersion": "0.4.0", "exportedAt": 3, "notes": notes})
+            .to_string()
+    }
+
+    fn reminder() -> serde_json::Value {
+        let due = now_ms() + 86_400_000;
+        json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "weekly",
+               "dueAt": due, "snoozedUntil": due + 600_000, "firedAt": due})
+    }
+
+    #[test]
+    fn version_4_keeps_reminders_and_older_files_have_none() {
+        let mut with = note(A);
+        with["reminder"] = reminder();
+        let b = parse_backup(&file_v4(vec![with, note(B)])).unwrap();
+        let r = b.notes[0].reminder.as_ref().unwrap();
+        assert_eq!(
+            (r.local_date.as_str(), r.local_time.as_str()),
+            ("2026-11-04", "14:00")
+        );
+        assert_eq!(r.repeat, "weekly");
+        assert!(r.snoozed_until.is_some() && r.fired_at.is_some());
+        assert_eq!(b.notes[1].reminder, None, "the field is optional");
+        let out = serde_json::to_value(&b).unwrap();
+        assert_eq!(out["notes"][1]["reminder"], json!(null));
+        assert_eq!(out["notes"][0]["reminder"]["localTime"], json!("14:00"));
+
+        for raw in [
+            file(vec![note(A)]),
+            file_v2(vec![note(A)]),
+            file_v3(vec![note(A)]),
+        ] {
+            assert_eq!(parse_backup(&raw).unwrap().notes[0].reminder, None);
+        }
+    }
+
+    #[test]
+    fn backup_refuses_an_invalid_reminder_and_names_the_note() {
+        let due = now_ms() + 1000;
+        let bad = [
+            json!({"localDate": "2026-02-30", "localTime": "14:00", "repeat": "none", "dueAt": due}),
+            json!({"localDate": "2026-11-04", "localTime": "24:00", "repeat": "none", "dueAt": due}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "hourly", "dueAt": due}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none", "dueAt": -1}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none", "dueAt": 10_000_000_000_000_i64}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none", "dueAt": i64::MAX}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none", "dueAt": due, "firedAt": -5}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none", "dueAt": due, "snoozedUntil": i64::MIN}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none", "dueAt": due, "css": 1}),
+            json!({"localDate": "2026-11-04", "localTime": "14:00", "repeat": "none"}),
+        ];
+        for r in bad {
+            let mut n = note(B);
+            n["reminder"] = r.clone();
+            let err = parse_backup(&file_v4(vec![note(A), n])).unwrap_err();
+            let text = err.to_string();
+            assert!(
+                text.contains("note 2") || text.contains("not a DeskNotes backup"),
+                "{r}: {text}"
+            );
+        }
     }
 
     #[test]
