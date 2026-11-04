@@ -13,7 +13,9 @@ architecture. The owner's full requirements are in the M0 design and the Jira bo
   (`src/ipc` is the only place allowed to call `invoke`). Validate everything in Rust.
 - Note content is validated Tiptap JSON, never HTML. New editor nodes/marks must be added
   to the allowlist in `crates/desknotes-core/src/validation.rs` and the shared fixture.
-- Window titles, notifications and previews never show note text.
+- Window titles, notifications and previews never show note text. One exception, decided by
+  the owner on 2026-11-04 (DES-36): a reminder notification shows the note's **title**
+  (never its body), and "Private note" while the note is locked.
 - Do not claim something works without testing it; record real-app checks in `docs/testing/`.
 
 ## Design
