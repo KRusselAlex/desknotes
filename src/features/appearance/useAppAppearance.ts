@@ -16,19 +16,23 @@ export function useAppAppearance(): AppAppearance | null {
     let live = true;
     /** A change that arrived before the first read answered is newer: keep it. */
     let changed = false;
-    // Listen first, so a change made while the read is on its way is not missed.
+    // Listen first, and read only once listening, so a change made while the read is on
+    // its way is not missed. Outside the app there may be nothing to listen to: read anyway.
     const unlisten = onAppAppearanceChanged((a) => {
       changed = true;
       if (live) setApp(a);
     }).catch(() => null);
-    commands.getAppAppearance().then(
-      (a) => {
-        if (live && !changed) setApp(a);
-      },
-      () => {
-        if (live && !changed) setApp({ ...APP_APPEARANCE_DEFAULTS });
-      },
-    );
+    void unlisten.then(() => {
+      if (!live) return;
+      commands.getAppAppearance().then(
+        (a) => {
+          if (live && !changed) setApp(a);
+        },
+        () => {
+          if (live && !changed) setApp({ ...APP_APPEARANCE_DEFAULTS });
+        },
+      );
+    });
     return () => {
       live = false;
       void unlisten.then((f) => f?.());
