@@ -3,10 +3,11 @@
 //! One thread waits until the next reminder is due, or 60 s at most, so a change of
 //! the clock or the time zone is noticed within a minute. It also wakes at once when a
 //! reminder changes, at start and when the computer resumes from sleep. On each wake
-//! it re-anchors the reminders if the local UTC offset changed (ruling R4), asks the
-//! core which reminders are due, sends one notification per reminder and records it as
-//! fired. The core owns every time rule; this module only moves data between the core
-//! and the desktop's notification service.
+//! it re-anchors the reminders if the local UTC offset changed (ruling R4) or a backup
+//! was restored, asks the core which reminders are due, sends one notification per
+//! reminder and records it as fired; a fire that could not be recorded is retried and
+//! never sent twice. The core owns every time rule; this module only moves data
+//! between the core and the desktop's notification service.
 //!
 //! Privacy: a notification shows the note's title, or "Private note" while the lock
 //! withholds the note (ruling R6). Nothing here logs a title or puts one in an event.
@@ -17,7 +18,7 @@
 //! changed (dismissed or snoozed elsewhere, set again), the old notification's buttons
 //! do nothing, and a note's notifications are closed whenever its reminder changes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -42,11 +43,13 @@ pub const RETRY_AFTER: Duration = Duration::from_secs(60);
 pub const EMPTY_TITLE: &str = "Empty note";
 
 /// The buttons of a reminder notification, and its default action (a click on it).
+/// GNOME Shell 46 draws only the first three buttons, in the order sent, so "Dismiss"
+/// comes before "Tomorrow" (ruling R21); desktops with room show all four.
 pub const REMINDER_ACTIONS: &[(&str, &str)] = &[
     ("snooze10", "10 min"),
     ("snooze60", "1 h"),
-    ("tomorrow", "Tomorrow"),
     ("dismiss", "Dismiss"),
+    ("tomorrow", "Tomorrow"),
     ("default", ""),
 ];
 /// The summary of a start-up burst has no buttons; a click shows the manager.
@@ -260,6 +263,9 @@ pub struct Scheduler {
     to_close: Mutex<Vec<u32>>,
     /// The privacy lock engaged: close notifications that show a now-withheld title.
     lock_engaged: AtomicBool,
+    /// The database was replaced (a backup restored): re-anchor at the next pass, as
+    /// when the UTC offset changes, since its due times may come from another zone.
+    reanchor_pending: AtomicBool,
 }
 
 impl Scheduler {
@@ -271,7 +277,14 @@ impl Scheduler {
             shown: Mutex::new(HashMap::new()),
             to_close: Mutex::new(Vec::new()),
             lock_engaged: AtomicBool::new(false),
+            reanchor_pending: AtomicBool::new(false),
         }
+    }
+
+    /// Re-anchor every reminder at the next pass, and wake now.
+    fn request_reanchor(&self) {
+        self.reanchor_pending.store(true, Ordering::Release);
+        self.wake();
     }
 
     fn wake(&self) {
@@ -303,6 +316,14 @@ impl Scheduler {
         }
         drop(shown);
         lock(&self.to_close).extend(ids);
+    }
+
+    /// Close now the notifications queued by [`Self::forget_note`].
+    fn close_stale(&self, log: &mut dyn FnMut(&str)) {
+        let stale = std::mem::take(&mut *lock(&self.to_close));
+        for id in stale {
+            self.close(id, log);
+        }
     }
 
     /// Take notification `id` away. A failure is logged without any text; the
@@ -378,10 +399,20 @@ pub fn on_locked(app: &AppHandle) {
     }
 }
 
+/// Re-anchor every reminder at the next pass (the database was replaced by a backup).
+pub fn reanchor(app: &AppHandle) {
+    if let Some(scheduler) = app.try_state::<Scheduler>() {
+        scheduler.request_reanchor();
+    }
+}
+
 /// What the scheduler remembers between wakes.
 struct Run {
     /// The start-up burst limit applies until one pass sent everything it had.
     first: bool,
+    /// Reminder notifications sent during the start-up burst (across retries), so a
+    /// failed send cannot raise the burst above [`STARTUP_LIMIT`].
+    burst_sent: usize,
     /// The local UTC offset (seconds) at the last pass; `None` before the first.
     offset: Option<i32>,
     /// No notification is tried before this, after the service failed.
@@ -390,16 +421,21 @@ struct Run {
     failing: bool,
     /// The database could not be read at the last pass (logged once).
     unavailable: bool,
+    /// Fires sent but not recorded (the database failed): retried at each pass and
+    /// never sent again meanwhile.
+    unrecorded: HashSet<(String, i64)>,
 }
 
 impl Run {
     fn new() -> Self {
         Self {
             first: true,
+            burst_sent: 0,
             offset: None,
             retry_at: None,
             failing: false,
             unavailable: false,
+            unrecorded: HashSet::new(),
         }
     }
 }
@@ -445,10 +481,7 @@ fn pass<D: DbAccess, Tz: TimeZone>(
     log: &mut dyn FnMut(&str),
 ) -> bool {
     // Out-of-date notifications (their reminder changed) go first.
-    let stale = std::mem::take(&mut *lock(&scheduler.to_close));
-    for id in stale {
-        scheduler.close(id, log);
-    }
+    scheduler.close_stale(log);
     // R10: the lock engaged. If the check fails the flag is kept for the next pass.
     if scheduler.lock_engaged.swap(false, Ordering::AcqRel) {
         match scheduler.withheld_titles(db) {
@@ -463,20 +496,36 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         }
     }
 
+    // Fires sent but not recorded: record them now. A reminder changed since makes
+    // `mark_fired` a no-op, which also ends the entry. Failures were logged already.
+    if !run.unrecorded.is_empty() {
+        let pending: Vec<(String, i64)> = run.unrecorded.iter().cloned().collect();
+        for fire in pending {
+            if db.db(|db| db.mark_fired(&fire.0, fire.1)).is_ok() {
+                run.unrecorded.remove(&fire);
+            }
+        }
+    }
+
     let mut changed = false;
+    // A restored backup re-anchors as an offset change does. Kept if the read fails.
+    let reanchor = scheduler.reanchor_pending.swap(false, Ordering::AcqRel);
     let gathered = db.db(|db| {
-        if run.offset != Some(offset) {
+        if reanchor || run.offset != Some(offset) {
             changed |= db.reanchor_reminders(now, tz)? > 0;
         }
         gather(db, now, tz)
     });
-    let items = match gathered {
+    let mut items = match gathered {
         Ok(items) => {
             run.offset = Some(offset);
             run.unavailable = false;
             items
         }
         Err(e) => {
+            if reanchor {
+                scheduler.reanchor_pending.store(true, Ordering::Release);
+            }
             if !run.unavailable {
                 log(&format!("reminders could not be read: {}", e.code));
             }
@@ -484,11 +533,18 @@ fn pass<D: DbAccess, Tz: TimeZone>(
             return changed;
         }
     };
+    items.retain(|i| {
+        !run.unrecorded
+            .contains(&(i.note_id.clone(), i.effective_due))
+    });
     if run.retry_at.is_some_and(|at| Instant::now() < at) {
         return changed;
     }
 
-    for out in plan(items, run.first.then_some(STARTUP_LIMIT)) {
+    let limit = run
+        .first
+        .then(|| STARTUP_LIMIT.saturating_sub(run.burst_sent));
+    for out in plan(items, limit) {
         let sent = scheduler.notifier.send(&Notification {
             summary: &out.summary,
             actions: out.actions,
@@ -505,6 +561,15 @@ fn pass<D: DbAccess, Tz: TimeZone>(
                 return changed;
             }
         };
+        if let Some((note_id, _)) = &out.reminder {
+            if run.first {
+                run.burst_sent += 1;
+            }
+            // A new occurrence (ruling R5): the reminder's older notifications are out
+            // of date and their buttons do nothing, so take them away.
+            scheduler.forget_note(note_id);
+            scheduler.close_stale(log);
+        }
         lock(&scheduler.shown).insert(
             id,
             Shown {
@@ -527,10 +592,14 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         match marked {
             Ok(true) => scheduler.close(id, log),
             Ok(false) => {}
-            Err(e) => log(&format!(
-                "a sent reminder could not be recorded: {}",
-                e.code
-            )),
+            Err(e) => {
+                // Sent: never sent again. Recorded at a later pass (see above).
+                log(&format!(
+                    "a sent reminder could not be recorded: {}",
+                    e.code
+                ));
+                run.unrecorded.extend(out.fires.iter().cloned());
+            }
         }
         changed = true;
     }
@@ -745,8 +814,21 @@ mod tests {
     #[test]
     fn notification_buttons_are_verbatim() {
         let labels: Vec<_> = REMINDER_ACTIONS.iter().map(|(_, l)| *l).collect();
-        assert_eq!(labels, ["10 min", "1 h", "Tomorrow", "Dismiss", ""]);
+        assert_eq!(labels, ["10 min", "1 h", "Dismiss", "Tomorrow", ""]);
         assert_eq!(REMINDER_ACTIONS[4].0, "default");
+    }
+
+    #[test]
+    fn dismiss_is_among_the_three_buttons_gnome_shows() {
+        // GNOME Shell 46 draws the first three buttons, in the order sent (R21).
+        let buttons: Vec<_> = REMINDER_ACTIONS
+            .iter()
+            .map(|(key, _)| *key)
+            .filter(|key| *key != "default")
+            .collect();
+        let dismiss = buttons.iter().position(|k| *k == "dismiss").unwrap();
+        assert!(dismiss < 3, "{buttons:?}");
+        assert_eq!(&buttons[..2], ["snooze10", "snooze60"]);
     }
 
     #[test]
@@ -1031,7 +1113,7 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_burst_at_start_keeps_the_limit() {
+    fn a_burst_interrupted_by_a_failed_send_still_sends_at_most_the_limit() {
         let db = Database::open_in_memory().unwrap();
         let ids: Vec<String> = (0..7)
             .map(|n| note_with_due_reminder(&db, &format!("Note {n}")))
@@ -1047,12 +1129,148 @@ mod tests {
         fake.state().fail_after = None;
         run.retry_at = Some(Instant::now() - Duration::from_secs(1));
         tick(&db, &s, &mut run, &mut log);
-        // Five were left: exactly the limit, so no summary.
+        // Two were sent before the failure: three more, then a summary of the other two.
         let summaries = fake.summaries();
-        assert_eq!(summaries.len(), 7);
-        assert!(summaries.iter().all(|t| t.starts_with("Note ")));
+        let reminders = summaries.iter().filter(|t| t.starts_with("Note ")).count();
+        assert_eq!(reminders, STARTUP_LIMIT, "{summaries:?}");
+        assert_eq!(summaries.len(), STARTUP_LIMIT + 1);
+        assert_eq!(summaries.last().unwrap(), "2 more reminders");
         assert!(ids.iter().all(|id| fired(&db, id)));
         assert!(!run.first);
+    }
+
+    /// Fails `failures` database calls made after the first notification was sent, as
+    /// if the disk filled up just after a reminder went out.
+    struct FailAfterSend<'a> {
+        db: &'a Database,
+        fake: &'a Fake,
+        failures: std::cell::Cell<usize>,
+    }
+
+    impl DbAccess for FailAfterSend<'_> {
+        fn db<T>(&self, f: impl FnOnce(&Database) -> CoreResult<T>) -> IpcResult<T> {
+            if !self.fake.state().sent.is_empty() && self.failures.get() > 0 {
+                self.failures.set(self.failures.get() - 1);
+                return Err(crate::error::IpcError::new("io", "disk full"));
+            }
+            Ok(f(self.db)?)
+        }
+    }
+
+    #[test]
+    fn a_sent_reminder_that_could_not_be_recorded_is_not_sent_again() {
+        let db = Database::open_in_memory().unwrap();
+        let id = note_with_due_reminder(&db, "Dentist");
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        let failing = FailAfterSend {
+            db: &db,
+            fake: &fake,
+            failures: std::cell::Cell::new(2),
+        };
+        // The record fails, then the first retry fails too.
+        tick(&failing, &s, &mut run, &mut log);
+        assert!(!fired(&db, &id));
+        tick(&failing, &s, &mut run, &mut log);
+        assert!(!fired(&db, &id));
+        assert_eq!(fake.summaries(), ["Dentist"], "not sent again meanwhile");
+        // The database is back: recorded, still sent once.
+        tick(&failing, &s, &mut run, &mut log);
+        assert!(fired(&db, &id));
+        assert!(run.unrecorded.is_empty());
+        tick(&failing, &s, &mut run, &mut log);
+        assert_eq!(fake.summaries(), ["Dentist"]);
+        assert_eq!(log.len(), 1, "logged once: {log:?}");
+        assert!(log[0].contains("could not be recorded") && !log[0].contains("Dentist"));
+    }
+
+    #[test]
+    fn an_unrecorded_fire_of_a_changed_reminder_is_dropped() {
+        let db = Database::open_in_memory().unwrap();
+        let id = note_with_due_reminder(&db, "Dentist");
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        let failing = FailAfterSend {
+            db: &db,
+            fake: &fake,
+            failures: std::cell::Cell::new(1),
+        };
+        tick(&failing, &s, &mut run, &mut log);
+        assert_eq!(run.unrecorded.len(), 1);
+        // Set again for later: the old occurrence no longer matches, mark_fired is a no-op.
+        let rule = validate_rule("2026-11-04", "15:00", "none").unwrap();
+        db.set_reminder(&id, rule, now(), &Paris).unwrap();
+        tick(&failing, &s, &mut run, &mut log);
+        assert!(run.unrecorded.is_empty());
+        assert_eq!(db.reminder(&id).unwrap().unwrap().fired_at, None);
+    }
+
+    #[test]
+    fn a_new_occurrence_closes_the_reminders_older_notifications() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        let rule = validate_rule("2026-11-04", "10:30", "daily").unwrap();
+        db.set_reminder(&id, rule, utc(2026, 11, 4, 9, 0), &Paris)
+            .unwrap();
+        let other = note_with_due_reminder(&db, "Bakery");
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        let first: Vec<(u32, String)> = fake.state().sent.clone();
+        let daily = first.iter().find(|(_, t)| t == "Empty note").unwrap().0;
+        let bakery = first.iter().find(|(_, t)| t == "Bakery").unwrap().0;
+
+        // Not answered; the next day's occurrence is sent (ruling R5).
+        let tomorrow = utc(2026, 11, 5, 10, 0);
+        pass(
+            &db,
+            &s,
+            &mut run,
+            tomorrow,
+            &Paris,
+            PARIS_OFFSET,
+            &mut |l| log.push(l.to_owned()),
+        );
+        let latest = fake.last_id();
+        assert_ne!(latest, daily);
+        assert_eq!(fake.state().closed, [daily], "the old one is taken away");
+        let shown = lock(&s.shown);
+        assert!(shown.contains_key(&latest) && shown.contains_key(&bakery));
+        assert!(!shown.contains_key(&daily));
+        drop(shown);
+        assert!(db.reminder(&other).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_restore_reanchors_at_the_next_pass() {
+        use chrono_tz::America::New_York;
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        // 15:00 picked in Paris; the restored database is now read in New York.
+        let rule = validate_rule("2026-11-04", "15:00", "none").unwrap();
+        db.set_reminder(&id, rule, now(), &Paris).unwrap();
+        let paris_due = utc(2026, 11, 4, 14, 0).timestamp_millis();
+        let new_york_due = utc(2026, 11, 4, 20, 0).timestamp_millis();
+        let (_fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        let ny_offset = -5 * 3600;
+        let mut tick_ny = |s: &Scheduler, run: &mut Run| {
+            pass(&db, s, run, now(), &New_York, ny_offset, &mut |l| {
+                log.push(l.to_owned())
+            })
+        };
+        run.offset = Some(ny_offset);
+        tick_ny(&s, &mut run);
+        assert_eq!(
+            db.reminder(&id).unwrap().unwrap().due_at,
+            paris_due,
+            "same offset, no restore: nothing re-anchored"
+        );
+
+        s.request_reanchor();
+        assert!(tick_ny(&s, &mut run), "a reminder changed");
+        assert_eq!(db.reminder(&id).unwrap().unwrap().due_at, new_york_due);
+        assert!(!s.reanchor_pending.load(Ordering::Acquire));
     }
 
     #[test]

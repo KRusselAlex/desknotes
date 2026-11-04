@@ -194,6 +194,8 @@ pub async fn restore_backup(
         .map_err(|e| IpcError::new("io", e.to_string()))?
         .join("backups");
     let copy = state.with_db(|db| db.restore_backup(&pending.backup, &safety_dir))?;
+    // The restored due times may come from another time zone: re-anchor them.
+    crate::reminders::reanchor(&app);
     let (notes, _) = state.with_db(|db| db.notes_to_show())?;
     for note in &notes {
         windows::open_note(&app, note)?;
