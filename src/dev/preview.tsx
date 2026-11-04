@@ -34,9 +34,10 @@
 // repeat tomorrow (a3) and a monthly one on an archived note (r1); &noreminders starts
 // empty. Changes emit reminders-changed like the native side. In the console,
 // previewFire("a2") makes a2's reminder overdue now, as if it had fired. A note window shows
-// its reminder as a chip (B2): ?w=note&reminder=1 gives the note a reminder in three days at
-// 14:00 (a Tue-style "Fri 14:00" chip; click it or use ⋯ → Set reminder…), &reminder=open also
-// opens the popover (R1); without it a2's seeded one, later today, shows as "HH:MM".
+// its reminder as a chip (B2): ?w=note&reminder=1 gives the note a one-off reminder at 14:00,
+// three days from today (the chip shows that day's short name and the time; click it or use
+// ⋯ → Set reminder…), &reminder=open also opens the popover (R1). Without &reminder, the
+// note keeps the reminder seeded for it above, if any (a2's is two hours from now).
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

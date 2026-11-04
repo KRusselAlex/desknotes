@@ -555,8 +555,17 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     return () => document.removeEventListener("pointerdown", onDown);
   }, [popover]);
 
+  /** The menu just opened the reminder dialog: its closing must not hand focus to the editor. */
+  const reminderFromMenu = useRef(false);
+
   const closePopover = useCallback(() => {
     setPopover("none");
+    // The editor's focus is deferred to the next frame, so it would take focus back from the
+    // dialog that the menu pick has just opened (which focuses its date field itself).
+    if (reminderFromMenu.current) {
+      reminderFromMenu.current = false;
+      return;
+    }
     editor?.commands.focus();
   }, [editor]);
 
@@ -688,7 +697,15 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       checked: pinned,
       onSelect: () => void togglePinned(),
     },
-    { id: "reminder", label: "Set reminder…", icon: "bell", onSelect: () => setReminderOpen(true) },
+    {
+      id: "reminder",
+      label: "Set reminder…",
+      icon: "bell",
+      onSelect: () => {
+        reminderFromMenu.current = true;
+        setReminderOpen(true);
+      },
+    },
     { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
     { id: "manager", label: "Open manager", icon: "note", separatorBefore: true, onSelect: () => void commands.showManager() },
     { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
@@ -775,7 +792,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
           <button
             type="button"
             className={`dn-reminder-chip${reminder.overdue ? " is-overdue" : ""}`}
-            aria-label={`Reminder ${chipText(reminder.dueAt, new Date())}`}
+            aria-label={`Reminder ${reminder.overdue ? "overdue · " : ""}${chipText(reminder.dueAt, new Date())}`}
             title={reminder.overdue ? "Overdue · click to change" : "Reminder · click to change"}
             aria-expanded={reminderOpen}
             data-popover-toggle

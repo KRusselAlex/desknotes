@@ -712,6 +712,27 @@ describe("NoteWindow", () => {
       expect(container.querySelector(".dn-reminder-chip")).toBeNull();
     });
 
+    it("keeps focus in the dialog, on the date, when opened from the menu (the editor's deferred focus must not take it back)", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(screen.getByLabelText("Date")).toHaveFocus();
+    });
+
+    it("gives focus back to the note when the popover closes", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await userEvent.keyboard("{Escape}");
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(editorBox()).toHaveFocus();
+    });
+
     it("saves from the popover and closes it", async () => {
       vi.mocked(commands.setReminder).mockResolvedValue(view());
       await openNote();
@@ -734,13 +755,16 @@ describe("NoteWindow", () => {
       render(<NoteWindow noteId={ID} />);
       const chip = await screen.findByRole("button", { name: `Reminder ${hhmm(r.dueAt)}` });
       expect(chip).toHaveTextContent(hhmm(r.dueAt));
+      expect(chip.textContent).not.toMatch(/overdue/i);
       expect(chip).not.toHaveClass("is-overdue");
     });
 
     it("draws an overdue reminder in the danger style", async () => {
       vi.mocked(commands.getReminder).mockResolvedValue(view({ dueAt: Date.now() - 60_000, overdue: true }));
       await openNote();
-      expect(await screen.findByRole("button", { name: /^Reminder / })).toHaveClass("is-overdue");
+      const chip = await screen.findByRole("button", { name: /^Reminder overdue · \d\d:\d\d$/ });
+      expect(chip).toHaveClass("is-overdue");
+      expect(chip.textContent).toMatch(/^\d\d:\d\d$/); // the visible text is unchanged
     });
 
     it("opens the popover on the existing reminder when the chip is clicked, and again to close", async () => {
