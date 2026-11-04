@@ -26,7 +26,7 @@ A note can remind you of itself at a set time — once, or on a repeat. DeskNote
   - It is set, changed or removed from the note.
 - **Bell chip** in the note header showing when the reminder is due, e.g. "Tue 14:00" (B2). Clicking it opens the reminder popover (R1).
 - **At the due time**, a desktop notification appears as R3:
-  - "DeskNotes · now" and the note title, or "Private note" while locked, with a lock icon;
+  - "DeskNotes · now" and the note title, or "Private note" while locked (the app icon in both cases: the OS draws notifications and takes no app SVG, so R3's lock icon is not shown — changed during the build);
   - buttons **10 min**, **1 h**, **Tomorrow** and **Dismiss**;
   - clicking the notification itself opens the note (my call).
 - **Manager, Reminders tab** (R2):
@@ -71,15 +71,17 @@ A note can remind you of itself at a set time — once, or on a repeat. DeskNote
 ### 3.3 Firing and the notification (R3)
 - A scheduler in the native app wakes for the next due reminder. It recomputes after any change, at start and after the computer resumes from sleep (my call).
 - At the due time it sends one notification per reminder.
-  - It shows the app name, the title (or "Private note" plus the lock icon while locked), the four action buttons and the default action "open the note".
+  - It shows the app name, the title (or "Private note" while locked), the action buttons and the default action "open the note".
+  - Buttons are sent in the order **10 min, 1 h, Dismiss, Tomorrow**. GNOME 46 draws at most three, so there it shows 10 min, 1 h and Dismiss; "Tomorrow" stays available from the reminder popover (changed after the final review: Dismiss is the one that finishes a reminder).
+  - A notification already on screen is closed when its reminder is set, removed, snoozed or dismissed elsewhere, when a newer occurrence is sent, and — for private notes — when the privacy lock engages. A button on an older notification only acts while the reminder is still at the occurrence it announced.
   - It uses the desktop's standard notification service. Where action buttons are not supported, only the body click works.
 - **Buttons:**
   - **10 min**, **1 h**: snooze to now + 10 min / + 1 h.
   - **Tomorrow:** the same wall-clock time tomorrow (my call).
   - **Dismiss:** a one-off reminder is finished and removed; a repeating one moves to its next occurrence.
-  - **Closing** the notification without a choice leaves it **Overdue** (my call), so it shows in the manager and on the chip until dismissed there or rescheduled.
+  - **Closing** the notification without a choice leaves it **Overdue** (my call), so it shows in the manager and on the chip until dismissed there or rescheduled. A repeating reminder still moves on to its next occurrence by itself and fires again then (changed during the build).
 - **Duplicates:** a reminder that has fired is not sent again for the same occurrence after a restart. The core records the occurrence it fired.
-- **Missed at start:** reminders due while DeskNotes was closed are sent once at start, at most 5 at once; the rest become one summary notification, "3 more reminders" (my call).
+- **Missed at start:** reminders due while DeskNotes was closed are sent once at start, at most 5 at once; the rest become one summary notification, "3 more reminders" ("1 more reminder" for one) (my call).
 - **Trash:** a note in the trash never fires; its reminder is kept and fires again if the note is restored. Archived notes still fire (my call). Purging a note deletes its reminder.
 
 ### 3.4 Repeats
@@ -99,8 +101,8 @@ A note can remind you of itself at a set time — once, or on a repeat. DeskNote
 - Each row shows:
   - the note colour dot and the title ("Private note" while locked);
   - the repeat name when not None ("Weekdays");
-  - the bell and the time: "14:00" today and tomorrow, "1 Dec" later, "Overdue · 09:30" when overdue.
-- Clicking a row opens and focuses the note.
+  - the bell and the time: "14:00" today and tomorrow, "1 Dec" later, "Overdue · 09:30" when overdue today, "Overdue · 3 Nov" when the missed occurrence was on an earlier day (changed after the final review).
+- Clicking a row opens and focuses the note; for an archived note it switches to the Archived tab (my call). A notification click on an archived note opens the manager.
 - Search in the manager applies to this tab too (by title), as on other tabs (my call).
 
 ## 4. Data
