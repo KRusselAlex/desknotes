@@ -2,8 +2,11 @@ use rusqlite::OptionalExtension;
 
 use super::Database;
 use crate::error::{CoreError, CoreResult};
-use crate::model::{DEFAULT_COLOR, MAX_MIN_NOTE_SIDE, NoteSize};
-use crate::validation::{parse_note_id, validate_color};
+use crate::model::{
+    AppAppearance, DEFAULT_COLOR, Layout, MAX_DEFAULT_SIZE, MAX_MIN_NOTE_SIDE, MIN_DEFAULT_SIZE,
+    NoteSize,
+};
+use crate::validation::{parse_note_id, validate_color, validate_font_name};
 
 /// Settings keys. Values are stored as text.
 pub const NEW_NOTE_COLOR: &str = "new_note_color";
@@ -11,6 +14,14 @@ pub const NEW_NOTE_COLOR: &str = "new_note_color";
 pub const HIDDEN_BY_HIDE_ALL: &str = "hidden_by_hide_all";
 /// JSON `{"width": .., "height": ..}`: the smallest size a note window may take.
 pub const MIN_NOTE_SIZE: &str = "min_note_size";
+/// `"true"` or `"false"`: black-on-white notes.
+pub const APPEARANCE_HIGH_CONTRAST: &str = "appearance_high_contrast";
+/// `"comfortable"` or `"compact"`.
+pub const APPEARANCE_LAYOUT: &str = "appearance_layout";
+/// A font name, or empty for the system default.
+pub const APPEARANCE_DEFAULT_FONT: &str = "appearance_default_font";
+/// Default text size in px as a decimal string, `"10"`–`"32"`.
+pub const APPEARANCE_DEFAULT_SIZE: &str = "appearance_default_size";
 
 impl Database {
     pub fn get_setting(&self, key: &str) -> CoreResult<Option<String>> {
@@ -72,6 +83,77 @@ impl Database {
         Ok(size)
     }
 
+    /// App-wide note appearance. Each field falls back to its default on its
+    /// own when missing or invalid; a bad stored value never fails the read.
+    pub fn app_appearance(&self) -> CoreResult<AppAppearance> {
+        let defaults = AppAppearance::default();
+        let high_contrast = match self.get_setting(APPEARANCE_HIGH_CONTRAST)?.as_deref() {
+            Some("true") => true,
+            Some("false") => false,
+            _ => defaults.high_contrast,
+        };
+        let layout = match self.get_setting(APPEARANCE_LAYOUT)?.as_deref() {
+            Some("comfortable") => Layout::Comfortable,
+            Some("compact") => Layout::Compact,
+            _ => defaults.layout,
+        };
+        let default_font = self
+            .get_setting(APPEARANCE_DEFAULT_FONT)?
+            .and_then(|raw| validate_font_name(&raw).ok())
+            .unwrap_or(defaults.default_font);
+        let default_size = self
+            .get_setting(APPEARANCE_DEFAULT_SIZE)?
+            .and_then(|raw| raw.parse::<u8>().ok())
+            .filter(|s| (MIN_DEFAULT_SIZE..=MAX_DEFAULT_SIZE).contains(s))
+            .unwrap_or(defaults.default_size);
+        Ok(AppAppearance {
+            high_contrast,
+            layout,
+            default_font,
+            default_size,
+        })
+    }
+
+    /// Validate and store all four appearance settings in one transaction, and
+    /// return the normalised value (font trimmed, blank meaning none).
+    pub fn set_app_appearance(&self, a: AppAppearance) -> CoreResult<AppAppearance> {
+        if !(MIN_DEFAULT_SIZE..=MAX_DEFAULT_SIZE).contains(&a.default_size) {
+            return Err(CoreError::Validation(format!(
+                "default text size must be {MIN_DEFAULT_SIZE}–{MAX_DEFAULT_SIZE} px"
+            )));
+        }
+        let default_font = match a.default_font.as_deref() {
+            Some(font) => validate_font_name(font)?,
+            None => None,
+        };
+        let a = AppAppearance { default_font, ..a };
+        let layout = match a.layout {
+            Layout::Comfortable => "comfortable",
+            Layout::Compact => "compact",
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        for (key, value) in [
+            (
+                APPEARANCE_HIGH_CONTRAST,
+                if a.high_contrast { "true" } else { "false" }.to_string(),
+            ),
+            (APPEARANCE_LAYOUT, layout.to_string()),
+            (
+                APPEARANCE_DEFAULT_FONT,
+                a.default_font.clone().unwrap_or_default(),
+            ),
+            (APPEARANCE_DEFAULT_SIZE, a.default_size.to_string()),
+        ] {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [key, value.as_str()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(a)
+    }
+
     /// Notes hidden by the last "Hide all notes". Invalid entries are ignored.
     pub fn hidden_by_hide_all(&self) -> CoreResult<Vec<String>> {
         let ids: Vec<String> = self
@@ -97,7 +179,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Database, NoteSize};
+    use crate::{AppAppearance, Database, Layout, NoteSize};
 
     #[test]
     fn settings_round_trip() {
@@ -198,5 +280,141 @@ mod tests {
         db.set_setting(super::NEW_NOTE_COLOR, "not-a-colour")
             .unwrap();
         assert_eq!(db.new_note_color().unwrap(), crate::DEFAULT_COLOR);
+    }
+
+    #[test]
+    fn app_appearance_defaults_when_unset() {
+        let db = Database::open_in_memory().unwrap();
+        let a = db.app_appearance().unwrap();
+        assert_eq!(a, AppAppearance::default());
+        assert!(!a.high_contrast);
+        assert_eq!(a.layout, Layout::Comfortable);
+        assert_eq!(a.default_font, None);
+        assert_eq!(a.default_size, 15);
+    }
+
+    #[test]
+    fn set_and_read_back() {
+        let db = Database::open_in_memory().unwrap();
+        let want = AppAppearance {
+            high_contrast: true,
+            layout: Layout::Compact,
+            default_font: Some("Amiri".into()),
+            default_size: 18,
+        };
+        assert_eq!(db.set_app_appearance(want.clone()).unwrap(), want);
+        assert_eq!(db.app_appearance().unwrap(), want);
+        assert_eq!(
+            db.get_setting(super::APPEARANCE_DEFAULT_SIZE)
+                .unwrap()
+                .as_deref(),
+            Some("18")
+        );
+    }
+
+    #[test]
+    fn set_refuses_out_of_range_size() {
+        let db = Database::open_in_memory().unwrap();
+        for size in [9, 33] {
+            let a = AppAppearance {
+                default_size: size,
+                ..AppAppearance::default()
+            };
+            assert_eq!(
+                db.set_app_appearance(a).unwrap_err().code(),
+                "validation",
+                "{size}"
+            );
+        }
+        for size in [10, 32] {
+            let a = AppAppearance {
+                default_size: size,
+                ..AppAppearance::default()
+            };
+            db.set_app_appearance(a).unwrap();
+        }
+    }
+
+    #[test]
+    fn set_refuses_unsafe_font_and_stores_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        let a = AppAppearance {
+            high_contrast: true,
+            default_font: Some("a;b".into()),
+            ..AppAppearance::default()
+        };
+        assert_eq!(db.set_app_appearance(a).unwrap_err().code(), "validation");
+        assert_eq!(db.app_appearance().unwrap(), AppAppearance::default());
+        assert_eq!(
+            db.get_setting(super::APPEARANCE_HIGH_CONTRAST).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn blank_font_means_system_default() {
+        let db = Database::open_in_memory().unwrap();
+        let a = AppAppearance {
+            default_font: Some("  ".into()),
+            ..AppAppearance::default()
+        };
+        assert_eq!(db.set_app_appearance(a).unwrap().default_font, None);
+        assert_eq!(db.app_appearance().unwrap().default_font, None);
+        // A padded name is trimmed.
+        let a = AppAppearance {
+            default_font: Some("  Amiri ".into()),
+            ..AppAppearance::default()
+        };
+        assert_eq!(
+            db.set_app_appearance(a).unwrap().default_font.as_deref(),
+            Some("Amiri")
+        );
+    }
+
+    #[test]
+    fn invalid_stored_values_read_as_defaults() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(super::APPEARANCE_DEFAULT_SIZE, "99")
+            .unwrap();
+        db.set_setting(super::APPEARANCE_HIGH_CONTRAST, "maybe")
+            .unwrap();
+        db.set_setting(super::APPEARANCE_LAYOUT, "wide").unwrap();
+        db.set_setting(super::APPEARANCE_DEFAULT_FONT, "a;b")
+            .unwrap();
+        assert_eq!(db.app_appearance().unwrap(), AppAppearance::default());
+
+        // Each field falls back on its own: valid neighbours are kept.
+        db.set_setting(super::APPEARANCE_HIGH_CONTRAST, "true")
+            .unwrap();
+        db.set_setting(super::APPEARANCE_DEFAULT_SIZE, "20")
+            .unwrap();
+        let a = db.app_appearance().unwrap();
+        assert!(a.high_contrast);
+        assert_eq!(a.default_size, 20);
+        assert_eq!(a.layout, Layout::Comfortable);
+        assert_eq!(a.default_font, None);
+        db.set_setting(super::APPEARANCE_DEFAULT_SIZE, "abc")
+            .unwrap();
+        assert_eq!(db.app_appearance().unwrap().default_size, 15);
+    }
+
+    #[test]
+    fn app_appearance_serialises_camel_case() {
+        let json = serde_json::to_value(AppAppearance {
+            high_contrast: true,
+            layout: Layout::Compact,
+            default_font: None,
+            default_size: 15,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "highContrast": true,
+                "layout": "compact",
+                "defaultFont": null,
+                "defaultSize": 15
+            })
+        );
     }
 }
