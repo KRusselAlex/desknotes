@@ -33,6 +33,18 @@ describe("AppearancePane", () => {
     await screen.findByRole("option", { name: "Lora" });
   });
 
+  it("puts its rows in one card, like the other panes", async () => {
+    show();
+    const card = screen.getByRole("switch", { name: "High-contrast notes" }).closest(".dn-card");
+    expect(card).not.toBeNull();
+    for (const label of ["High-contrast notes", "Layout", "Default font", "Default size"]) {
+      expect(within(card as HTMLElement).getByText(label)).toHaveClass("dn-card-label");
+    }
+    expect(card?.querySelectorAll(".dn-card-row")).toHaveLength(5); // four settings and Reset
+    expect(within(card as HTMLElement).getByRole("button", { name: "Reset appearance" })).toBeInTheDocument();
+    await screen.findByRole("option", { name: "Lora" });
+  });
+
   it("reports one change at a time, as the whole value", async () => {
     const onChange = show({ defaultSize: 20 });
     await userEvent.click(screen.getByRole("switch", { name: "High-contrast notes" }));

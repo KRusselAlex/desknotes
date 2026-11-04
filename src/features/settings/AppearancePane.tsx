@@ -29,21 +29,23 @@ export function AppearancePane({ value, onChange }: { value: AppAppearance; onCh
   return (
     <>
       <h1>Appearance</h1>
-      <div className="dn-ap">
-        <div className="dn-ap-row">
-          <span className="dn-ap-label">High-contrast notes</span>
+      <div className="dn-card dn-ap">
+        <div className="dn-card-row">
+          <span className="dn-card-label">High-contrast notes</span>
           <Switch
             label="High-contrast notes"
             checked={value.highContrast}
             onChange={(highContrast) => change({ highContrast })}
           />
         </div>
-        <div className="dn-ap-row">
-          <span className="dn-ap-label">Layout</span>
+        <div className="dn-card-sep" />
+        <div className="dn-card-row">
+          <span className="dn-card-label">Layout</span>
           <Segmented label="Layout" options={LAYOUTS} value={value.layout} onChange={(layout) => change({ layout })} />
         </div>
-        <div className="dn-ap-row">
-          <label className="dn-ap-label" htmlFor="dn-ap-font">
+        <div className="dn-card-sep" />
+        <div className="dn-card-row">
+          <label className="dn-card-label" htmlFor="dn-ap-font">
             Default font
           </label>
           <span className="dn-ns-select">
@@ -61,8 +63,9 @@ export function AppearancePane({ value, onChange }: { value: AppAppearance; onCh
             <Icon name="chevdown" size={13} />
           </span>
         </div>
-        <div className="dn-ap-row">
-          <span className="dn-ap-label" id="dn-ap-size-label">
+        <div className="dn-card-sep" />
+        <div className="dn-card-row">
+          <span className="dn-card-label" id="dn-ap-size-label">
             Default size
           </span>
           <span className="dn-ns-stepper" role="group" aria-labelledby="dn-ap-size-label">
@@ -87,9 +90,12 @@ export function AppearancePane({ value, onChange }: { value: AppAppearance; onCh
             </button>
           </span>
         </div>
-        <button type="button" className="dn-btn-link dn-ap-reset" onClick={() => onChange({ ...APP_APPEARANCE_DEFAULTS })}>
-          Reset appearance
-        </button>
+        <div className="dn-card-sep" />
+        <div className="dn-card-row">
+          <button type="button" className="dn-btn-link dn-ap-reset" onClick={() => onChange({ ...APP_APPEARANCE_DEFAULTS })}>
+            Reset appearance
+          </button>
+        </div>
       </div>
     </>
   );
