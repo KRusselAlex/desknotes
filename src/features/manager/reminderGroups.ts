@@ -23,13 +23,14 @@ export function repeatLabel(repeat: Repeat): string {
 }
 
 /**
- * The time on a row's chip: "14:00" today and tomorrow, "1 Dec" (or "1 Dec 2027") later,
- * "Overdue · 09:30" when overdue, whatever day it was due.
+ * The time on a row's chip: "14:00" today and tomorrow, "1 Dec" (or "1 Dec 2027") later.
+ * Overdue: "Overdue · 09:30" when it was due today, "Overdue · 3 Nov" (with the year when
+ * not this year) when it was due on an earlier day (R23).
  */
 export function reminderWhen(row: ReminderListRow, now: number): string {
   const due = new Date(row.dueAt);
-  if (row.overdue) return `Overdue · ${hhmm(due)}`;
   const days = calendarDays(new Date(now), due);
+  if (row.overdue) return `Overdue · ${days < 0 ? shortDate(due, new Date(now)) : hhmm(due)}`;
   return days <= 1 ? hhmm(due) : shortDate(due, new Date(now));
 }
 

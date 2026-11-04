@@ -304,6 +304,7 @@ const reminder = (over: Partial<ReminderListRow> = {}): ReminderListRow => ({
   dueAt: new Date(2026, 10, 4, 23, 0).getTime(),
   overdue: false,
   locked: false,
+  archived: false,
   ...over,
 });
 const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).getTime();
@@ -378,6 +379,40 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     await openTab();
     await userEvent.click(await screen.findByRole("button", { name: /Stand-up notes/ }));
     expect(commands.showNote).toHaveBeenCalledWith("n7");
+  });
+
+  it("shows an archived note's row in the Archived tab instead of opening it (R17)", async () => {
+    vi.mocked(commands.listReminders).mockImplementation(async (q) =>
+      q === "" ? [reminder({ noteId: "n7", archived: true }), reminder({ noteId: "n8", title: "Bike repair" })] : [reminder({ noteId: "n7", archived: true })],
+    );
+    await openTab();
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "stand");
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+    await userEvent.click(screen.getByRole("button", { name: /Stand-up notes/ }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Archived/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("searchbox", { name: "Search notes" })).toHaveValue("");
+    await waitFor(() => expect(commands.listNotes).toHaveBeenCalledWith("archived", ""));
+    expect(commands.showNote).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the notes when the reminders cannot be read", async () => {
+    vi.mocked(commands.listReminders).mockResolvedValueOnce([reminder(), reminder({ noteId: "n2" })]);
+    render(<ManagerWindow />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Reminders/ })).toHaveTextContent("2"));
+    vi.mocked(commands.listReminders).mockRejectedValue(new Error("database is locked"));
+    vi.mocked(commands.listNotes).mockResolvedValue([note(), note({ id: "n2", title: "Bike repair" })]);
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, archived: 0, trash: 0 });
+    await act(async () => remindersChanged.handler?.({ noteId: null }));
+    await waitFor(() => expect(screen.getByText("Bike repair")).toBeInTheDocument());
+    expect(screen.getByText("Weekend errands")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Active/ })).toHaveTextContent("2");
+    expect(screen.getByRole("tab", { name: /Reminders/ })).toHaveTextContent("2");
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // On the Reminders tab itself the failure is said.
+    await userEvent.click(screen.getByRole("tab", { name: /Reminders/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
   });
 
   it("shows a refusal when the note cannot be opened", async () => {

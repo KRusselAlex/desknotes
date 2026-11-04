@@ -506,6 +506,7 @@ mockIPC(
             dueAt: r.dueAt,
             overdue: r.dueAt <= Date.now(),
             locked,
+            archived: n.archivedAt !== null,
           });
         }
         return rows.sort((x, y) => x.dueAt - y.dueAt);

@@ -42,6 +42,8 @@ pub struct ReminderListRow {
     pub due_at: i64,
     pub overdue: bool,
     pub locked: bool,
+    /// The note is archived (no window): the manager opens its Archived tab (R17).
+    pub archived: bool,
 }
 
 /// The core's refusals for a time in the past or too far away are shown verbatim,
@@ -93,6 +95,7 @@ fn list_row(r: ReminderRow) -> ReminderListRow {
         due_at: r.effective_due,
         overdue: r.overdue,
         locked: r.locked,
+        archived: r.archived,
     }
 }
 
@@ -316,5 +319,17 @@ mod tests {
         let rows = list_in(&db, "", now()).unwrap();
         assert_eq!(rows[2].note_id, empty);
         assert_eq!(rows[2].title, "");
+    }
+
+    #[test]
+    fn list_flags_archived_notes() {
+        let (db, id) = db_with_note("Dentist");
+        set(&db, &id, "2026-11-04", "14:00", "none").unwrap();
+        assert!(!list_in(&db, "", now()).unwrap()[0].archived);
+        db.set_archived(&id, true).unwrap();
+        let rows = list_in(&db, "", now()).unwrap();
+        assert!(rows[0].archived);
+        let json = serde_json::to_value(&rows[0]).unwrap();
+        assert_eq!(json["archived"], serde_json::json!(true));
     }
 }

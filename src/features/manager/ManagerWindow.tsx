@@ -60,21 +60,29 @@ export function ManagerWindow() {
     // The lock state only decides "Lock now" and the reset notice; the list does not wait for it.
     commands.privacyStatus().then(setPrivacy, () => setPrivacy(null));
     try {
+      // Reminders are read on their own: if they fail, the notes and counts still update,
+      // the tab keeps its last count and only the Reminders tab says what went wrong.
+      let remindersError: string | null = null;
+      const orNull = (p: Promise<ReminderListRow[]>) =>
+        p.catch((e: unknown) => {
+          remindersError = (e as Error).message;
+          return null;
+        });
       // The tab's count is every reminder, whatever the search says (R2).
-      const all = commands.listReminders("");
+      const all = orNull(commands.listReminders(""));
       const [list, c, hidden, allReminders, shownReminders] = await Promise.all([
         tab === "reminders" ? null : commands.listNotes(tab, query),
         commands.noteCounts(),
         commands.hiddenNoteCount(),
         all,
-        tab !== "reminders" ? null : query.trim() === "" ? all : commands.listReminders(query),
+        tab !== "reminders" ? null : query.trim() === "" ? all : orNull(commands.listReminders(query)),
       ]);
       if (list) setNotes(list);
       setCounts(c);
-      setReminderTotal(allReminders.length);
+      if (allReminders) setReminderTotal(allReminders.length);
       if (shownReminders) setReminders({ rows: shownReminders, now: Date.now() });
       setHiddenCount(hidden);
-      setError(null);
+      setError(tab === "reminders" ? remindersError : null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -283,7 +291,16 @@ export function ManagerWindow() {
             rows={reminders.rows}
             now={reminders.now}
             query={query}
-            onOpen={(id) => void run(() => commands.showNote(id))}
+            onOpen={(r) => {
+              if (r.archived) {
+                // An archived note has no window: show it where it lives (R17).
+                setTab("archived");
+                setQuery("");
+                setConfirmPurge(null);
+              } else {
+                void run(() => commands.showNote(r.noteId));
+              }
+            }}
           />
         )
       ) : notes === null ? (

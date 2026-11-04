@@ -421,7 +421,8 @@ impl Database {
         let now_ms = now.timestamp_millis();
         let lock = self.lock_active()?;
         let sql = format!(
-            "SELECT {COLUMNS}, n.title, n.color, n.private, n.private_label
+            "SELECT {COLUMNS}, n.title, n.color, n.private, n.private_label,
+                    n.archived_at IS NOT NULL
              FROM reminders r JOIN notes n ON n.id = r.note_id
              WHERE n.deleted_at IS NULL"
         );
@@ -433,11 +434,12 @@ impl Database {
                 r.get::<_, String>(8)?,
                 r.get::<_, bool>(9)?,
                 r.get::<_, String>(10)?,
+                r.get::<_, bool>(11)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (Some(reminder), title, color, private, label) = row? else {
+            let (Some(reminder), title, color, private, label, archived) = row? else {
                 continue;
             };
             let locked = self.withheld(lock, private, &reminder.note_id);
@@ -461,6 +463,7 @@ impl Database {
                 effective_due: due,
                 overdue: due <= now_ms,
                 locked,
+                archived,
             });
         }
         out.sort_by(|a, b| (a.effective_due, &a.note_id).cmp(&(b.effective_due, &b.note_id)));
@@ -974,6 +977,24 @@ mod tests {
                 .iter()
                 .all(|r| !r.locked)
         );
+    }
+
+    #[test]
+    fn list_reminders_flags_archived_notes() {
+        let (db, id) = db_with_note();
+        set_one_off(&db, &id);
+        let flags = |db: &Database| -> Vec<bool> {
+            db.list_reminders("", now())
+                .unwrap()
+                .iter()
+                .map(|r| r.archived)
+                .collect()
+        };
+        assert_eq!(flags(&db), [false]);
+        db.set_archived(&id, true).unwrap();
+        assert_eq!(flags(&db), [true], "archived notes stay listed, flagged");
+        db.set_archived(&id, false).unwrap();
+        assert_eq!(flags(&db), [false]);
     }
 
     #[test]

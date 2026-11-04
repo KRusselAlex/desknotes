@@ -13,6 +13,7 @@ const row = (over: Partial<ReminderListRow> = {}): ReminderListRow => ({
   dueAt: at(2026, 11, 4, 23, 0),
   overdue: false,
   locked: false,
+  archived: false,
   ...over,
 });
 
@@ -29,9 +30,15 @@ describe("reminderWhen", () => {
     expect(reminderWhen(row({ dueAt: at(2027, 1, 15, 9, 0) }), now)).toBe("15 Jan 2027");
   });
 
-  it("says Overdue with the due time, even when it was due days ago", () => {
+  it("says Overdue with the due time when it was due today", () => {
     expect(reminderWhen(row({ overdue: true, dueAt: at(2026, 11, 4, 9, 30) }), now)).toBe("Overdue · 09:30");
-    expect(reminderWhen(row({ overdue: true, dueAt: at(2026, 11, 2, 8, 0) }), now)).toBe("Overdue · 08:00");
+    expect(reminderWhen(row({ overdue: true, dueAt: at(2026, 11, 4, 0, 0) }), now)).toBe("Overdue · 00:00");
+  });
+
+  it("says Overdue with the date when it was due on an earlier day (R23)", () => {
+    expect(reminderWhen(row({ overdue: true, dueAt: at(2026, 11, 3, 23, 59) }), now)).toBe("Overdue · 3 Nov");
+    expect(reminderWhen(row({ overdue: true, dueAt: at(2026, 11, 2, 8, 0) }), now)).toBe("Overdue · 2 Nov");
+    expect(reminderWhen(row({ overdue: true, dueAt: at(2025, 12, 30, 9, 0) }), now)).toBe("Overdue · 30 Dec 2025");
   });
 });
 

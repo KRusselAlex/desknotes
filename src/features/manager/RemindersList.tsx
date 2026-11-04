@@ -5,7 +5,7 @@ import { groupReminders, reminderWhen, repeatLabel } from "./reminderGroups";
 
 /**
  * The Reminders tab's rows (design R2), grouped Today / Tomorrow / Later. Each row is a
- * button that opens the note. The title is what the command returned: "Private note" while
+ * button that opens the note (the manager decides how: an archived note has no window). The title is what the command returned: "Private note" while
  * the note is locked.
  */
 export function RemindersList({
@@ -17,7 +17,7 @@ export function RemindersList({
   rows: ReminderListRow[];
   now: number;
   query: string;
-  onOpen: (noteId: string) => void;
+  onOpen: (row: ReminderListRow) => void;
 }) {
   return (
     <div className="dn-list is-grouped" role="list" aria-label="Reminders">
@@ -26,7 +26,7 @@ export function RemindersList({
           <div className="dn-group-label">{group.label}</div>
           {group.rows.map((r) => (
             <div key={r.noteId} role="listitem" className={`dn-rem-row${r.overdue ? " is-overdue" : ""}`}>
-              <button type="button" className="dn-rem-btn" onClick={() => onOpen(r.noteId)}>
+              <button type="button" className="dn-rem-btn" onClick={() => onOpen(r)}>
                 <span className="dn-row-dot" style={{ background: r.color }} />
                 <span className={`dn-row-title${r.title ? "" : " is-empty"}`}>
                   {r.title ? highlight(r.title, query) : <em>Empty note</em>}

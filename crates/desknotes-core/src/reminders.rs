@@ -127,6 +127,8 @@ pub struct ReminderRow {
     /// The lock currently withholds this private note: the shell shows "Private note"
     /// instead of `title`, and the core's search matched the label, not the title.
     pub locked: bool,
+    /// The note is archived: it has no window, so the manager shows it in Archived.
+    pub archived: bool,
 }
 
 /// What a reminder's notification may say about its note: the real title and whether
@@ -161,8 +163,9 @@ pub fn first_due<Tz: TimeZone>(rule: &ReminderRule, tz: &Tz) -> DateTime<Utc> {
 /// The first occurrence strictly after `after`, or `None` for a one-off that is
 /// already past (or when no occurrence fits before the end of year 9999).
 ///
-/// The search starts at the local date of `after`, not at the rule's date, so a rule
-/// picked years ago costs the same as a new one.
+/// The search starts at the later of the rule's date and the local date of `after`
+/// minus one day (a margin for DST gaps near midnight), so a rule picked years ago
+/// costs the same as a new one.
 pub fn next_occurrence<Tz: TimeZone>(
     rule: &ReminderRule,
     after: DateTime<Utc>,

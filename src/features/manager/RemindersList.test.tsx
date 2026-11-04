@@ -12,6 +12,7 @@ const row = (over: Partial<ReminderListRow> = {}): ReminderListRow => ({
   dueAt: new Date(2026, 10, 4, 14, 0).getTime(),
   overdue: false,
   locked: false,
+  archived: false,
   ...over,
 });
 
@@ -49,7 +50,7 @@ describe("RemindersList", () => {
     render(<RemindersList rows={[row()]} now={now} query="" onOpen={onOpen} />);
     const button = within(screen.getByRole("listitem")).getByRole("button");
     await userEvent.click(button);
-    expect(onOpen).toHaveBeenLastCalledWith("n1");
+    expect(onOpen).toHaveBeenLastCalledWith(row());
     await userEvent.tab();
     button.focus();
     await userEvent.keyboard("{Enter}");

@@ -26,6 +26,8 @@ export interface ReminderListRow {
   dueAt: number;
   overdue: boolean;
   locked: boolean;
+  /** The note is archived: it has no window, so the row opens the Archived tab. */
+  archived: boolean;
 }
 
 /** Payload of `reminders-changed`: the note whose reminder changed, or null when
