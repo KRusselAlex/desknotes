@@ -25,6 +25,10 @@ All notable changes are documented here. The format follows
   right-to-left), background colour, see-through background down to 80 %, width and height
   with "lock aspect ratio" and "Reset size", lock editing and always on top. Changes show
   at once and are kept after a restart, by Duplicate and in backups (backup format 3).
+- Text style for selected text (Aa at the end of the formatting bar, or "Text style…" in a
+  narrow note): font, size, weight, six text colours, four highlights, align left / centre /
+  right, UPPERCASE / lowercase, undo / redo. Text pasted from other apps takes the note's
+  look; formatting copied inside DeskNotes is kept. Ctrl+Shift+H highlights in yellow.
 
 ### Changed
 - Settings opens at a given section from other windows (for example Privacy).
