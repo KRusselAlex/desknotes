@@ -58,8 +58,10 @@ the note's Note settings value, otherwise the app default.
 - A family later uninstalled falls back to the note's font (the browser does this).
 
 ### 3.2 Size
-- Stepper − / + by 1 px, 10–32 px (the Note settings range). Shows the effective size of the
-  start of the selection (my call). Pressing − or + sets that size on the selection.
+- Stepper − / + by 1 px, 10–32 px (the Note settings range). Shows the size the start of the
+  selection is **drawn** at — so the note's first line (drawn at 18/15 of the note size) and
+  headings show their real, larger size — clamped to 10–32 (my call, changed after the final
+  review). Pressing − or + sets the shown size ± 1 on the selection.
 - A selection's own size is fixed: changing the note's size in Note settings later does not
   change it (my call; the alternative, sizes relative to the note, is not what "15" in the
   design says).
@@ -67,7 +69,10 @@ the note's Note settings value, otherwise the app default.
 ### 3.3 Weight
 - Dropdown with **Light (300), Regular (400), Medium (500), Semibold (600)** (my call: the
   design shows only "Regular"; **Bold** stays the B button and the `bold` mark, so the two
-  never disagree). Regular removes the selection's own weight.
+  never disagree). The dropdown shows the weight the text is drawn at; text drawn bold (the
+  first line, headings) shows Semibold, the nearest entry. Regular removes the selection's own
+  weight, or stores Regular where the line is bold by default, so it really becomes regular
+  (changed after the final review).
 - A font without that weight shows the nearest one the system has; nothing is promised beyond
   that (my call).
 
@@ -85,10 +90,14 @@ the note's Note settings value, otherwise the app default.
 ### 3.6 Alignment
 - Applies to every paragraph or heading the selection touches: left, centre, right. List items
   and checklist items are paragraphs inside the list, so they align too.
-- Pressed state: the stored alignment; when a paragraph has none, **Align left** shows pressed,
-  or **Align right** when the note's direction (Note settings) is RTL (my call).
-- Choosing the alignment that is already the default for that state removes the stored value
-  (my call), so "Automatic" direction keeps working per paragraph.
+- Pressed state: the stored alignment; when a paragraph has none, its default shows pressed:
+  **Align left** for LTR, **Align right** for RTL (Note settings direction). In **Automatic**
+  direction the default is decided **per paragraph** from its first strong letter (Arabic or
+  Hebrew → right), the same rule the page uses to draw it (changed after the final review: a
+  note-wide rule made Align left do nothing on an Arabic paragraph).
+- Choosing the alignment that is already that paragraph's default removes the stored value
+  (my call), so "Automatic" direction keeps working per paragraph. Ctrl+Shift+L / E / R follow
+  the same rule.
 
 ### 3.7 Case (AB / ab)
 - **AB** makes the selected letters UPPERCASE, **ab** lowercase. This changes the **text
@@ -108,9 +117,9 @@ the note's Note settings value, otherwise the app default.
 
 ## 4. The popover
 
-- Opens upward from the Aa button, inside the note window, about 260 px wide (N14); in a note
-  narrower than that it uses the note's width minus the margins (my call). If the note is too
-  short for it, the popover scrolls (my call).
+- Opens upward from the Aa button, inside the note window, as wide as the note minus 8 px on
+  each side up to 304 px (as drawn in N14 at 320 px); below 260 px its rows stack (my call). If
+  the note is too short for it, the popover scrolls (my call).
 - The Aa button shows as pressed while open (`aria-expanded`). The editor keeps its selection:
   every control prevents the editor losing focus, like the existing bar tools.
 - Closes with Esc, a click outside, or Aa again; focus returns to the text. Choosing a value
@@ -145,9 +154,17 @@ New in the allowlist (`crates/desknotes-core/src/validation.rs`), with the share
 
 Anything else in those marks or attributes is refused, as unknown marks are today.
 
-- Pasting: the editor keeps only allowed values from pasted HTML and drops the rest, keeping
-  the text — in the extensions' HTML parsing and in the existing `sanitizeDoc` safety net, so
-  a note opened with older stray values also saves (as was done for links).
+- Pasting: text **copied from DeskNotes** keeps its font, size, weight, colours and alignment
+  (allowed values only). Text pasted **from anywhere else** (web pages, other apps) drops those
+  styles and takes the note's own look, as before this feature; bold, italic, links, lists and
+  headings are kept (changed after the final review: browsers copy every span's computed size,
+  which pinned pasted text to the web page's size). Anything outside the allowed values is
+  dropped in the extensions' HTML parsing and in the existing `sanitizeDoc` safety net, so a
+  note opened with older stray values also saves (as was done for links).
+- A chosen font is drawn as that font, then the note's font: a family uninstalled later falls
+  back to the note's font (§3.1).
+- An old note opened and not changed is never saved; when it is next changed, its saved form
+  gains only what was changed (no empty alignment values on every paragraph).
 - Backup: no new format number. Backup format 3 (DES-19) is not released yet and ships in the
   same version, so a format-3 file may contain these marks (my call). `docs/backup-format.md`
   lists them.
