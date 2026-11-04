@@ -10,6 +10,7 @@ pub mod error;
 pub mod geometry;
 pub mod model;
 pub mod privacy;
+pub mod reminders;
 pub mod validation;
 
 pub use db::Database;
