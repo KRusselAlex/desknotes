@@ -48,21 +48,34 @@ Note settings (DES-19) styles one note, and the Aa popover (DES-32) styles selec
   - a 3 px focus ring.
 - The note's colour, per-note text colour, per-selection text colours and highlights are **not shown** while it is on. They stay stored and come back when it is turned off (my call: "Any colour → white, black ink"; per-selection highlights would break 21:1 with coloured backgrounds). Highlighted text shows as plain text while it is on (my call).
 - See-through (opacity below 100 %) is ignored while it is on. The note is painted fully opaque white (my call: readability over the setting). The window is not recreated.
+- Everything inside a note follows it, whatever the system theme: warnings and the "Move to
+  trash" item are black too (a 2 px black border marks the save-error and wrong-PIN messages),
+  selected text is shown inverted (white on black), dialogs that open inside a note are black
+  on white with a 2 px border, and focus rings are 3 px (changed after the final review).
 - The Settings, Note settings and manager windows are unchanged (the switch says "notes").
 
 ### 3.2 Layout
 - **Comfortable** (default): 15 px text, 16 px side padding, 32 px header.
 - **Compact**: 13.5 px text, 10 px side padding, 28 px header.
 - Buttons stay 28 px in both (B4).
-- The text size of Compact is the default size × 0.9 (15 → 13.5), so the Default size still means something in Compact (my call). A note's own size from Note settings is used as is in both layouts (my call).
+- The text size of Compact is the default size × 0.9 (15 → 13.5), so the Default size still means something in Compact, never below 10 px (my call). A note's own size from Note settings is used as is in both layouts (my call).
 
 ### 3.3 Default font
 - Same list and command as Note settings (`list_fonts`): "System default" first, then the installed families A–Z.
 - Applies to every note without its own font. A family uninstalled later falls back to the system font.
+- In a note's Note settings, the first font option then reads "<Family> (default)", for example
+  "Amiri (default)", instead of "System default", because that is what the note shows (my call,
+  wording to confirm with the owner). A single note cannot ask for the system font while an app
+  default font is set.
 
 ### 3.4 Default size
 - Stepper − / + by 1, 10–32 px. Default 15.
 - Applies to every note without its own size. The first line and headings keep their ratios, as today.
+
+### 3.4b Layout of the pane
+- The rows sit in a card like the General, Privacy and Backup panes (S4 is drawn without one,
+  but it is a reduced "content panes only" frame); the font select is 170 px wide as in Note
+  settings (my call).
 
 ### 3.5 Reset appearance
 - Sets high contrast off, Comfortable, System default font and size 15. It does not ask for confirmation, because every value is visible and can be set back (my call, as Note settings "Reset to defaults"). It never touches any note.
