@@ -93,6 +93,9 @@ pub fn lock(app: &AppHandle) -> IpcResult<()> {
         db.set_privacy_locked(true, &keep_open_ids(&not_saved, &private));
         Ok(())
     })?;
+    // Close reminder notifications showing a title that is now withheld (R10). Only a
+    // flag and a wake: the lock never waits for the notification service.
+    crate::reminders::on_locked(app);
     // A proof of identity given before the lock (Task 7) does not outlive it.
     state.new_pin_allowed.store(false, Ordering::Release);
     emit_privacy_changed(app, true);
@@ -258,6 +261,7 @@ pub fn release_kept_open(app: &AppHandle, id: &str) {
     });
     match now_locked {
         Ok(true) => {
+            crate::reminders::on_locked(app);
             let label = windows::note_label(id);
             if app.get_webview_window(&label).is_some() {
                 let _ = app.emit_to(

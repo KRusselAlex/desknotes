@@ -5,6 +5,8 @@
 //! One connection is opened at the first notification and kept for the life of the
 //! app: GNOME removes a notification once the connection that sent it closes. A single
 //! listener thread on that connection reports `ActionInvoked` and `NotificationClosed`.
+//! Calls time out after [`METHOD_TIMEOUT`]; the connection is replaced only when it is
+//! broken, and the old listener then stops.
 //!
 //! This module only shows what it is given and reports what the person did. It never
 //! logs a notification's text; its errors carry only a D-Bus error name or a kind.
@@ -46,11 +48,24 @@ pub const APP_ICON: &str = "desknotes";
 /// under DeskNotes.
 pub const DESKTOP_ENTRY: &str = "DeskNotes";
 
+/// How long a call to the notification service may take before it fails.
+pub const METHOD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+
+/// What the scheduler needs from a notification service. The desktop one is
+/// [`Notifier`]; tests use a fake.
+pub trait Notify: Send + Sync {
+    /// Show `n` and return its id. May block up to [`METHOD_TIMEOUT`].
+    fn send(&self, n: &Notification<'_>) -> Result<u32, NotifyError>;
+    /// Take a shown notification away (`CloseNotification`).
+    fn close(&self, id: u32) -> Result<(), NotifyError>;
+}
+
 pub use imp::Notifier;
 
 #[cfg(target_os = "linux")]
 mod imp {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
 
     use zbus::blocking::{Connection, MessageIterator};
@@ -58,7 +73,10 @@ mod imp {
     use zbus::zvariant::Value;
     use zbus::{MatchRule, Message};
 
-    use super::{APP_ICON, APP_NAME, DESKTOP_ENTRY, Notification, NotifyError, Signal};
+    use super::{
+        APP_ICON, APP_NAME, DESKTOP_ENTRY, METHOD_TIMEOUT, Notification, Notify, NotifyError,
+        Signal,
+    };
 
     const SERVICE: &str = "org.freedesktop.Notifications";
     const PATH: &str = "/org/freedesktop/Notifications";
@@ -72,7 +90,10 @@ mod imp {
     type OnSignal = Arc<dyn Fn(Signal) + Send + Sync>;
 
     pub struct Notifier {
-        connection: Mutex<Option<Connection>>,
+        /// The open connection and its generation.
+        connection: Mutex<Option<(Connection, u64)>>,
+        /// The generation of the current connection; a listener of an older one stops.
+        generation: Arc<AtomicU64>,
         on_signal: OnSignal,
     }
 
@@ -81,28 +102,54 @@ mod imp {
         pub fn new(on_signal: impl Fn(Signal) + Send + Sync + 'static) -> Self {
             Self {
                 connection: Mutex::new(None),
+                generation: Arc::new(AtomicU64::new(0)),
                 on_signal: Arc::new(on_signal),
             }
         }
 
-        /// Show `n` and return its id. Blocks until the service answers (zbus' default
-        /// call timeout bounds it), so call it from a background thread.
-        pub fn send(&self, n: &Notification<'_>) -> Result<u32, NotifyError> {
+        /// The connection (opened on first use) and its generation. The lock is held
+        /// only to read or open it, never during a call, so a `close` is not queued
+        /// behind a slow `send`.
+        fn connection(&self) -> Result<(Connection, u64), NotifyError> {
             let mut guard = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_none() {
-                *guard = Some(connect(self.on_signal.clone()).map_err(|e| error_kind(&e))?);
+            if let Some((conn, generation)) = guard.as_ref() {
+                return Ok((conn.clone(), *generation));
             }
-            let Some(conn) = guard.as_ref() else {
-                return Err(NotifyError("no connection".into()));
-            };
+            let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+            let conn = connect(self.on_signal.clone(), self.generation.clone(), generation)
+                .map_err(|e| error_kind(&e))?;
+            *guard = Some((conn.clone(), generation));
+            Ok((conn, generation))
+        }
+
+        /// Call a method of the service. A broken connection is dropped (once, by
+        /// generation) so the next call opens a new one; the old listener then stops.
+        fn call<B>(&self, method: &str, body: &B) -> Result<Message, NotifyError>
+        where
+            B: serde::Serialize + zbus::zvariant::DynamicType,
+        {
+            let (conn, generation) = self.connection()?;
+            conn.call_method(Some(SERVICE), PATH, Some(SERVICE), method, body)
+                .inspect_err(|e| {
+                    if should_reconnect(e) {
+                        let mut guard = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+                        if guard.as_ref().is_some_and(|(_, g)| *g == generation) {
+                            *guard = None;
+                            self.generation.fetch_add(1, Ordering::AcqRel);
+                        }
+                    }
+                })
+                .map_err(|e| error_kind(&e))
+        }
+    }
+
+    impl Notify for Notifier {
+        fn send(&self, n: &Notification<'_>) -> Result<u32, NotifyError> {
             let actions: Vec<&str> = n.actions.iter().flat_map(|(k, l)| [*k, *l]).collect();
             let mut hints: HashMap<&str, Value<'_>> = HashMap::new();
             hints.insert("desktop-entry", Value::from(DESKTOP_ENTRY));
             hints.insert("urgency", Value::from(NORMAL_URGENCY));
-            let reply = conn.call_method(
-                Some(SERVICE),
-                PATH,
-                Some(SERVICE),
+            let reply = self.call(
                 "Notify",
                 &(
                     APP_NAME,
@@ -114,24 +161,39 @@ mod imp {
                     hints,
                     DEFAULT_EXPIRY,
                 ),
-            );
-            match reply.and_then(|m| m.body().deserialize::<u32>()) {
-                Ok(id) => Ok(id),
-                Err(e) => {
-                    // A refusal by the service keeps the connection; anything else may
-                    // mean the connection is gone, so the next send opens a new one.
-                    if !matches!(e, zbus::Error::MethodError(..)) {
-                        *guard = None;
-                    }
-                    Err(error_kind(&e))
-                }
-            }
+            )?;
+            reply
+                .body()
+                .deserialize::<u32>()
+                .map_err(|e| error_kind(&e))
+        }
+
+        fn close(&self, id: u32) -> Result<(), NotifyError> {
+            self.call("CloseNotification", &(id,)).map(drop)
         }
     }
 
-    /// Open the session bus and start the listener for this connection's signals.
-    fn connect(on_signal: OnSignal) -> zbus::Result<Connection> {
-        let conn = Connection::session()?;
+    /// Whether a failed call means the connection itself is broken. A refusal by the
+    /// service, a bad reply or a timeout keeps it: replacing a working connection would
+    /// leave its listener (and the notifications it sent) behind.
+    pub(super) fn should_reconnect(e: &zbus::Error) -> bool {
+        match e {
+            zbus::Error::InputOutput(io) => io.kind() != std::io::ErrorKind::TimedOut,
+            _ => false,
+        }
+    }
+
+    /// Open the session bus and start the listener for this connection's signals. The
+    /// listener stops (dropping its connection) at the first message after `generation`
+    /// moved past `mine`, or when the connection ends.
+    fn connect(
+        on_signal: OnSignal,
+        generation: Arc<AtomicU64>,
+        mine: u64,
+    ) -> zbus::Result<Connection> {
+        let conn = zbus::blocking::connection::Builder::session()?
+            .method_timeout(METHOD_TIMEOUT)
+            .build()?;
         let rule = MatchRule::builder()
             .msg_type(Type::Signal)
             .sender(SERVICE)?
@@ -142,8 +204,13 @@ mod imp {
         std::thread::Builder::new()
             .name("desknotes-notifications".into())
             .spawn(move || {
-                for message in messages.flatten() {
-                    if let Some(signal) = parse_signal(&message) {
+                for message in messages {
+                    if generation.load(Ordering::Acquire) != mine {
+                        break;
+                    }
+                    if let Ok(message) = message
+                        && let Some(signal) = parse_signal(&message)
+                    {
                         on_signal(signal);
                     }
                 }
@@ -173,6 +240,9 @@ mod imp {
         let kind = match e {
             zbus::Error::MethodError(name, _, _) => return NotifyError(name.to_string()),
             zbus::Error::FDO(fdo) => return NotifyError(fdo_name(fdo)),
+            zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut => {
+                "the notification service did not answer"
+            }
             zbus::Error::InputOutput(_) => "the session bus is unavailable",
             zbus::Error::Address(_) => "no session bus address",
             zbus::Error::Variant(_) => "unexpected reply",
@@ -188,6 +258,8 @@ mod imp {
 
     #[cfg(test)]
     mod tests {
+        use std::io;
+
         use super::*;
 
         #[test]
@@ -201,6 +273,26 @@ mod imp {
                 error_kind(&e).0,
                 "org.freedesktop.DBus.Error.ServiceUnknown"
             );
+            let e = zbus::Error::InputOutput(Arc::new(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Shopping list",
+            )));
+            assert_eq!(error_kind(&e).0, "the notification service did not answer");
+        }
+
+        #[test]
+        fn only_a_broken_connection_is_replaced() {
+            let io_err = |kind| zbus::Error::InputOutput(Arc::new(io::Error::new(kind, "x")));
+            assert!(should_reconnect(&io_err(io::ErrorKind::BrokenPipe)));
+            assert!(should_reconnect(&io_err(io::ErrorKind::ConnectionReset)));
+            assert!(should_reconnect(&io_err(io::ErrorKind::UnexpectedEof)));
+            // A slow service, a refusal or an odd reply keep the working connection.
+            assert!(!should_reconnect(&io_err(io::ErrorKind::TimedOut)));
+            assert!(!should_reconnect(&zbus::Error::FDO(Box::new(
+                zbus::fdo::Error::ServiceUnknown("x".into())
+            ))));
+            assert!(!should_reconnect(&zbus::Error::Failure("x".into())));
+            assert!(!should_reconnect(&zbus::Error::InvalidReply));
         }
 
         /// Shows one real notification on this desktop's session bus, then closes it.
@@ -226,15 +318,7 @@ mod imp {
             assert!(id > 0);
             println!("notification id {id}; waiting 8 s for a click");
             std::thread::sleep(std::time::Duration::from_secs(8));
-            let guard = notifier.connection.lock().unwrap();
-            let conn = guard.as_ref().unwrap();
-            let _ = conn.call_method(
-                Some(SERVICE),
-                PATH,
-                Some(SERVICE),
-                "CloseNotification",
-                &(id,),
-            );
+            notifier.close(id).expect("closed");
             std::thread::sleep(std::time::Duration::from_millis(500));
             println!("signals: {:?}", seen.lock().unwrap());
         }
@@ -243,7 +327,7 @@ mod imp {
 
 #[cfg(not(target_os = "linux"))]
 mod imp {
-    use super::{Notification, NotifyError, Signal};
+    use super::{Notification, Notify, NotifyError, Signal};
 
     /// Desktop notifications are only implemented on Linux for now.
     pub struct Notifier;
@@ -252,9 +336,15 @@ mod imp {
         pub fn new(_on_signal: impl Fn(Signal) + Send + Sync + 'static) -> Self {
             Self
         }
+    }
 
-        pub fn send(&self, _n: &Notification<'_>) -> Result<u32, NotifyError> {
+    impl Notify for Notifier {
+        fn send(&self, _n: &Notification<'_>) -> Result<u32, NotifyError> {
             Err(NotifyError("not supported on this system".into()))
+        }
+
+        fn close(&self, _id: u32) -> Result<(), NotifyError> {
+            Ok(())
         }
     }
 }
