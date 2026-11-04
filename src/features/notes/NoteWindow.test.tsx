@@ -928,6 +928,34 @@ describe("NoteWindow", () => {
       expect(within(size).getByText("18")).toBeInTheDocument();
     });
 
+    it("keeps high contrast black on white whatever the system theme, with one focus ring", () => {
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const tokens = readFileSync("src/styles/tokens.css", "utf8");
+      const hc = /\.dn-note\.is-high-contrast\s*\{([^}]*)\}/.exec(noteCss)![1]!;
+      const set = (name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(hc)?.[1]?.trim();
+      // Every colour token the dark theme changes and a note uses resolves to the HC ink or ground.
+      const dark = /\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(tokens)![1]!;
+      const darkColours = [...dark.matchAll(/(--dn-[a-z-]+):/g)].map((m) => m[1]!);
+      const usedInNote = darkColours.filter((t) =>
+        /^--dn-(danger|focus|accent-ink|app-(bg|surface|raised|text|muted|line|hover|press))/.test(t),
+      );
+      expect(usedInNote).toEqual(expect.arrayContaining(["--dn-danger", "--dn-danger-ink", "--dn-danger-bg", "--dn-focus"]));
+      for (const token of usedInNote) expect(set(token), token).toBeDefined();
+      for (const token of ["--dn-danger", "--dn-danger-hover", "--dn-danger-press", "--dn-danger-ink", "--dn-focus"]) {
+        expect(set(token), token).toBe("var(--dn-hc-ink)");
+      }
+      expect(set("--dn-danger-bg")).toBe("var(--dn-hc-bg)");
+      // The save error keeps standing out without its tint.
+      expect(noteCss).toMatch(/\.dn-note\.is-high-contrast :is\(\.dn-save-error[^)]*\)\s*\{\s*border:\s*var\(--dn-hc-rule\) solid/);
+      // Selected text is white on black.
+      expect(noteCss).toMatch(
+        /\.dn-note\.is-high-contrast ::selection\s*\{\s*background:\s*var\(--dn-hc-ink\);\s*color:\s*var\(--dn-hc-bg\);\s*\}/,
+      );
+      // No broad rule that puts an outline back on controls that draw their own ring.
+      expect(noteCss).not.toMatch(/is-high-contrast[^{]*:is\(button/);
+      expect(noteCss).not.toMatch(/is-high-contrast[^{]*\{[^}]*outline:\s*var\(--dn-hc-focus\)/);
+    });
+
     it("styles high contrast and compact from the tokens, in the stylesheet", () => {
       const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
       const tokens = readFileSync("src/styles/tokens.css", "utf8");
@@ -947,9 +975,14 @@ describe("NoteWindow", () => {
       expect(hc![1]).toMatch(/--note-bg:\s*var\(--dn-hc-bg\)/);
       expect(hc![1]).toMatch(/--note-hd:\s*var\(--dn-hc-bg\)/);
       expect(hc![1]).toMatch(/--note-ink:\s*var\(--dn-hc-ink\)/);
-      expect(noteCss).toMatch(/\.dn-note\.is-high-contrast \.dn-note-header\s*\{[^}]*border-bottom:\s*var\(--dn-hc-rule\)/);
-      expect(noteCss).toMatch(/\.dn-note\.is-high-contrast \.dn-format-bar\s*\{[^}]*border-top:\s*var\(--dn-hc-rule\)/);
-      expect(noteCss).toMatch(/outline:\s*var\(--dn-hc-focus\)/);
+      // The rules are inset shadows, so a 28 px Compact header still fits its 28 px buttons.
+      expect(noteCss).toMatch(
+        /\.dn-note\.is-high-contrast \.dn-note-header\s*\{\s*box-shadow:\s*inset 0 calc\(-1 \* var\(--dn-hc-rule\)\) 0 var\(--dn-hc-line\);\s*\}/,
+      );
+      expect(noteCss).toMatch(
+        /\.dn-note\.is-high-contrast \.dn-format-bar\s*\{\s*box-shadow:\s*inset 0 var\(--dn-hc-rule\) 0 var\(--dn-hc-line\);\s*\}/,
+      );
+      expect(noteCss).toMatch(/\.dn-note\.is-high-contrast :focus-visible\s*\{\s*outline-width:\s*var\(--dn-hc-focus\);\s*\}/);
       const compact = /\.dn-note\.is-compact:not\(\.is-collapsed\)\s*\{([^}]*)\}/.exec(noteCss);
       expect(compact![1]).toMatch(/--dn-header-h:\s*var\(--dn-compact-header\)/);
       expect(noteCss).toMatch(/\.dn-note\.is-compact \.dn-note-body\s*\{[^}]*var\(--dn-compact-pad\)/);
