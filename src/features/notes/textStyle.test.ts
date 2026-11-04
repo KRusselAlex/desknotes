@@ -1,4 +1,5 @@
 import { Editor } from "@tiptap/core";
+import { AllSelection } from "@tiptap/pm/state";
 import type { Appearance } from "../../types/note";
 import { createExtensions } from "./extensions";
 import {
@@ -175,12 +176,27 @@ describe("text-style editor logic", () => {
     });
 
     it("changeCase handles letters that change length", () => {
-      const editor = editorWith("<p>aßc</p>");
+      const editor = editorWith("<p>xßyz</p>");
+      const selected = () => editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to);
+      editor.commands.setTextSelection({ from: 2, to: 3 }); // ß
+      changeCase(editor, "upper");
+      expect(editor.getText()).toBe("xSSyz");
+      expect(selected()).toBe("SS");
+
+      const second = editorWith("<p>xßyz</p>");
+      second.commands.setTextSelection({ from: 2, to: 4 }); // ßy
+      changeCase(second, "upper");
+      expect(second.getText()).toBe("xSSYz");
+      expect(second.state.doc.textBetween(second.state.selection.from, second.state.selection.to)).toBe("SSY");
+    });
+
+    it("keeps a select-all selection a select-all", () => {
+      const editor = editorWith("<p>aßc</p><p>x</p>");
       editor.commands.selectAll();
       changeCase(editor, "upper");
-      expect(editor.getText()).toBe("ASSC");
-      const { from, to } = editor.state.selection;
-      expect(editor.state.doc.textBetween(from, to)).toBe("ASSC");
+      expect(editor.getText({ blockSeparator: "|" })).toBe("ASSC|X");
+      expect(editor.state.selection).toBeInstanceOf(AllSelection);
+      expect(editor.state.selection.to).toBe(editor.state.doc.content.size);
     });
 
     it("leaves the selection over the changed part only", () => {

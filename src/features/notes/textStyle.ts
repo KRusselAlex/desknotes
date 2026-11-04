@@ -1,6 +1,5 @@
 import type { Editor } from "@tiptap/core";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
-import { TextSelection } from "@tiptap/pm/state";
 import type { Appearance } from "../../types/note";
 import { APPEARANCE_DEFAULTS } from "../appearance/appearance";
 /**
@@ -240,7 +239,8 @@ export function changeCase(editor: Editor, to: "upper" | "lower"): boolean {
     // Positions are mapped through the edits already made in this transaction.
     tr.replaceWith(tr.mapping.map(start), tr.mapping.map(stop), state.schema.text(text, node.marks));
   }
-  tr.setSelection(TextSelection.create(tr.doc, tr.mapping.map(from, -1), tr.mapping.map(end, 1)));
+  // Map the selection itself so a select-all stays a select-all and endpoints stay in inline content.
+  tr.setSelection(state.selection.map(tr.doc, tr.mapping));
   editor.view.dispatch(tr);
   return true;
 }
