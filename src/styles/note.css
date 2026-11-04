@@ -703,3 +703,69 @@ html.dn-see-through body,
 html.dn-see-through #root {
   background: transparent;
 }
+
+/* Settings → Appearance (design "B · High contrast" and B4). Classes from appClasses();
+   only the drawing changes: the note's own colour, opacity, text colours and highlights
+   stay stored and come back when these are turned off. */
+
+/* High contrast: any colour → white, black ink, 2 px rules, 3 px focus ring (21:1).
+   The --note-* variables are set inline by appearanceStyle, so only !important beats them.
+   The background is painted opaque here, over the see-through body-only fill. */
+.dn-note.is-high-contrast {
+  --note-bg: var(--dn-hc-bg) !important;
+  --note-hd: var(--dn-hc-bg) !important;
+  --note-ink: var(--dn-hc-ink) !important;
+  --dn-ink: var(--dn-hc-ink);
+  --dn-ink-muted: var(--dn-hc-ink);
+  --dn-ink-line: var(--dn-hc-line);
+  --dn-focus: var(--dn-hc-ink);
+  background: var(--note-bg);
+  color: var(--dn-hc-ink);
+}
+.dn-note.is-high-contrast .dn-note-header {
+  box-sizing: border-box;
+  border-bottom: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-format-bar {
+  box-sizing: border-box;
+  border-top: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-note-body ul[data-type="taskList"] input[type="checkbox"]:not(:checked) {
+  border-width: var(--dn-hc-rule);
+}
+.dn-note.is-high-contrast .dn-popover {
+  background: var(--dn-hc-bg);
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-link-editor {
+  background: var(--dn-hc-bg);
+}
+/* Text colours and highlights of a selection are inline styles on their marks. */
+.dn-note.is-high-contrast .tiptap [style*="color"] {
+  color: var(--dn-hc-ink) !important;
+}
+.dn-note.is-high-contrast .tiptap mark {
+  background: transparent !important;
+}
+/* Not the editor itself: like today, the text area draws no ring (only its controls do). */
+.dn-note.is-high-contrast :is(button, input, select, a, [tabindex]):not(.tiptap):focus-visible {
+  outline: var(--dn-hc-focus) solid var(--dn-hc-ink);
+  outline-offset: 2px;
+}
+.dn-note.is-high-contrast .dn-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 var(--dn-hc-focus) var(--dn-hc-ink);
+}
+.dn-note.is-high-contrast .dn-link-field:focus-within {
+  box-shadow: 0 0 0 2px var(--dn-hc-bg), 0 0 0 calc(2px + var(--dn-hc-focus)) var(--dn-hc-ink);
+}
+
+/* Compact: 28 px header, 10 px side padding; the text size comes from effectiveAppearance
+   (default × 0.9), so a note's own size stays exact. Buttons stay --dn-btn. The strip of a
+   rolled-up note keeps the 32 px the native window is pinned to. */
+.dn-note.is-compact:not(.is-collapsed) {
+  --dn-header-h: var(--dn-compact-header);
+}
+.dn-note.is-compact .dn-note-body {
+  padding-left: var(--dn-compact-pad);
+  padding-right: var(--dn-compact-pad);
+}

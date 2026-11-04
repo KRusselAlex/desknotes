@@ -1,4 +1,5 @@
-import { APPEARANCE_DEFAULTS, TEXT_COLORS, appearanceStyle } from "./appearance";
+import { APP_APPEARANCE_DEFAULTS, type AppAppearance } from "../../types/note";
+import { APPEARANCE_DEFAULTS, TEXT_COLORS, appClasses, appearanceStyle, effectiveAppearance } from "./appearance";
 import { COLOR_PRESETS, INK, contrastRatio, headerShade } from "./colors";
 
 const style = (color: string, a = {}) => appearanceStyle(color, a) as Record<string, string>;
@@ -48,6 +49,53 @@ describe("appearanceStyle", () => {
     });
     expect(TEXT_COLORS).toEqual(["#201e1d", "#8c491a", "#56633f", "#1d4f91"]);
     expect(APPEARANCE_DEFAULTS.textColor).toBe(INK);
+  });
+});
+
+const app = (over: Partial<AppAppearance> = {}): AppAppearance => ({ ...APP_APPEARANCE_DEFAULTS, ...over });
+
+describe("effectiveAppearance precedence", () => {
+  const custom = app({ defaultSize: 18, defaultFont: "DejaVu Sans" });
+
+  it("keeps the note's own size and font over the app defaults", () => {
+    const own = { fontSize: 20, font: "Amiri", textColor: "#1d4f91", opacity: 85 };
+    expect(effectiveAppearance(own, custom)).toEqual(own);
+  });
+
+  it("fills only what the note leaves unset from the app defaults", () => {
+    expect(effectiveAppearance({}, custom)).toEqual({ fontSize: 18, font: "DejaVu Sans" });
+    expect(effectiveAppearance({ lineSpacing: 120 }, custom)).toEqual({ lineSpacing: 120, fontSize: 18, font: "DejaVu Sans" });
+  });
+
+  it("scales the default size by 0.9 in Compact, unrounded", () => {
+    expect(effectiveAppearance({}, app({ layout: "compact", defaultSize: 18 })).fontSize).toBe(16.2); // not 16.200000000000003px in CSS
+    expect(effectiveAppearance({}, app({ layout: "compact" })).fontSize).toBe(13.5);
+  });
+
+  it("uses a note's own size as is in Compact", () => {
+    expect(effectiveAppearance({ fontSize: 20 }, app({ layout: "compact", defaultSize: 18 })).fontSize).toBe(20);
+  });
+
+  it("leaves the font to the system font when neither has one", () => {
+    const a = effectiveAppearance({}, APP_APPEARANCE_DEFAULTS);
+    expect(a.font).toBeUndefined();
+    expect(a.fontSize).toBe(15);
+    expect(appearanceStyle("#fff4a3", a)).toEqual(appearanceStyle("#fff4a3", {}));
+  });
+
+  it("never changes the note's appearance object", () => {
+    const own = {};
+    effectiveAppearance(own, custom);
+    expect(own).toEqual({});
+  });
+});
+
+describe("appClasses", () => {
+  it("covers all four combinations", () => {
+    expect(appClasses(app())).toBe("");
+    expect(appClasses(app({ highContrast: true }))).toBe(" is-high-contrast");
+    expect(appClasses(app({ layout: "compact" }))).toBe(" is-compact");
+    expect(appClasses(app({ highContrast: true, layout: "compact" }))).toBe(" is-high-contrast is-compact");
   });
 });
 

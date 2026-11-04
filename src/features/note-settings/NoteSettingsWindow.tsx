@@ -12,8 +12,10 @@ import {
   LINE_SPACING_RANGE,
   OPACITY_RANGE,
   TEXT_COLORS,
+  effectiveAppearance,
 } from "../appearance/appearance";
 import { COLOR_PRESETS, contrastRatio } from "../appearance/colors";
+import { useAppAppearance } from "../appearance/useAppAppearance";
 
 /** Size of a new note (tokens --dn-note-w / --dn-note-h); the native side raises it to the minimum note size. */
 const DEFAULT_SIZE: NoteSize = { width: 300, height: 280 };
@@ -35,13 +37,18 @@ const DIRECTIONS: readonly { value: TextDirection; label: string }[] = [
   { value: "rtl", label: "RTL" },
 ];
 
-/** The appearance with `patch` applied, without keys that are unset or at their default. */
-function merged(current: Appearance, patch: Appearance): Appearance {
+/** The appearance with `patch` applied, without keys that are unset or at their default.
+ * The size is the exception: the default it is compared with is `defaultSize`, the size
+ * the note is drawn with when it has none (the app default, × 0.9 in Compact), and only
+ * when the patch sets it. Stepping back to that size leaves it unset so the note follows
+ * the app again; a size the note already has is never dropped by another change. */
+function merged(current: Appearance, patch: Appearance, defaultSize: number): Appearance {
   const next: Record<string, unknown> = { ...current, ...patch };
   const defaults: Record<string, unknown> = APPEARANCE_DEFAULTS;
   for (const key of Object.keys(next)) {
-    if (next[key] === undefined || next[key] === defaults[key]) delete next[key];
+    if (next[key] === undefined || (key !== "fontSize" && next[key] === defaults[key])) delete next[key];
   }
+  if (patch.fontSize !== undefined && patch.fontSize === defaultSize) delete next.fontSize;
   return next as Appearance;
 }
 
@@ -68,6 +75,9 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   /** Height / width kept while "Lock aspect ratio" is on. */
   const [aspect, setAspect] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Settings → Appearance: fills the font and size a note leaves unset (shown, never stored). */
+  const app = useAppAppearance();
+  const defaultSize = app ? (effectiveAppearance({}, app).fontSize ?? APPEARANCE_DEFAULTS.fontSize) : APPEARANCE_DEFAULTS.fontSize;
 
   // Latest values for sends that happen later (throttled sliders, async results).
   const idRef = useRef(noteId);
@@ -188,12 +198,12 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   }, [flushAppearance]);
 
   function changeAppearance(patch: Appearance) {
-    showAppearance(merged(appearanceRef.current, patch));
+    showAppearance(merged(appearanceRef.current, patch, defaultSize));
     sendAppearanceNow();
   }
 
   function slide(patch: Appearance) {
-    showAppearance(merged(appearanceRef.current, patch));
+    showAppearance(merged(appearanceRef.current, patch, defaultSize));
     sendAppearanceSoon();
   }
 
@@ -282,13 +292,15 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   // Closing: a slider value still waiting goes out.
   useEffect(() => () => flushAppearance(), [flushAppearance]);
 
-  const fontSize = appearance.fontSize ?? APPEARANCE_DEFAULTS.fontSize;
+  // The size the note is drawn with, in whole pixels (Compact's 13.5 shows as 14); the
+  // stepper steps from it.
+  const fontSize = Math.round(appearance.fontSize ?? defaultSize);
   const textColor = appearance.textColor ?? APPEARANCE_DEFAULTS.textColor;
   const lineSpacing = appearance.lineSpacing ?? APPEARANCE_DEFAULTS.lineSpacing;
   const opacity = appearance.opacity ?? APPEARANCE_DEFAULTS.opacity;
   const direction = appearance.direction ?? APPEARANCE_DEFAULTS.direction;
   const font = appearance.font ?? "";
-  const ready = color !== null && size !== null;
+  const ready = color !== null && size !== null && app !== null;
   const isPreset = color !== null && COLOR_PRESETS.some((p) => p.value === color.toLowerCase());
 
   const sliderEvents = {
