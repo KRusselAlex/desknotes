@@ -10,8 +10,8 @@
 // machine where the Ubuntu password cannot be used (the recovery code only). In the console,
 // previewLock() locks and previewUnlock() unlocks as the native side would.
 //
-// Settings → Appearance: ?w=settings&section=appearance. Notes take &hc=1 (high contrast) and
-// &compact=1 (compact layout) as if set there.
+// Settings → Appearance: ?w=settings&section=appearance. Notes and Note settings take &hc=1
+// (high contrast), &compact=1 (compact layout) and &font=Ubuntu (default font) as if set there.
 //
 // Settings: ?w=settings&section=privacy opens at Privacy (&nopin: lock off, &nosystem: no
 // computer-password route, &method=code: recovery code chosen); &section=privacy-new-pin opens
@@ -210,11 +210,12 @@ let shortcut: { available: boolean; binding: string | null; label: string | null
 };
 
 // Settings → Appearance, kept in memory like the app keeps it in its database.
-// &hc=1 starts with high contrast on and &compact=1 with the compact layout (for notes).
+// &hc=1 starts with high contrast on, &compact=1 with the compact layout, &font= with a default font.
 let appAppearance: AppAppearance = {
   ...APP_APPEARANCE_DEFAULTS,
   highContrast: params.get("hc") === "1",
   layout: params.get("compact") === "1" ? "compact" : "comfortable",
+  defaultFont: params.get("font") || null,
 };
 
 mockIPC(

@@ -72,6 +72,12 @@ describe("effectiveAppearance precedence", () => {
     expect(effectiveAppearance({}, app({ layout: "compact" })).fontSize).toBe(13.5);
   });
 
+  it("never goes below 10 px in Compact: Default size 10 stays 10", () => {
+    expect(effectiveAppearance({}, app({ layout: "compact", defaultSize: 10 })).fontSize).toBe(10);
+    expect(effectiveAppearance({}, app({ layout: "compact", defaultSize: 11 })).fontSize).toBe(10);
+    expect(effectiveAppearance({}, app({ layout: "compact", defaultSize: 12 })).fontSize).toBe(10.8);
+  });
+
   it("uses a note's own size as is in Compact", () => {
     expect(effectiveAppearance({ fontSize: 20 }, app({ layout: "compact", defaultSize: 18 })).fontSize).toBe(20);
   });

@@ -515,6 +515,41 @@ describe("NoteSettingsWindow", () => {
       expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 15 });
     });
 
+    it("in Compact, stepping back to the shown default returns the note to following the app", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ layout: "compact" }));
+      await open();
+      expect(sizeShown()).toBe("14"); // 13.5 drawn
+      await userEvent.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 13 });
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, {});
+      await userEvent.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 15 });
+      await userEvent.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, {});
+    });
+
+    it("names the app's default font as the first font option", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultFont: "Amiri" }));
+      await open(note({ appearance: { fontSize: 20 } }));
+      const font = screen.getByRole("combobox", { name: "Font" });
+      await waitFor(() => expect(within(font).getByRole("option", { name: "Ubuntu" })).toBeInTheDocument());
+      expect(within(font).getAllByRole("option")[0]).toHaveTextContent("Amiri (default)");
+      expect(within(font).queryByRole("option", { name: "System default" })).toBeNull();
+      expect(font).toHaveValue("");
+      // Choosing it means "no font of its own": nothing is stored for the font.
+      await userEvent.selectOptions(font, "Ubuntu");
+      await userEvent.selectOptions(font, "Amiri (default)");
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 20 });
+    });
+
+    it("keeps \"System default\" as the first font option when the app has no default font", async () => {
+      await open();
+      const font = screen.getByRole("combobox", { name: "Font" });
+      expect(within(font).getAllByRole("option")[0]).toHaveTextContent("System default");
+      expect(within(font).queryByRole("option", { name: /\(default\)/ })).toBeNull();
+    });
+
     it("never drops a note's own size equal to the app default when something else changes", async () => {
       vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultSize: 18 }));
       await open(note({ appearance: { fontSize: 18 } }));

@@ -39,9 +39,10 @@ const DIRECTIONS: readonly { value: TextDirection; label: string }[] = [
 
 /** The appearance with `patch` applied, without keys that are unset or at their default.
  * The size is the exception: the default it is compared with is `defaultSize`, the size
- * the note is drawn with when it has none (the app default, × 0.9 in Compact), and only
- * when the patch sets it. Stepping back to that size leaves it unset so the note follows
- * the app again; a size the note already has is never dropped by another change. */
+ * the stepper shows when the note has none (the app default, × 0.9 in Compact, rounded to
+ * whole pixels), and only when the patch sets it. Stepping back to that size leaves it unset
+ * so the note follows the app again; a size the note already has is never dropped by another
+ * change. */
 function merged(current: Appearance, patch: Appearance, defaultSize: number): Appearance {
   const next: Record<string, unknown> = { ...current, ...patch };
   const defaults: Record<string, unknown> = APPEARANCE_DEFAULTS;
@@ -78,6 +79,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   /** Settings → Appearance: fills the font and size a note leaves unset (shown, never stored). */
   const app = useAppAppearance();
   const defaultSize = app ? (effectiveAppearance({}, app).fontSize ?? APPEARANCE_DEFAULTS.fontSize) : APPEARANCE_DEFAULTS.fontSize;
+  /** The size the stepper shows for a note without one (Compact's 13.5 shows as 14). */
+  const shownDefaultSize = Math.round(defaultSize);
 
   // Latest values for sends that happen later (throttled sliders, async results).
   const idRef = useRef(noteId);
@@ -198,12 +201,12 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   }, [flushAppearance]);
 
   function changeAppearance(patch: Appearance) {
-    showAppearance(merged(appearanceRef.current, patch, defaultSize));
+    showAppearance(merged(appearanceRef.current, patch, shownDefaultSize));
     sendAppearanceNow();
   }
 
   function slide(patch: Appearance) {
-    showAppearance(merged(appearanceRef.current, patch, defaultSize));
+    showAppearance(merged(appearanceRef.current, patch, shownDefaultSize));
     sendAppearanceSoon();
   }
 
@@ -294,7 +297,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
 
   // The size the note is drawn with, in whole pixels (Compact's 13.5 shows as 14); the
   // stepper steps from it.
-  const fontSize = Math.round(appearance.fontSize ?? defaultSize);
+  const fontSize = appearance.fontSize === undefined ? shownDefaultSize : Math.round(appearance.fontSize);
   const textColor = appearance.textColor ?? APPEARANCE_DEFAULTS.textColor;
   const lineSpacing = appearance.lineSpacing ?? APPEARANCE_DEFAULTS.lineSpacing;
   const opacity = appearance.opacity ?? APPEARANCE_DEFAULTS.opacity;
@@ -335,7 +338,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
                     value={font}
                     onChange={(e) => changeAppearance({ font: e.target.value || undefined })}
                   >
-                    <option value="">System default</option>
+                    {/* No font of its own: the note is drawn with the app's default font, if any. */}
+                    <option value="">{app?.defaultFont ? `${app.defaultFont} (default)` : "System default"}</option>
                     {font && !(fonts ?? []).includes(font) && (
                       <option value={font}>{fonts ? `${font} (not installed)` : font}</option>
                     )}

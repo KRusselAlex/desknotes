@@ -25,7 +25,8 @@ export const COMPACT_TEXT_SCALE = 0.9;
 /**
  * What a note is drawn with: its own values, with the font and size it leaves
  * unset filled from the app defaults (Settings → Appearance). In Compact the
- * filled size is the default × 0.9, unrounded; a note's own size is used as is.
+ * filled size is the default × 0.9, unrounded but never below the 10 px floor every size
+ * control keeps (FONT_SIZE_RANGE); a note's own size is used as is.
  * Only for drawing: what is stored for the note is never this.
  */
 export function effectiveAppearance(note: Appearance, app: AppAppearance): Appearance {
@@ -33,7 +34,7 @@ export function effectiveAppearance(note: Appearance, app: AppAppearance): Appea
   if (next.fontSize === undefined) {
     const scale = app.layout === "compact" ? COMPACT_TEXT_SCALE : 1;
     // Hundredths: 18 × 0.9 is 16.2, not 16.200000000000003.
-    next.fontSize = Math.round(app.defaultSize * scale * 100) / 100;
+    next.fontSize = Math.max(FONT_SIZE_RANGE.min, Math.round(app.defaultSize * scale * 100) / 100);
   }
   if (next.font === undefined && app.defaultFont) next.font = app.defaultFont;
   return next;
