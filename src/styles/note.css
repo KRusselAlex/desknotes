@@ -329,6 +329,165 @@
 .dn-menu-overflow .dn-menu-item {
   height: 28px;
 }
+.dn-format-divider {
+  width: 1px;
+  height: 18px;
+  flex: none;
+  margin: 0 3px;
+  background: var(--dn-ink-line);
+}
+.dn-tool-text {
+  width: 32px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Aa text-style popover (N14): opens upward over the note, scrolls when the note is short.
+   N14 spans the window less 8 px each side (304 px in its 320 px window); wider notes keep 304. */
+.dn-text-style {
+  left: 8px;
+  bottom: 42px;
+  box-sizing: border-box;
+  width: min(304px, calc(100% - 16px));
+  max-height: calc(100vh - var(--dn-bar-h) - 14px); /* 6 px above the bar, 8 px below the top */
+  padding: 12px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: var(--dn-text-sm);
+  line-height: normal;
+}
+.dn-ts-grid {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.dn-ts-label {
+  color: var(--dn-ink-muted);
+}
+.dn-ts-select {
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 30px;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid var(--dn-ink-line);
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+}
+.dn-ts-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 29px 0 10px; /* room for the chevron */
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.dn-ts-select svg {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+}
+.dn-ts-size-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.dn-ts-weight {
+  flex: 1 0 96px; /* room for "Semibold"; wraps below the stepper when narrower */
+}
+.dn-ts-stepper {
+  box-sizing: border-box;
+  height: 30px;
+  flex: none;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid var(--dn-ink-line);
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+}
+.dn-ts-stepper > button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: var(--dn-ink);
+  font-size: inherit;
+}
+.dn-ts-stepper > button:hover:not(:disabled) {
+  background: var(--dn-ink-hover);
+}
+.dn-ts-stepper-value {
+  width: 28px;
+  text-align: center;
+  font-weight: 650;
+}
+.dn-ts-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.dn-ts-swatch {
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+}
+.dn-ts-swatch.is-none {
+  border: 1.5px solid var(--dn-ink-line);
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--dn-ink-muted);
+}
+.dn-ts-swatch[aria-checked="true"] {
+  box-shadow: 0 0 0 2px #fffdf8, 0 0 0 3.5px var(--dn-ink);
+}
+.dn-ts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding-top: 2px;
+}
+.dn-ts-case {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.dn-text-style button:disabled {
+  opacity: 0.45;
+  background: transparent;
+}
+/* Narrow notes (N12 width): labels above their controls so nothing is cut off. */
+@media (max-width: 259px) {
+  .dn-ts-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .dn-ts-grid > .dn-ts-label:not(:first-child) {
+    margin-top: 4px;
+  }
+}
 
 /* Header popovers (N8, N9) */
 .dn-note-menu {

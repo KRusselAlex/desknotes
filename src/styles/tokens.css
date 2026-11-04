@@ -25,6 +25,12 @@
   --dn-mint:  #c8f7c5;  --dn-mint-hd:  #b0ecac;
   --dn-sand:  #efe6d8;  --dn-sand-hd:  #e3d6c2;
   --dn-paper: #ffffff;  --dn-paper-hd: #f3efe8;
+  /* Text style (N14): text colours and highlights a selection may carry. Notes keep
+     their own colours in the dark theme, so these have no dark values. */
+  --dn-text-ink: #201e1d;  --dn-text-brown: #8c491a; --dn-text-olive: #56633f;
+  --dn-text-blue: #1d4f91; --dn-text-red: #7a1b14;   --dn-text-violet: #5b3a8c;
+  --dn-highlight-yellow: #ffe36e; --dn-highlight-peach: #ffc6a5;
+  --dn-highlight-sage: #ccdbb2;   --dn-highlight-sky: #bcd9ff;
   /* High contrast note */
   --dn-hc-bg: #ffffff; --dn-hc-ink: #000000; --dn-hc-line: #000000;
 
