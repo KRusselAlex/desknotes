@@ -14,7 +14,9 @@ import {
   setAlign,
   setTextColor,
   setWeight,
+  styleChain,
   textStyleState,
+  type StyleOptions,
   type FontWeightValue,
   type TextAlignment,
 } from "./textStyle";
@@ -48,8 +50,14 @@ function loadFonts(): Promise<string[]> {
   return installedFonts;
 }
 
-/** Keeps the editor's selection when a control is pressed (as the bar's tools do). */
-const keepSelection = (e: MouseEvent) => e.preventDefault();
+/**
+ * A press anywhere in the popover keeps focus (and the selection) in the editor, as the
+ * bar's tools do; otherwise the note would see focus leave and stop editing. A select
+ * must take focus to open, so it is left alone.
+ */
+const keepEditorFocus = (e: MouseEvent) => {
+  if (!(e.target as Element).closest("select")) e.preventDefault();
+};
 
 interface Swatch {
   key: string;
@@ -88,7 +96,6 @@ function SwatchGroup({ labelId, swatches }: { labelId: string; swatches: Swatch[
           tabIndex={i === current ? 0 : -1}
           className={`dn-ts-swatch${s.fill ? "" : " is-none"}`}
           style={s.fill ? { background: s.fill } : undefined}
-          onMouseDown={keepSelection}
           onClick={s.onPick}
         >
           {s.content}
@@ -147,12 +154,22 @@ export function TextStylePopover({
     };
   }, [onClose]);
 
+  // A control used from the keyboard (or a select) has focus: keep it there so several
+  // changes can be made in a row. A mouse press leaves focus in the text (keepEditorFocus).
+  const opts = (): StyleOptions => ({ focus: !ref.current?.contains(document.activeElement) });
+  const chain = () => styleChain(editor, opts());
   const font = s.fontFamily ?? "";
   const setSize = (px: number) =>
-    editor.chain().focus().setFontSize(`${Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, px))}px`).run();
+    chain().setFontSize(`${Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, px))}px`).run();
 
   return (
-    <div ref={ref} className="dn-popover dn-text-style" role="dialog" aria-label="Text style">
+    <div
+      ref={ref}
+      className="dn-popover dn-text-style"
+      role="dialog"
+      aria-label="Text style"
+      onMouseDown={keepEditorFocus}
+    >
       <div className="dn-ts-grid">
         <label className="dn-ts-label" htmlFor={`${id}-font`}>
           Font
@@ -163,8 +180,8 @@ export function TextStylePopover({
             value={font}
             onChange={(e) => {
               const v = e.target.value;
-              if (v === "") editor.chain().focus().unsetFontFamily().run();
-              else editor.chain().focus().setFontFamily(v).run();
+              if (v === "") chain().unsetFontFamily().run();
+              else chain().setFontFamily(v).run();
             }}
           >
             <option value="">System default</option>
@@ -189,8 +206,7 @@ export function TextStylePopover({
               type="button"
               aria-label="Smaller text"
               disabled={s.fontSize <= FONT_SIZE_MIN}
-              onMouseDown={keepSelection}
-              onClick={() => setSize(s.fontSize - 1)}
+                  onClick={() => setSize(s.fontSize - 1)}
             >
               −
             </button>
@@ -201,8 +217,7 @@ export function TextStylePopover({
               type="button"
               aria-label="Larger text"
               disabled={s.fontSize >= FONT_SIZE_MAX}
-              onMouseDown={keepSelection}
-              onClick={() => setSize(s.fontSize + 1)}
+                  onClick={() => setSize(s.fontSize + 1)}
             >
               +
             </button>
@@ -211,7 +226,7 @@ export function TextStylePopover({
             <select
               aria-label="Weight"
               value={s.fontWeight}
-              onChange={(e) => setWeight(editor, e.target.value as FontWeightValue)}
+              onChange={(e) => setWeight(editor, e.target.value as FontWeightValue, opts())}
             >
               {FONT_WEIGHTS.map((w) => (
                 <option key={w.value} value={w.value}>
@@ -233,7 +248,7 @@ export function TextStylePopover({
             name: TEXT_SWATCHES[c]!.name,
             fill: `var(${TEXT_SWATCHES[c]!.token})`,
             checked: s.color === c,
-            onPick: () => setTextColor(editor, c, appearance),
+            onPick: () => setTextColor(editor, c, appearance, opts()),
           }))}
         />
 
@@ -248,14 +263,14 @@ export function TextStylePopover({
               name: "No highlight",
               checked: s.highlight === null,
               content: <Icon name="close" size={11} />,
-              onPick: () => editor.chain().focus().unsetHighlight().run(),
+              onPick: () => chain().unsetHighlight().run(),
             },
             ...HIGHLIGHT_COLORS.map((c) => ({
               key: c,
               name: HIGHLIGHT_SWATCHES[c]!.name,
               fill: `var(${HIGHLIGHT_SWATCHES[c]!.token})`,
               checked: s.highlight === c,
-              onPick: () => editor.chain().focus().setHighlight({ color: c }).run(),
+              onPick: () => chain().setHighlight({ color: c }).run(),
             })),
           ]}
         />
@@ -270,8 +285,7 @@ export function TextStylePopover({
             aria-label={a.label}
             title={a.label}
             aria-pressed={s.align === a.value}
-            onMouseDown={keepSelection}
-            onClick={() => setAlign(editor, a.value, appearance)}
+              onClick={() => setAlign(editor, a.value, appearance, opts())}
           >
             <Icon name={a.icon} />
           </button>
@@ -281,7 +295,6 @@ export function TextStylePopover({
           type="button"
           className="dn-tool dn-ts-case"
           disabled={!s.hasSelection}
-          onMouseDown={keepSelection}
           onClick={() => changeCase(editor, "upper")}
         >
           AB
@@ -290,7 +303,6 @@ export function TextStylePopover({
           type="button"
           className="dn-tool dn-ts-case"
           disabled={!s.hasSelection}
-          onMouseDown={keepSelection}
           onClick={() => changeCase(editor, "lower")}
         >
           ab
@@ -302,8 +314,7 @@ export function TextStylePopover({
           aria-label="Undo"
           title="Undo (Ctrl+Z)"
           disabled={!s.canUndo}
-          onMouseDown={keepSelection}
-          onClick={() => editor.chain().focus().undo().run()}
+          onClick={() => chain().undo().run()}
         >
           <Icon name="undo" />
         </button>
@@ -313,8 +324,7 @@ export function TextStylePopover({
           aria-label="Redo"
           title="Redo (Ctrl+Shift+Z)"
           disabled={!s.canRedo}
-          onMouseDown={keepSelection}
-          onClick={() => editor.chain().focus().redo().run()}
+          onClick={() => chain().redo().run()}
         >
           <Icon name="redo" />
         </button>

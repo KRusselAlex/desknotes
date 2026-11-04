@@ -12,11 +12,17 @@ import { TextStylePopover } from "./TextStylePopover";
 
 const editors: Editor[] = [];
 afterEach(() => {
-  editors.splice(0).forEach((e) => e.destroy());
+  editors.splice(0).forEach((e) => {
+    const parent = e.view.dom.parentElement;
+    e.destroy();
+    parent?.remove();
+  });
 });
 
+/** A real editor in the document, so its focus() can really take focus. */
 function makeEditor(content: string | object = "<p>Hello world</p>") {
-  const editor = new Editor({ extensions: createExtensions(), content });
+  const element = document.body.appendChild(document.createElement("div"));
+  const editor = new Editor({ element, extensions: createExtensions(), content });
   editors.push(editor);
   return editor;
 }
@@ -247,11 +253,9 @@ describe("TextStylePopover", () => {
 
   it("Escape in the editor while it is open calls onClose", async () => {
     const editor = makeEditor();
-    document.body.appendChild(editor.view.dom);
     const { onClose } = await renderPopover(editor);
     fireEvent.keyDown(editor.view.dom, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
-    editor.view.dom.remove();
   });
 
   it("a click outside calls onClose, but not one on a popover toggle", async () => {
@@ -278,6 +282,81 @@ describe("TextStylePopover", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Font" }), "DejaVu Sans");
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Text style" })).toBeInTheDocument();
+  });
+
+  describe("keyboard use keeps focus in the popover", () => {
+    it("a colour picked with the keyboard leaves focus on the swatch", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor();
+      select(editor, 1, 6);
+      await renderPopover(editor);
+      const blue = screen.getByRole("radio", { name: "Blue text" });
+      blue.focus();
+      await user.keyboard("{Enter}");
+      // tiptap's focus() moves focus a frame later.
+      await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+      expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ color: "#1d4f91" }) }]);
+      expect(document.activeElement).toBe(blue);
+    });
+
+    it("changing the font with the select keeps focus in the popover", async () => {
+      const editor = makeEditor();
+      select(editor, 1, 6);
+      await renderPopover(editor);
+      const font = screen.getByRole("combobox", { name: "Font" });
+      font.focus();
+      fireEvent.change(font, { target: { value: "Amiri" } });
+      await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+      expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontFamily: "Amiri" }) }]);
+      expect(document.activeElement).toBe(font);
+    });
+
+    it("the stepper, weight, align, highlight and undo keep focus too", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor();
+      select(editor, 1, 6);
+      await renderPopover(editor);
+      const frame = () => act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
+      for (const name of ["Larger text", "Align centre"]) {
+        const b = screen.getByRole("button", { name });
+        b.focus();
+        await user.keyboard("{Enter}");
+        await frame();
+        expect(document.activeElement).toBe(b);
+      }
+      const peach = screen.getByRole("radio", { name: "Peach highlight" });
+      peach.focus();
+      await user.keyboard(" ");
+      await frame();
+      expect(document.activeElement).toBe(peach);
+      const weight = screen.getByRole("combobox", { name: "Weight" });
+      weight.focus();
+      fireEvent.change(weight, { target: { value: "300" } });
+      await frame();
+      expect(document.activeElement).toBe(weight);
+      expect(editor.getJSON().content?.[0]?.attrs?.textAlign).toBe("center");
+      expect(firstMarks(editor)).toEqual([
+        { type: "textStyle", attrs: expect.objectContaining({ fontSize: "16px", fontWeight: "300" }) },
+        { type: "highlight", attrs: { color: "#ffc6a5" } },
+      ]);
+      for (const name of ["Undo", "Redo"]) {
+        const b = screen.getByRole("button", { name });
+        b.focus();
+        await user.keyboard("{Enter}");
+        await frame();
+        expect(document.activeElement).toBe(b);
+      }
+    });
+  });
+
+  it("a press anywhere in the popover keeps the editor's focus, except on a select", async () => {
+    await renderPopover(makeEditor());
+    // fireEvent returns false when the default was prevented.
+    expect(fireEvent.mouseDown(screen.getByText("Font"))).toBe(false);
+    expect(fireEvent.mouseDown(screen.getByRole("dialog", { name: "Text style" }))).toBe(false);
+    expect(fireEvent.mouseDown(screen.getByRole("radio", { name: "Blue text" }))).toBe(false);
+    expect(fireEvent.mouseDown(screen.getByRole("combobox", { name: "Font" }))).toBe(true);
+    expect(fireEvent.mouseDown(screen.getByRole("combobox", { name: "Weight" }))).toBe(true);
   });
 
   it("does not take focus when it opens", async () => {

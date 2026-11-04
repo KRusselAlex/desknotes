@@ -245,19 +245,32 @@ export function changeCase(editor: Editor, to: "upper" | "lower"): boolean {
   return true;
 }
 
+/**
+ * `focus: false` applies to the editor's selection without moving focus to the text,
+ * for a control used from the keyboard that should keep focus (spec §4).
+ */
+export interface StyleOptions {
+  focus?: boolean;
+}
+
+/** A command chain that returns focus to the text unless told not to. */
+export function styleChain(editor: Editor, { focus = true }: StyleOptions = {}) {
+  return focus ? editor.chain().focus() : editor.chain();
+}
+
 /** Choosing the note's own text colour removes the selection's colour instead of copying it (spec §3.4). */
-export function setTextColor(editor: Editor, color: string, appearance: Appearance): void {
-  if (color.toLowerCase() === noteTextColor(appearance)) editor.chain().focus().unsetColor().run();
-  else editor.chain().focus().setColor(color).run();
+export function setTextColor(editor: Editor, color: string, appearance: Appearance, options?: StyleOptions): void {
+  if (color.toLowerCase() === noteTextColor(appearance)) styleChain(editor, options).unsetColor().run();
+  else styleChain(editor, options).setColor(color).run();
 }
 
 /** Choosing the alignment that is the default for the note's direction removes it (spec §3.6). */
-export function setAlign(editor: Editor, align: TextAlignment, appearance: Appearance): void {
-  if (align === noteDirectionAlign(appearance)) editor.chain().focus().unsetTextAlign().run();
-  else editor.chain().focus().setTextAlign(align).run();
+export function setAlign(editor: Editor, align: TextAlignment, appearance: Appearance, options?: StyleOptions): void {
+  if (align === noteDirectionAlign(appearance)) styleChain(editor, options).unsetTextAlign().run();
+  else styleChain(editor, options).setTextAlign(align).run();
 }
 
-export function setWeight(editor: Editor, weight: FontWeightValue): void {
-  if (weight === "400") editor.chain().focus().unsetFontWeight().run();
-  else editor.chain().focus().setFontWeight(weight).run();
+export function setWeight(editor: Editor, weight: FontWeightValue, options?: StyleOptions): void {
+  if (weight === "400") styleChain(editor, options).unsetFontWeight().run();
+  else styleChain(editor, options).setFontWeight(weight).run();
 }
