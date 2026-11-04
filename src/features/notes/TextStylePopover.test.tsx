@@ -36,7 +36,27 @@ async function renderPopover(editor: Editor, appearance: Appearance = {}, onClos
 
 /** The marks on the first text run of the first paragraph. */
 function firstMarks(editor: Editor) {
-  return editor.getJSON().content?.[0]?.content?.[0]?.marks ?? [];
+  return marksOf(editor, 0);
+}
+
+/** The marks on the first text run of the block at `index`. */
+function marksOf(editor: Editor, index: number) {
+  return editor.getJSON().content?.[index]?.content?.[0]?.marks ?? [];
+}
+
+/**
+ * The note's typography from note.css with the note size at 15 px (the title line
+ * ×18/15, headings ×16.5/15, both bold), written out because jsdom resolves
+ * neither calc() nor var().
+ */
+function addNoteStyles() {
+  const style = document.head.appendChild(document.createElement("style"));
+  style.textContent = `
+    .tiptap { font-size: 15px; font-weight: 400; }
+    .tiptap h2 { font-size: 16.5px; font-weight: 700; }
+    .tiptap > p:first-child, .tiptap > h2:first-child { font-size: 18px; font-weight: 700; }
+  `;
+  return style;
 }
 
 function select(editor: Editor, from: number, to: number) {
@@ -100,12 +120,13 @@ describe("TextStylePopover", () => {
 
     it("pressing + from the note default 15 stores 16px", async () => {
       const user = userEvent.setup();
-      const editor = makeEditor();
-      select(editor, 1, 6);
+      // The second paragraph: the first line is the title and is drawn larger.
+      const editor = makeEditor("<p>Title</p><p>Hello world</p>");
+      select(editor, 8, 13);
       await renderPopover(editor);
       expect(screen.getByRole("group", { name: "Size" })).toHaveTextContent("15");
       await user.click(screen.getByRole("button", { name: "Larger text" }));
-      expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontSize: "16px" }) }]);
+      expect(marksOf(editor, 1)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontSize: "16px" }) }]);
       expect(screen.getByRole("group", { name: "Size" })).toHaveTextContent("16");
     });
 
@@ -116,6 +137,91 @@ describe("TextStylePopover", () => {
       await renderPopover(editor, { fontSize: 20 });
       await user.click(screen.getByRole("button", { name: "Smaller text" }));
       expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontSize: "19px" }) }]);
+    });
+  });
+
+  describe("title line and headings show what the text shows", () => {
+    let style: HTMLStyleElement;
+    beforeEach(() => {
+      style = addNoteStyles();
+    });
+    afterEach(() => style.remove());
+
+    it("the title line shows 18 for a 15 px note, and + stores 19px", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor("<p>Title</p><p>Body</p>");
+      select(editor, 1, 6);
+      await renderPopover(editor);
+      expect(screen.getByRole("group", { name: "Size" })).toHaveTextContent("18");
+      await user.click(screen.getByRole("button", { name: "Larger text" }));
+      expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontSize: "19px" }) }]);
+      expect(screen.getByRole("group", { name: "Size" })).toHaveTextContent("19");
+    });
+
+    it("a heading shows 17 (16.5 rounded), and − stores 16px", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor("<p>Title</p><h2>Heading</h2>");
+      select(editor, 8, 15);
+      await renderPopover(editor);
+      expect(screen.getByRole("group", { name: "Size" })).toHaveTextContent("17");
+      await user.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(marksOf(editor, 1)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontSize: "16px" }) }]);
+    });
+
+    it("follows the note's size and shows at most 32 (a 32 px note has a 38 px title)", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor("<p>Title</p><p>Body</p>");
+      select(editor, 1, 6);
+      await renderPopover(editor, { fontSize: 32 });
+      expect(screen.getByRole("group", { name: "Size" })).toHaveTextContent("32");
+      expect(screen.getByRole("button", { name: "Larger text" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Smaller text" }));
+      expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontSize: "31px" }) }]);
+    });
+
+    it("a bold title never shows Regular, and Regular makes it regular", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor("<p>Title</p><p>Body</p>");
+      select(editor, 1, 6);
+      await renderPopover(editor);
+      const weight = screen.getByRole("combobox", { name: "Weight" });
+      // 700 is not in the list; the nearest entry is shown.
+      expect(weight).toHaveValue("600");
+      await user.selectOptions(weight, "Regular");
+      expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontWeight: "400" }) }]);
+      expect(weight).toHaveValue("400");
+    });
+
+    it("bold text in a body paragraph still shows Regular (Bold is the B button)", async () => {
+      const editor = makeEditor("<p>Title</p><p><strong>Body</strong></p>");
+      select(editor, 8, 12);
+      await renderPopover(editor);
+      expect(screen.getByRole("combobox", { name: "Weight" })).toHaveValue("400");
+    });
+  });
+
+  describe("alignment in Automatic direction follows each paragraph's own direction", () => {
+    const arabic = "<p>مرحبا بالعالم</p>";
+
+    it("an Arabic paragraph with no stored alignment shows Align right pressed", async () => {
+      const editor = makeEditor(arabic);
+      select(editor, 1, 6);
+      await renderPopover(editor, { direction: "auto" });
+      expect(screen.getByRole("button", { name: "Align right" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "Align left" })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("Align left on it stores left; Align right stores nothing", async () => {
+      const user = userEvent.setup();
+      const editor = makeEditor(arabic);
+      select(editor, 1, 6);
+      await renderPopover(editor, { direction: "auto" });
+      await user.click(screen.getByRole("button", { name: "Align left" }));
+      expect(editor.getJSON().content?.[0]?.attrs?.textAlign).toBe("left");
+      expect(screen.getByRole("button", { name: "Align left" })).toHaveAttribute("aria-pressed", "true");
+      await user.click(screen.getByRole("button", { name: "Align right" }));
+      expect(editor.getJSON().content?.[0]?.attrs?.textAlign ?? null).toBeNull();
+      expect(screen.getByRole("button", { name: "Align right" })).toHaveAttribute("aria-pressed", "true");
     });
   });
 
@@ -380,6 +486,33 @@ describe("TextStylePopover fonts", () => {
     const font = screen.getByRole("combobox", { name: "Font" }) as HTMLSelectElement;
     expect(Array.from(font.options).map((o) => o.textContent)).toEqual(["System default"]);
     expect(commands.listFonts).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again on the next open after a failure", async () => {
+    vi.resetModules();
+    const { commands } = await import("../../ipc/commands");
+    vi.mocked(commands.listFonts).mockClear();
+    vi.mocked(commands.listFonts).mockRejectedValueOnce(new Error("fc-list failed"));
+    const { TextStylePopover: Fresh } = await import("./TextStylePopover");
+    const first = render(<Fresh editor={makeEditor()} appearance={{}} onClose={() => {}} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    first.unmount();
+    render(<Fresh editor={makeEditor()} appearance={{}} onClose={() => {}} />);
+    await screen.findByRole("option", { name: "Amiri" });
+    expect(commands.listFonts).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers only font names a note may store", async () => {
+    vi.resetModules();
+    const { commands } = await import("../../ipc/commands");
+    vi.mocked(commands.listFonts).mockResolvedValueOnce(["Amiri", 'Bad "Quote"', "Semi;colon", "DejaVu Sans"]);
+    const { TextStylePopover: Fresh } = await import("./TextStylePopover");
+    render(<Fresh editor={makeEditor()} appearance={{}} onClose={() => {}} />);
+    await screen.findByRole("option", { name: "Amiri" });
+    const font = screen.getByRole("combobox", { name: "Font" }) as HTMLSelectElement;
+    expect(Array.from(font.options).map((o) => o.textContent)).toEqual(["System default", "Amiri", "DejaVu Sans"]);
   });
 
   it("asks for the fonts once per window", async () => {

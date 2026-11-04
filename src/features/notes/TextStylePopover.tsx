@@ -11,6 +11,7 @@ import {
   HIGHLIGHT_COLORS,
   TEXT_STYLE_COLORS,
   changeCase,
+  isAllowedFontFamily,
   setAlign,
   setTextColor,
   setWeight,
@@ -44,9 +45,17 @@ const ALIGN_BUTTONS: { value: TextAlignment; label: string; icon: IconName }[] =
 ];
 
 // Installed fonts, asked for once per note window, the first time the popover opens.
+// A failure is not kept, so the next open asks again. Only names a note may store
+// are offered.
 let installedFonts: Promise<string[]> | null = null;
 function loadFonts(): Promise<string[]> {
-  installedFonts ??= commands.listFonts().catch(() => []);
+  installedFonts ??= commands.listFonts().then(
+    (fonts) => fonts.filter(isAllowedFontFamily),
+    () => {
+      installedFonts = null;
+      return [];
+    },
+  );
   return installedFonts;
 }
 
@@ -206,7 +215,7 @@ export function TextStylePopover({
               type="button"
               aria-label="Smaller text"
               disabled={s.fontSize <= FONT_SIZE_MIN}
-                  onClick={() => setSize(s.fontSize - 1)}
+              onClick={() => setSize(s.fontSize - 1)}
             >
               −
             </button>
@@ -217,7 +226,7 @@ export function TextStylePopover({
               type="button"
               aria-label="Larger text"
               disabled={s.fontSize >= FONT_SIZE_MAX}
-                  onClick={() => setSize(s.fontSize + 1)}
+              onClick={() => setSize(s.fontSize + 1)}
             >
               +
             </button>
@@ -226,7 +235,7 @@ export function TextStylePopover({
             <select
               aria-label="Weight"
               value={s.fontWeight}
-              onChange={(e) => setWeight(editor, e.target.value as FontWeightValue, opts())}
+              onChange={(e) => setWeight(editor, e.target.value as FontWeightValue, opts(), s.blockWeight)}
             >
               {FONT_WEIGHTS.map((w) => (
                 <option key={w.value} value={w.value}>
@@ -285,7 +294,7 @@ export function TextStylePopover({
             aria-label={a.label}
             title={a.label}
             aria-pressed={s.align === a.value}
-              onClick={() => setAlign(editor, a.value, appearance, opts())}
+            onClick={() => setAlign(editor, a.value, appearance, opts())}
           >
             <Icon name={a.icon} />
           </button>

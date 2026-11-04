@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import type { Mark, Node as PMNode } from "@tiptap/pm/model";
-import type { Appearance } from "../../types/note";
+import type { Appearance, TextDirection } from "../../types/note";
 import { APPEARANCE_DEFAULTS } from "../appearance/appearance";
 /**
  * The values a note may carry for text style, highlight and alignment. They mirror
@@ -123,9 +123,15 @@ export type FontWeightValue = "300" | "400" | "500" | "600";
 export interface TextStyleState {
   /** The selection's own font, or null when it has none or the selection mixes fonts. */
   fontFamily: string | null;
-  /** Pixels: the start of the selection's own size, else the note's size. */
+  /**
+   * Pixels: the start of the selection's own size, else the size the text is drawn at
+   * (the title line and headings are larger than the note's size), shown within 10–32.
+   */
   fontSize: number;
+  /** The selection's own weight, else the list entry nearest the weight its block is drawn at. */
   fontWeight: FontWeightValue;
+  /** The weight the text has without its own weight: 700 on the title line and headings, else 400. */
+  blockWeight: number;
   /** Lower-case hex: the own colour at the start of the selection, else the note's colour. */
   color: string;
   /** Own highlight colour at the start of the selection, or null. */
@@ -171,29 +177,123 @@ function selectedRuns(editor: Editor): OwnStyle[] {
   return runs.length > 0 ? runs : [ownStyle($from.marks())];
 }
 
-function noteDirectionAlign(appearance: Appearance): TextAlignment {
-  return appearance.direction === "rtl" ? "right" : "left";
+/**
+ * Letters of the right-to-left scripts written today (Unicode bidi classes R and AL).
+ * Only scripts from Unicode 11 or older, so every WebKit we run on knows the names.
+ */
+const RTL_LETTER =
+  /[\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Samaritan}\p{Script=Mandaic}\p{Script=Adlam}\p{Script=Hanifi_Rohingya}]/u;
+/** A strong character: a letter, or one of the marks LRM, RLM and ALM. */
+const STRONG = /[\p{L}\u200E\u200F\u061C]/u;
+
+/**
+ * The direction of a paragraph's text by its first strong character, the rule dir="auto"
+ * and `unicode-bidi: plaintext` use: a letter of a right-to-left script (Hebrew, Arabic, …)
+ * or RLM/ALM → rtl, any other letter or LRM → ltr, none (only digits, spaces or
+ * punctuation) → null.
+ */
+export function firstStrongDirection(text: string): "ltr" | "rtl" | null {
+  const ch = STRONG.exec(text)?.[0];
+  if (ch === undefined) return null;
+  if (ch === "\u200E") return "ltr";
+  return ch === "\u200F" || ch === "\u061C" || RTL_LETTER.test(ch) ? "rtl" : "ltr";
+}
+
+function noteDirection(appearance: Appearance): TextDirection {
+  return appearance.direction ?? APPEARANCE_DEFAULTS.direction;
+}
+
+/**
+ * The alignment a block has when it stores none: from the note's direction, or in
+ * Automatic direction from the block's own text (an Arabic line is drawn right-aligned).
+ */
+function defaultAlign(block: PMNode | null, appearance: Appearance): TextAlignment {
+  const direction = noteDirection(appearance);
+  if (direction === "rtl") return "right";
+  if (direction === "ltr" || !block) return "left";
+  return firstStrongDirection(block.textContent) === "rtl" ? "right" : "left";
+}
+
+/** The direction the editor is drawn with (its `dir`, set by NoteWindow from the note's settings). */
+export function editorDirection(editor: Editor): TextDirection | undefined {
+  const dir = editor.view.dom.getAttribute("dir");
+  return dir === "ltr" || dir === "rtl" || dir === "auto" ? dir : undefined;
 }
 
 function noteTextColor(appearance: Appearance): string {
   return (appearance.textColor ?? APPEARANCE_DEFAULTS.textColor).toLowerCase();
 }
 
-/** Alignment of the first paragraph or heading the selection touches. */
-function startAlign(editor: Editor): unknown {
+/** The first paragraph or heading the selection touches, and its position. */
+function startBlock(editor: Editor): { node: PMNode; pos: number } | null {
   const { from, to } = editor.state.selection;
-  let align: unknown = null;
-  let found = false;
-  editor.state.doc.nodesBetween(from, to, (node) => {
+  let found: { node: PMNode; pos: number } | null = null;
+  editor.state.doc.nodesBetween(from, to, (node, pos) => {
     if (found) return false;
     if (node.isTextblock) {
-      found = true;
-      align = node.attrs.textAlign;
+      found = { node, pos };
       return false;
     }
     return true;
   });
-  return align;
+  return found;
+}
+
+/** Computed style of an element on the page, or null (a detached editor has none). */
+function computedStyle(el: Element | null | undefined): CSSStyleDeclaration | null {
+  if (!el?.isConnected) return null;
+  return el.ownerDocument.defaultView?.getComputedStyle(el) ?? null;
+}
+
+function positive(n: number): number | null {
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** The element that draws the text at `pos` (the text's parent, or the block at a block boundary). */
+function elementAt(editor: Editor, pos: number): Element | null {
+  try {
+    const { node, offset } = editor.view.domAtPos(pos, 1);
+    const target = node.nodeType === 1 ? (node.childNodes[offset] ?? node) : node;
+    return target.nodeType === 1 ? (target as Element) : target.parentElement;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How much larger than the note's size the text at `pos` is drawn (1.2 on the title
+ * line, 1.1 on headings), read from the page; null when the page cannot tell. A ratio
+ * rather than the pixels themselves, so a note size changed a moment ago is used at once.
+ */
+function drawnSizeRatio(editor: Editor, pos: number): number | null {
+  try {
+    const root = positive(Number.parseFloat(computedStyle(editor.view.dom)?.fontSize ?? ""));
+    const text = positive(Number.parseFloat(computedStyle(elementAt(editor, pos))?.fontSize ?? ""));
+    return root && text ? text / root : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The weight a block is drawn at without any own weight (title line and headings: 700). */
+function drawnBlockWeight(editor: Editor, block: { pos: number } | null): number | null {
+  if (!block) return null;
+  try {
+    const value = computedStyle(editor.view.nodeDOM(block.pos) as Element | null)?.fontWeight ?? "";
+    if (value === "normal") return 400;
+    if (value === "bold") return 700;
+    return positive(Number.parseInt(value, 10));
+  } catch {
+    return null;
+  }
+}
+
+function nearestWeight(weight: number): FontWeightValue {
+  let best = FONT_WEIGHTS[0]!;
+  for (const w of FONT_WEIGHTS) {
+    if (Math.abs(Number(w.value) - weight) < Math.abs(Number(best.value) - weight)) best = w;
+  }
+  return best.value;
 }
 
 export function textStyleState(editor: Editor, appearance: Appearance): TextStyleState {
@@ -202,13 +302,18 @@ export function textStyleState(editor: Editor, appearance: Appearance): TextStyl
   const families = new Set(runs.map((r) => r.fontFamily));
   const weights = new Set(runs.map((r) => r.fontWeight));
   const weight = weights.size === 1 ? [...weights][0] : null;
+  const block = startBlock(editor);
+  const blockWeight = drawnBlockWeight(editor, block) ?? 400;
+  const noteSize = appearance.fontSize ?? APPEARANCE_DEFAULTS.fontSize;
+  const drawnSize = Math.round(noteSize * (drawnSizeRatio(editor, editor.state.selection.from) ?? 1));
   return {
     fontFamily: families.size === 1 ? first.fontFamily : null,
-    fontSize: first.fontSize ?? appearance.fontSize ?? APPEARANCE_DEFAULTS.fontSize,
-    fontWeight: (weight ?? "400") as FontWeightValue,
+    fontSize: first.fontSize ?? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, drawnSize)),
+    fontWeight: (weight ?? nearestWeight(blockWeight)) as FontWeightValue,
+    blockWeight,
     color: first.color ?? noteTextColor(appearance),
     highlight: first.highlight,
-    align: normalizeAlign(startAlign(editor)) ?? noteDirectionAlign(appearance),
+    align: normalizeAlign(block?.node.attrs.textAlign) ?? defaultAlign(block?.node ?? null, appearance),
     canUndo: editor.can().undo(),
     canRedo: editor.can().redo(),
     hasSelection: !editor.state.selection.empty,
@@ -264,13 +369,46 @@ export function setTextColor(editor: Editor, color: string, appearance: Appearan
   else styleChain(editor, options).setColor(color).run();
 }
 
-/** Choosing the alignment that is the default for the note's direction removes it (spec §3.6). */
-export function setAlign(editor: Editor, align: TextAlignment, appearance: Appearance, options?: StyleOptions): void {
-  if (align === noteDirectionAlign(appearance)) styleChain(editor, options).unsetTextAlign().run();
-  else styleChain(editor, options).setTextAlign(align).run();
+const ALIGNABLE = new Set(["paragraph", "heading"]);
+
+/**
+ * Aligns every paragraph and heading the selection touches. Choosing a block's default
+ * alignment removes its stored value instead (spec §3.6); in Automatic direction each
+ * block's default follows its own text, so one choice can store "right" on an English
+ * line and nothing on an Arabic one.
+ */
+export function setAlign(
+  editor: Editor,
+  align: TextAlignment,
+  appearance: Appearance,
+  options?: StyleOptions,
+): boolean {
+  return styleChain(editor, options)
+    .command(({ tr }) => {
+      for (const { $from, $to } of tr.selection.ranges) {
+        tr.doc.nodesBetween($from.pos, $to.pos, (node, pos) => {
+          if (!ALIGNABLE.has(node.type.name)) return true;
+          const value = align === defaultAlign(node, appearance) ? null : align;
+          if (node.attrs.textAlign !== value) tr.setNodeAttribute(pos, "textAlign", value);
+          return false;
+        });
+      }
+      return true;
+    })
+    .run();
 }
 
-export function setWeight(editor: Editor, weight: FontWeightValue, options?: StyleOptions): void {
-  if (weight === "400") styleChain(editor, options).unsetFontWeight().run();
+/**
+ * Choosing the weight the text already has without its own (Regular in a body
+ * paragraph) removes its own weight; anything else is stored, so Regular on the bold
+ * title line makes it regular.
+ */
+export function setWeight(
+  editor: Editor,
+  weight: FontWeightValue,
+  options?: StyleOptions,
+  blockWeight = 400,
+): void {
+  if (Number(weight) === blockWeight) styleChain(editor, options).unsetFontWeight().run();
   else styleChain(editor, options).setFontWeight(weight).run();
 }

@@ -16,6 +16,7 @@ import {
   normalizeHighlight,
   normalizeTextColor,
   changeCase,
+  firstStrongDirection,
   setAlign,
   setTextColor,
   setWeight,
@@ -337,6 +338,60 @@ describe("text-style editor logic", () => {
       expect(align(rtl)).toBe("left");
       setAlign(rtl, "right", { direction: "rtl" });
       expect(align(rtl)).toBeNull();
+    });
+
+    describe("in Automatic direction each paragraph's default comes from its own direction", () => {
+      const auto: Appearance = { direction: "auto" };
+      const aligns = (editor: Editor) => editor.getJSON().content!.map((b) => b.attrs?.textAlign ?? null);
+
+      it("an unset Arabic paragraph is right-aligned, an English one left", () => {
+        const editor = editorWith("<p>مرحبا</p><p>Hello</p>");
+        editor.commands.setTextSelection(2);
+        expect(textStyleState(editor, auto).align).toBe("right");
+        expect(textStyleState(editor, {}).align).toBe("right"); // Automatic is the default
+        editor.commands.setTextSelection(10);
+        expect(textStyleState(editor, auto).align).toBe("left");
+      });
+
+      it("Align left on an Arabic paragraph stores left; Align right stores nothing", () => {
+        const editor = editorWith("<p>مرحبا</p>");
+        setAlign(editor, "left", auto);
+        expect(aligns(editor)).toEqual(["left"]);
+        setAlign(editor, "right", auto);
+        expect(aligns(editor)).toEqual([null]);
+      });
+
+      it("mixed English and Arabic blocks in one selection follow each block's own default", () => {
+        const editor = editorWith("<p>Hello</p><p>مرحبا</p>");
+        editor.commands.selectAll();
+        setAlign(editor, "right", auto);
+        expect(aligns(editor)).toEqual(["right", null]);
+        setAlign(editor, "left", auto);
+        expect(aligns(editor)).toEqual([null, "left"]);
+        setAlign(editor, "center", auto);
+        expect(aligns(editor)).toEqual(["center", "center"]);
+      });
+
+      it("fixed directions keep one default for the whole note", () => {
+        const editor = editorWith("<p>Hello</p><p>مرحبا</p>");
+        editor.commands.selectAll();
+        setAlign(editor, "right", { direction: "ltr" });
+        expect(aligns(editor)).toEqual(["right", "right"]);
+        setAlign(editor, "right", { direction: "rtl" });
+        expect(aligns(editor)).toEqual([null, null]);
+      });
+    });
+
+    it("firstStrongDirection follows the first strong character, as dir=auto does", () => {
+      expect(firstStrongDirection("مرحبا Hello")).toBe("rtl");
+      expect(firstStrongDirection("Hello مرحبا")).toBe("ltr");
+      expect(firstStrongDirection("שלום")).toBe("rtl");
+      expect(firstStrongDirection("12, (٣) – مرحبا")).toBe("rtl"); // digits and punctuation are not strong
+      expect(firstStrongDirection("42 Été")).toBe("ltr");
+      expect(firstStrongDirection("ދިވެހި")).toBe("rtl"); // Thaana
+      expect(firstStrongDirection("Привет")).toBe("ltr");
+      expect(firstStrongDirection("123 !?")).toBeNull();
+      expect(firstStrongDirection("")).toBeNull();
     });
 
     it("setAlign applies to every block the selection touches", () => {
