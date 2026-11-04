@@ -320,12 +320,20 @@ mod tests {
         for r in bad {
             let mut n = note(B);
             n["reminder"] = r.clone();
-            let err = parse_backup(&file_v4(vec![note(A), n])).unwrap_err();
-            let text = err.to_string();
-            assert!(
-                text.contains("note 2") || text.contains("not a DeskNotes backup"),
-                "{r}: {text}"
-            );
+            let text = parse_backup(&file_v4(vec![note(A), n]))
+                .unwrap_err()
+                .to_string();
+            // Unknown keys and a missing `dueAt` fail while the JSON is read; every
+            // other case is refused by validation, which names the note.
+            let at_parse = r.get("css").is_some() || r.get("dueAt").is_none();
+            if at_parse {
+                assert!(
+                    text.contains("unknown field") || text.contains("missing field"),
+                    "{r}: {text}"
+                );
+            } else {
+                assert!(text.contains("note 2"), "{r}: {text}");
+            }
         }
     }
 

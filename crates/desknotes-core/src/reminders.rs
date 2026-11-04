@@ -124,7 +124,15 @@ pub struct ReminderRow {
     pub effective_due: i64,
     /// `effective_due <= now`: due and not dismissed or rescheduled yet.
     pub overdue: bool,
+    /// The lock currently withholds this private note: the shell shows "Private note"
+    /// instead of `title`, and the core's search matched the label, not the title.
+    pub locked: bool,
 }
+
+/// The refusal for a one-off in the past. The shell shows it without the error prefix.
+pub const PAST_REMINDER: &str = "Pick a time in the future.";
+/// The refusal for a reminder more than 100 years away.
+pub const FAR_REMINDER: &str = "This reminder is too far away.";
 
 /// Stored and accepted reminder instants lie within this span of "now" (spec §4: ±100 years).
 const MAX_SPAN_MS: i64 = 100 * 366 * 24 * 3600 * 1000;

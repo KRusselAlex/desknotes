@@ -18,11 +18,9 @@ use super::Database;
 use super::notes::display_label;
 use crate::error::{CoreError, CoreResult};
 use crate::reminders::{
-    Reminder, ReminderRow, ReminderRule, Repeat, Snooze, first_due, next_occurrence, snooze,
-    validate_rule, within_range,
+    FAR_REMINDER, PAST_REMINDER, Reminder, ReminderRow, ReminderRule, Repeat, Snooze, first_due,
+    next_occurrence, snooze, validate_rule, within_range,
 };
-
-const PAST_ONE_OFF: &str = "Pick a time in the future.";
 
 const COLUMNS: &str = "r.note_id, r.local_date, r.local_time, r.repeat, r.due_at, \
                        r.snoozed_until, r.fired_at";
@@ -59,7 +57,63 @@ fn reminder_from_row(r: &Row<'_>) -> Option<Reminder> {
         })
 }
 
+/// The due time of a rule that is being set: a one-off's own date and time, or a repeat's
+/// first real occurrence after `floor` and not before the rule's own time (ruling R3), so
+/// a Weekdays rule dated on a Saturday starts on Monday.
+fn due_for<Tz: TimeZone>(
+    rule: &ReminderRule,
+    floor: DateTime<Utc>,
+    tz: &Tz,
+) -> Option<DateTime<Utc>> {
+    let first = first_due(rule, tz);
+    if rule.repeat == Repeat::None {
+        return Some(first);
+    }
+    let anchor = first
+        .checked_sub_signed(TimeDelta::seconds(1))
+        .unwrap_or(first);
+    next_occurrence(rule, floor.max(anchor), tz)
+}
+
+/// The latest occurrence of a repeat that is at or before `now`, if any occurrence
+/// follows `from`.
+fn latest_occurrence_by<Tz: TimeZone>(
+    rule: &ReminderRule,
+    from: DateTime<Utc>,
+    now: DateTime<Utc>,
+    tz: &Tz,
+) -> Option<DateTime<Utc>> {
+    let mut latest = next_occurrence(rule, from, tz).filter(|n| *n <= now)?;
+    // A repeat is at most daily, so even a century of absence is a bounded loop.
+    for _ in 0..40_000 {
+        match next_occurrence(rule, latest, tz) {
+            Some(n) if n <= now => latest = n,
+            _ => break,
+        }
+    }
+    Some(latest)
+}
+
 impl Database {
+    /// Refuse a note that is missing (`NotFound`) or in the trash (`NotAllowed`).
+    fn ensure_not_trashed(&self, note_id: &str) -> CoreResult<()> {
+        let deleted: Option<bool> = self
+            .conn
+            .query_row(
+                "SELECT deleted_at IS NOT NULL FROM notes WHERE id = ?1",
+                [note_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match deleted {
+            None => Err(CoreError::NotFound(note_id.to_string())),
+            Some(true) => Err(CoreError::NotAllowed(
+                "restore the note from the trash first".into(),
+            )),
+            Some(false) => Ok(()),
+        }
+    }
+
     /// `snoozed_until` if set, else `due_at`.
     pub fn effective_due(reminder: &Reminder) -> i64 {
         reminder.effective_due()
@@ -114,39 +168,17 @@ impl Database {
         now: DateTime<Utc>,
         tz: &Tz,
     ) -> CoreResult<Reminder> {
-        let deleted: Option<bool> = self
-            .conn
-            .query_row(
-                "SELECT deleted_at IS NOT NULL FROM notes WHERE id = ?1",
-                [note_id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        match deleted {
-            None => return Err(CoreError::NotFound(note_id.to_string())),
-            Some(true) => {
-                return Err(CoreError::NotAllowed(
-                    "restore the note from the trash first".into(),
-                ));
+        self.ensure_not_trashed(note_id)?;
+        let due = match due_for(&rule, now, tz) {
+            Some(due) if rule.repeat == Repeat::None && due <= now => {
+                return Err(invalid(PAST_REMINDER));
             }
-            Some(false) => {}
-        }
-        let first = first_due(&rule, tz);
-        let due = if rule.repeat == Repeat::None {
-            if first <= now {
-                return Err(invalid(PAST_ONE_OFF));
-            }
-            first
-        } else {
-            let anchor = first
-                .checked_sub_signed(TimeDelta::seconds(1))
-                .unwrap_or(first);
-            next_occurrence(&rule, now.max(anchor), tz)
-                .ok_or_else(|| invalid("This reminder is too far away."))?
+            Some(due) => due,
+            None => return Err(invalid(FAR_REMINDER)),
         };
         let due_ms = due.timestamp_millis();
         if !within_range(due_ms, now.timestamp_millis()) {
-            return Err(invalid("This reminder is too far away."));
+            return Err(invalid(FAR_REMINDER));
         }
         self.conn.execute(
             "INSERT INTO reminders (note_id, local_date, local_time, repeat, due_at,
@@ -184,8 +216,36 @@ impl Database {
     /// `effective_due <= now` and not already notified for that effective due time.
     /// Ordered by due time. Restoring a trashed note whose reminder passed makes it
     /// appear here once: it was never notified for that time.
-    pub fn due_reminders(&self, now: DateTime<Utc>) -> CoreResult<Vec<Reminder>> {
+    ///
+    /// First, in one transaction, every repeat whose next occurrence after its effective
+    /// due time is already at or before `now` is advanced to the latest such occurrence
+    /// (ruling R5): its snooze is cleared and `fired_at` kept, so the new occurrence is
+    /// due exactly once, however many were missed. A repeat that fired and was never
+    /// dismissed therefore fires again at its next occurrence. One-offs stay overdue
+    /// until dismissed.
+    pub fn due_reminders<Tz: TimeZone>(
+        &self,
+        now: DateTime<Utc>,
+        tz: &Tz,
+    ) -> CoreResult<Vec<Reminder>> {
         let now_ms = now.timestamp_millis();
+        let tx = self.conn.unchecked_transaction()?;
+        for r in self.live_reminders()? {
+            if r.rule.repeat == Repeat::None {
+                continue;
+            }
+            let Some(from) = at(r.effective_due()) else {
+                continue;
+            };
+            if let Some(latest) = latest_occurrence_by(&r.rule, from, now, tz) {
+                tx.execute(
+                    "UPDATE reminders SET due_at = ?3, snoozed_until = NULL
+                     WHERE note_id = ?1 AND due_at = ?2",
+                    params![r.note_id, r.due_at, latest.timestamp_millis()],
+                )?;
+            }
+        }
+        tx.commit()?;
         Ok(self
             .live_reminders()?
             .into_iter()
@@ -217,9 +277,10 @@ impl Database {
         let mut r = self
             .reminder(note_id)?
             .ok_or_else(|| CoreError::NotFound(note_id.to_string()))?;
+        self.ensure_not_trashed(note_id)?;
         let until = snooze(now, by, &r.rule, tz).timestamp_millis();
         if !within_range(until, now.timestamp_millis()) {
-            return Err(invalid("This reminder is too far away."));
+            return Err(invalid(FAR_REMINDER));
         }
         self.conn.execute(
             "UPDATE reminders SET snoozed_until = ?2 WHERE note_id = ?1",
@@ -241,6 +302,7 @@ impl Database {
         let mut r = self
             .reminder(note_id)?
             .ok_or_else(|| CoreError::NotFound(note_id.to_string()))?;
+        self.ensure_not_trashed(note_id)?;
         let due_at = at(r.due_at).unwrap_or(now);
         let next = (r.rule.repeat != Repeat::None)
             .then(|| next_occurrence(&r.rule, now.max(due_at), tz))
@@ -262,16 +324,68 @@ impl Database {
         Ok(Some(r))
     }
 
-    /// When the scheduler should wake: the earliest effective due time after `now` on a
-    /// note that is not in the trash. `None` if nothing is coming. (Reminders already
-    /// due are handled by [`Database::due_reminders`].)
-    pub fn next_wake(&self, now: DateTime<Utc>) -> CoreResult<Option<i64>> {
+    /// When the scheduler should wake: the earliest time after `now` at which a reminder
+    /// on a note that is not in the trash is due. That is its effective due time, or for
+    /// a repeat that already fired for its effective due time, its next occurrence
+    /// (ruling R5). `None` if nothing is coming. Reminders already due are handled by
+    /// [`Database::due_reminders`], which the scheduler calls first.
+    pub fn next_wake<Tz: TimeZone>(&self, now: DateTime<Utc>, tz: &Tz) -> CoreResult<Option<i64>> {
         let now_ms = now.timestamp_millis();
         Ok(self
             .live_reminders()?
             .into_iter()
-            .map(|r| r.effective_due())
-            .find(|due| *due > now_ms))
+            .filter_map(|r| {
+                let due = r.effective_due();
+                if due > now_ms {
+                    return Some(due);
+                }
+                if r.rule.repeat == Repeat::None || r.fired_at != Some(due) {
+                    return None;
+                }
+                next_occurrence(&r.rule, at(due)?, tz)
+                    .map(|n| n.timestamp_millis())
+                    .filter(|n| *n > now_ms)
+            })
+            .min())
+    }
+
+    /// After the computer's time zone changed (ruling R4): re-derive the due time of every
+    /// reminder that has not fired and is not snoozed, so it keeps its wall-clock time.
+    /// A one-off gets its own date and time in `tz` (it may now be overdue; it is kept);
+    /// a repeat whose due time is still ahead gets its next occurrence after `now`.
+    /// Fired, snoozed and unreadable rows are left alone; notes in the trash are included,
+    /// so a restored note is right. Returns how many rows changed.
+    pub fn reanchor_reminders<Tz: TimeZone>(
+        &self,
+        now: DateTime<Utc>,
+        tz: &Tz,
+    ) -> CoreResult<usize> {
+        let now_ms = now.timestamp_millis();
+        let floor = now.checked_sub_signed(TimeDelta::seconds(1)).unwrap_or(now);
+        let tx = self.conn.unchecked_transaction()?;
+        let mut changed = 0;
+        for r in self.all_reminders()? {
+            if r.fired_at.is_some() || r.snoozed_until.is_some() {
+                continue;
+            }
+            if r.rule.repeat != Repeat::None && r.due_at <= now_ms {
+                continue;
+            }
+            let Some(new) = due_for(&r.rule, floor, tz).map(|d| d.timestamp_millis()) else {
+                continue;
+            };
+            if new == r.due_at || !within_range(new, now_ms) {
+                continue;
+            }
+            changed += tx.execute(
+                "UPDATE reminders SET due_at = ?3
+                 WHERE note_id = ?1 AND due_at = ?2
+                   AND fired_at IS NULL AND snoozed_until IS NULL",
+                params![r.note_id, r.due_at, new],
+            )?;
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Every reminder on a note that is not in the trash (archived included), earliest
@@ -304,8 +418,9 @@ impl Database {
             let (Some(reminder), title, color, private, label) = row? else {
                 continue;
             };
+            let locked = self.withheld(lock, private, &reminder.note_id);
             if !needle.is_empty() {
-                let searched = if self.withheld(lock, private, &reminder.note_id) {
+                let searched = if locked {
                     display_label(&label).to_lowercase()
                 } else {
                     title.to_lowercase()
@@ -323,6 +438,7 @@ impl Database {
                 repeat: reminder.rule.repeat,
                 effective_due: due,
                 overdue: due <= now_ms,
+                locked,
             });
         }
         out.sort_by(|a, b| (a.effective_due, &a.note_id).cmp(&(b.effective_due, &b.note_id)));
@@ -403,7 +519,8 @@ mod tests {
                 .set_reminder(&id, rule(date, time, "none"), now(), &Paris)
                 .unwrap_err();
             assert_eq!(err.code(), "validation");
-            assert_eq!(err.to_string(), "invalid data: Pick a time in the future.");
+            assert!(err.to_string().contains(PAST_REMINDER), "{err}");
+            assert_eq!(PAST_REMINDER, "Pick a time in the future.");
         }
         assert_eq!(db.reminder(&id).unwrap(), None, "nothing stored");
         // One minute ahead is fine.
@@ -464,6 +581,8 @@ mod tests {
         ] {
             let err = db.set_reminder(&id, r, now(), &Paris).unwrap_err();
             assert_eq!(err.code(), "validation");
+            assert!(err.to_string().contains(FAR_REMINDER), "{err}");
+            assert_eq!(FAR_REMINDER, "This reminder is too far away.");
         }
         // 99 years is fine.
         db.set_reminder(&id, rule("2125-01-01", "09:00", "none"), now(), &Paris)
@@ -524,23 +643,23 @@ mod tests {
             let id = db.create_note(None).unwrap().id;
             set_one_off(&db, &id);
             // Not due yet.
-            assert!(db.due_reminders(now()).unwrap().is_empty());
+            assert!(db.due_reminders(now(), &Paris).unwrap().is_empty());
             id
         };
         // DeskNotes was closed at the due time and starts again at 16:00 UTC.
         let start = utc(2026, 11, 4, 15, 0);
         {
             let db = Database::open(&path, &backups).unwrap();
-            let due_now = db.due_reminders(start).unwrap();
+            let due_now = db.due_reminders(start, &Paris).unwrap();
             assert_eq!(due_now.len(), 1);
             assert_eq!(due_now[0].note_id, id);
             db.mark_fired(&id, due_now[0].effective_due()).unwrap();
-            assert!(db.due_reminders(start).unwrap().is_empty());
+            assert!(db.due_reminders(start, &Paris).unwrap().is_empty());
         }
         // A second restart does not fire it again; the row stays overdue and visible.
         let db = Database::open(&path, &backups).unwrap();
         let later = utc(2026, 11, 4, 18, 0);
-        assert!(db.due_reminders(later).unwrap().is_empty());
+        assert!(db.due_reminders(later, &Paris).unwrap().is_empty());
         let rows = db.list_reminders("", later).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(rows[0].overdue);
@@ -550,13 +669,13 @@ mod tests {
         let daily = db.create_note(None).unwrap().id;
         db.set_reminder(&daily, rule("2026-11-04", "14:00", "daily"), now(), &Paris)
             .unwrap();
-        let due_now = db.due_reminders(later).unwrap();
+        let due_now = db.due_reminders(later, &Paris).unwrap();
         assert_eq!(due_now.len(), 1);
         db.mark_fired(&daily, due_now[0].effective_due()).unwrap();
         db.dismiss_reminder(&daily, later, &Paris).unwrap();
-        assert!(db.due_reminders(later).unwrap().is_empty());
+        assert!(db.due_reminders(later, &Paris).unwrap().is_empty());
         let tomorrow = utc(2026, 11, 5, 13, 0);
-        let again = db.due_reminders(tomorrow).unwrap();
+        let again = db.due_reminders(tomorrow, &Paris).unwrap();
         assert!(again.iter().any(|r| r.note_id == daily));
     }
 
@@ -567,14 +686,14 @@ mod tests {
         let after = utc(2026, 11, 4, 13, 30);
         db.trash_note(&id).unwrap();
         assert!(
-            db.due_reminders(after).unwrap().is_empty(),
+            db.due_reminders(after, &Paris).unwrap().is_empty(),
             "never fires in the trash"
         );
         assert!(
             db.list_reminders("", after).unwrap().is_empty(),
             "not listed in the trash"
         );
-        assert_eq!(db.next_wake(now()).unwrap(), None);
+        assert_eq!(db.next_wake(now(), &Paris).unwrap(), None);
         assert!(db.reminder(&id).unwrap().is_some(), "the reminder is kept");
 
         db.restore_note(&id).unwrap();
@@ -582,7 +701,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].overdue, "past due after restore: shown, not lost");
         assert_eq!(
-            db.due_reminders(after).unwrap().len(),
+            db.due_reminders(after, &Paris).unwrap().len(),
             1,
             "notified once, at last"
         );
@@ -594,10 +713,10 @@ mod tests {
         set_one_off(&db, &id);
         db.set_archived(&id, true).unwrap();
         let after = utc(2026, 11, 4, 13, 1);
-        assert_eq!(db.due_reminders(after).unwrap().len(), 1);
+        assert_eq!(db.due_reminders(after, &Paris).unwrap().len(), 1);
         assert_eq!(db.list_reminders("", after).unwrap().len(), 1);
         assert_eq!(
-            db.next_wake(now()).unwrap(),
+            db.next_wake(now(), &Paris).unwrap(),
             Some(ms(utc(2026, 11, 4, 13, 0)))
         );
     }
@@ -607,7 +726,7 @@ mod tests {
         let (db, id) = db_with_note();
         let r = set_one_off(&db, &id);
         let fired_at = utc(2026, 11, 4, 13, 0);
-        assert_eq!(db.due_reminders(fired_at).unwrap().len(), 1);
+        assert_eq!(db.due_reminders(fired_at, &Paris).unwrap().len(), 1);
         db.mark_fired(&id, r.effective_due()).unwrap();
 
         let s = db
@@ -620,20 +739,20 @@ mod tests {
 
         // Not due again until the snooze ends; then it fires once more.
         assert!(
-            db.due_reminders(utc(2026, 11, 4, 13, 9))
+            db.due_reminders(utc(2026, 11, 4, 13, 9), &Paris)
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            db.next_wake(utc(2026, 11, 4, 13, 1)).unwrap(),
+            db.next_wake(utc(2026, 11, 4, 13, 1), &Paris).unwrap(),
             s.snoozed_until
         );
-        let due = db.due_reminders(utc(2026, 11, 4, 13, 10)).unwrap();
+        let due = db.due_reminders(utc(2026, 11, 4, 13, 10), &Paris).unwrap();
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].effective_due(), ms(utc(2026, 11, 4, 13, 10)));
         db.mark_fired(&id, due[0].effective_due()).unwrap();
         assert!(
-            db.due_reminders(utc(2026, 11, 4, 14, 0))
+            db.due_reminders(utc(2026, 11, 4, 14, 0), &Paris)
                 .unwrap()
                 .is_empty()
         );
@@ -686,7 +805,7 @@ mod tests {
     #[test]
     fn next_wake_is_the_earliest_future_effective_due() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.next_wake(now()).unwrap(), None);
+        assert_eq!(db.next_wake(now(), &Paris).unwrap(), None);
         let a = db.create_note(None).unwrap().id;
         let b = db.create_note(None).unwrap().id;
         let c = db.create_note(None).unwrap().id;
@@ -697,28 +816,28 @@ mod tests {
         db.set_reminder(&c, rule("2026-11-04", "12:00", "none"), now(), &Paris)
             .unwrap();
         assert_eq!(
-            db.next_wake(now()).unwrap(),
+            db.next_wake(now(), &Paris).unwrap(),
             Some(ms(utc(2026, 11, 4, 11, 0)))
         );
         // Once that one has passed, the next is 13:00; overdue ones are not "future".
         assert_eq!(
-            db.next_wake(utc(2026, 11, 4, 11, 0)).unwrap(),
+            db.next_wake(utc(2026, 11, 4, 11, 0), &Paris).unwrap(),
             Some(ms(utc(2026, 11, 4, 13, 0)))
         );
         // A snooze counts as the due time.
         db.snooze_reminder(&b, Snooze::Hour1, utc(2026, 11, 4, 11, 30), &Paris)
             .unwrap();
         assert_eq!(
-            db.next_wake(utc(2026, 11, 4, 11, 30)).unwrap(),
+            db.next_wake(utc(2026, 11, 4, 11, 30), &Paris).unwrap(),
             Some(ms(utc(2026, 11, 4, 12, 30)))
         );
         db.trash_note(&c).unwrap();
         db.remove_reminder(&b).unwrap();
         assert_eq!(
-            db.next_wake(now()).unwrap(),
+            db.next_wake(now(), &Paris).unwrap(),
             Some(ms(utc(2026, 11, 5, 8, 0)))
         );
-        assert_eq!(db.next_wake(utc(2026, 11, 6, 0, 0)).unwrap(), None);
+        assert_eq!(db.next_wake(utc(2026, 11, 6, 0, 0), &Paris).unwrap(), None);
     }
 
     #[test]
@@ -799,7 +918,40 @@ mod tests {
         db.set_privacy_locked(true, &[]);
         assert!(hit("bank").is_empty());
         assert_eq!(hit("money"), vec![c.clone()]);
-        assert_eq!(db.list_reminders("", at_noon).unwrap().len(), 3);
+        let locked_rows = db.list_reminders("", at_noon).unwrap();
+        assert_eq!(locked_rows.len(), 3);
+        let locked_flags: Vec<_> = locked_rows
+            .iter()
+            .map(|r| (r.note_id.clone(), r.locked))
+            .collect();
+        assert_eq!(
+            locked_flags,
+            [(b.clone(), false), (c.clone(), true), (a.clone(), false)]
+        );
+        // A private note kept open across the lock is searched by title and not masked.
+        db.set_privacy_locked(false, &[]);
+        db.set_privacy_locked(true, std::slice::from_ref(&c));
+        assert!(
+            db.list_reminders("", at_noon)
+                .unwrap()
+                .iter()
+                .all(|r| !r.locked)
+        );
+        assert_eq!(hit("bank"), vec![c.clone()]);
+        db.set_privacy_locked(true, &[]);
+        assert!(
+            db.list_reminders("", at_noon)
+                .unwrap()
+                .iter()
+                .any(|r| r.locked)
+        );
+        db.set_privacy_locked(false, &[]);
+        assert!(
+            db.list_reminders("", at_noon)
+                .unwrap()
+                .iter()
+                .all(|r| !r.locked)
+        );
     }
 
     #[test]
@@ -829,7 +981,7 @@ mod tests {
             db.conn.execute(damage, [&id]).unwrap();
             assert_eq!(db.reminder(&id).unwrap(), None, "{damage}");
             assert_eq!(
-                db.due_reminders(after).unwrap().len(),
+                db.due_reminders(after, &Paris).unwrap().len(),
                 0,
                 "{damage}: only the good one is not due yet"
             );
@@ -837,7 +989,7 @@ mod tests {
             assert_eq!(rows.len(), 1, "{damage}");
             assert_eq!(rows[0].note_id, good);
             assert_eq!(
-                db.next_wake(after).unwrap(),
+                db.next_wake(after, &Paris).unwrap(),
                 Some(ms(utc(2026, 11, 4, 14, 0)))
             );
             assert_eq!(
@@ -868,5 +1020,294 @@ mod tests {
         };
         let db = Database::open(&path, &dir.path().join("b")).unwrap();
         assert_eq!(db.reminder(&id).unwrap(), Some(set));
+    }
+
+    // ---- R5: a fired, un-dismissed repeat moves on by itself ----
+
+    /// Monday 2 Nov 2026, 07:00 Paris: before a Daily 09:00 (08:00 UTC) reminder's first time.
+    fn monday_morning() -> DateTime<Utc> {
+        utc(2026, 11, 2, 6, 0)
+    }
+
+    #[test]
+    fn a_fired_unanswered_daily_fires_again_the_next_day_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        let id = {
+            let db = Database::open(&path, &backups).unwrap();
+            let id = db.create_note(None).unwrap().id;
+            db.set_reminder(
+                &id,
+                rule("2026-11-02", "09:00", "daily"),
+                monday_morning(),
+                &Paris,
+            )
+            .unwrap();
+            // Monday 09:00: fires and is closed without an answer.
+            let mon = utc(2026, 11, 2, 8, 0);
+            let due = db.due_reminders(mon, &Paris).unwrap();
+            assert_eq!(due.len(), 1);
+            db.mark_fired(&id, due[0].effective_due()).unwrap();
+            assert!(db.due_reminders(mon, &Paris).unwrap().is_empty());
+            // It is not forgotten: the scheduler wakes for tomorrow 09:00.
+            assert_eq!(
+                db.next_wake(utc(2026, 11, 2, 8, 1), &Paris).unwrap(),
+                Some(ms(utc(2026, 11, 3, 8, 0)))
+            );
+            id
+        };
+        let db = Database::open(&path, &backups).unwrap();
+        assert!(
+            db.due_reminders(utc(2026, 11, 3, 7, 59), &Paris)
+                .unwrap()
+                .is_empty()
+        );
+        let tue = utc(2026, 11, 3, 8, 0);
+        let due = db.due_reminders(tue, &Paris).unwrap();
+        assert_eq!(due.len(), 1, "fires again on Tuesday");
+        assert_eq!(due[0].effective_due(), ms(tue));
+        db.mark_fired(&id, due[0].effective_due()).unwrap();
+        assert!(
+            db.due_reminders(utc(2026, 11, 3, 12, 0), &Paris)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            db.next_wake(utc(2026, 11, 3, 12, 0), &Paris).unwrap(),
+            Some(ms(utc(2026, 11, 4, 8, 0)))
+        );
+        // Still listed as overdue for the latest occurrence.
+        let rows = db.list_reminders("", utc(2026, 11, 3, 12, 0)).unwrap();
+        assert!(rows[0].overdue);
+        assert_eq!(rows[0].effective_due, ms(tue));
+        drop(db);
+        let db = Database::open(&path, &backups).unwrap();
+        assert!(
+            db.due_reminders(utc(2026, 11, 3, 13, 0), &Paris)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_fired_weekdays_reminder_next_wakes_on_monday() {
+        let (db, id) = db_with_note();
+        let thursday = utc(2026, 11, 5, 10, 0);
+        db.set_reminder(
+            &id,
+            rule("2026-11-06", "14:00", "weekdays"),
+            thursday,
+            &Paris,
+        )
+        .unwrap();
+        let fri = utc(2026, 11, 6, 13, 0);
+        let due = db.due_reminders(fri, &Paris).unwrap();
+        assert_eq!(due.len(), 1);
+        db.mark_fired(&id, due[0].effective_due()).unwrap();
+        assert_eq!(
+            db.next_wake(utc(2026, 11, 6, 13, 1), &Paris).unwrap(),
+            Some(ms(utc(2026, 11, 9, 13, 0)))
+        );
+        // Saturday and Sunday stay silent; Monday fires.
+        assert!(
+            db.due_reminders(utc(2026, 11, 8, 20, 0), &Paris)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            db.due_reminders(utc(2026, 11, 9, 13, 0), &Paris)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_repeat_missed_for_three_days_fires_once_for_the_latest_occurrence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        let id = {
+            let db = Database::open(&path, &backups).unwrap();
+            let id = db.create_note(None).unwrap().id;
+            db.set_reminder(
+                &id,
+                rule("2026-11-02", "09:00", "daily"),
+                monday_morning(),
+                &Paris,
+            )
+            .unwrap();
+            id
+        };
+        // Closed Mon-Wed; reopened Thursday 11:00 Paris (Mon, Tue, Wed and Thu 09:00 passed).
+        let db = Database::open(&path, &backups).unwrap();
+        let thu = utc(2026, 11, 5, 10, 0);
+        let due = db.due_reminders(thu, &Paris).unwrap();
+        assert_eq!(due.len(), 1, "once, not four times");
+        assert_eq!(due[0].effective_due(), ms(utc(2026, 11, 5, 8, 0)));
+        assert_eq!(due[0].fired_at, None);
+        db.mark_fired(&id, due[0].effective_due()).unwrap();
+        assert!(db.due_reminders(thu, &Paris).unwrap().is_empty());
+        assert_eq!(
+            db.next_wake(thu, &Paris).unwrap(),
+            Some(ms(utc(2026, 11, 6, 8, 0)))
+        );
+        let rows = db.list_reminders("", thu).unwrap();
+        assert!(rows[0].overdue && rows[0].effective_due == ms(utc(2026, 11, 5, 8, 0)));
+    }
+
+    #[test]
+    fn advancing_a_repeat_clears_its_snooze_and_skips_trashed_notes() {
+        let (db, id) = db_with_note();
+        let trashed = db.create_note(None).unwrap().id;
+        for n in [&id, &trashed] {
+            db.set_reminder(
+                n,
+                rule("2026-11-02", "09:00", "daily"),
+                monday_morning(),
+                &Paris,
+            )
+            .unwrap();
+        }
+        let mon = utc(2026, 11, 2, 8, 0);
+        db.mark_fired(&id, ms(mon)).unwrap();
+        db.snooze_reminder(&id, Snooze::Hour1, mon, &Paris).unwrap();
+        db.trash_note(&trashed).unwrap();
+        let tue = utc(2026, 11, 3, 8, 0);
+        let due = db.due_reminders(tue, &Paris).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].snoozed_until, None, "the snooze belonged to Monday");
+        assert_eq!(due[0].due_at, ms(tue));
+        // The trashed note's row was not advanced.
+        assert_eq!(db.reminder(&trashed).unwrap().unwrap().due_at, ms(mon));
+        // A pending snooze that has not been outlived is left alone.
+        let (db2, id2) = db_with_note();
+        db2.set_reminder(
+            &id2,
+            rule("2026-11-02", "09:00", "daily"),
+            monday_morning(),
+            &Paris,
+        )
+        .unwrap();
+        db2.mark_fired(&id2, ms(mon)).unwrap();
+        db2.snooze_reminder(&id2, Snooze::Tomorrow, mon, &Paris)
+            .unwrap();
+        assert!(
+            db2.due_reminders(utc(2026, 11, 3, 7, 59), &Paris)
+                .unwrap()
+                .is_empty()
+        );
+        let at = db2.due_reminders(tue, &Paris).unwrap();
+        assert_eq!(at.len(), 1, "the Tomorrow snooze fires once at 09:00");
+        assert_eq!(at[0].effective_due(), ms(tue));
+    }
+
+    #[test]
+    fn a_fired_one_off_stays_overdue_and_silent() {
+        let (db, id) = db_with_note();
+        let r = set_one_off(&db, &id);
+        db.mark_fired(&id, r.due_at).unwrap();
+        let later = utc(2026, 11, 9, 0, 0);
+        assert!(db.due_reminders(later, &Paris).unwrap().is_empty());
+        assert_eq!(db.next_wake(later, &Paris).unwrap(), None);
+        assert_eq!(db.reminder(&id).unwrap().unwrap().due_at, r.due_at);
+        assert!(db.list_reminders("", later).unwrap()[0].overdue);
+    }
+
+    // ---- R4: re-anchor after a time-zone change ----
+
+    #[test]
+    fn reanchor_keeps_the_wall_clock_time_in_a_new_zone() {
+        use chrono_tz::America::New_York;
+        use chrono_tz::Pacific::Auckland;
+
+        let db = Database::open_in_memory().unwrap();
+        let daily = db.create_note(None).unwrap().id;
+        let once = db.create_note(None).unwrap().id;
+        let fired = db.create_note(None).unwrap().id;
+        let snoozed = db.create_note(None).unwrap().id;
+        let trashed_note = db.create_note(None).unwrap().id;
+        let past_repeat = db.create_note(None).unwrap().id;
+        for n in [&daily, &fired, &snoozed, &trashed_note] {
+            db.set_reminder(n, rule("2026-11-04", "14:00", "daily"), now(), &Paris)
+                .unwrap();
+        }
+        db.set_reminder(&once, rule("2026-11-04", "14:00", "none"), now(), &Paris)
+            .unwrap();
+        db.set_reminder(
+            &past_repeat,
+            rule("2026-11-04", "09:00", "daily"),
+            now(),
+            &Paris,
+        )
+        .unwrap(); // next 09:00 Paris is tomorrow
+        let fired_due = db.reminder(&fired).unwrap().unwrap().due_at;
+        db.mark_fired(&fired, fired_due).unwrap();
+        db.snooze_reminder(&snoozed, Snooze::Hour1, now(), &Paris)
+            .unwrap();
+        let snoozed_before = db.reminder(&snoozed).unwrap().unwrap();
+        db.trash_note(&trashed_note).unwrap();
+        // A damaged row is skipped, not an error.
+        let damaged = db.create_note(None).unwrap().id;
+        db.conn
+            .execute(
+                "INSERT INTO reminders VALUES (?1, 'nope', '14:00', 'none', 1793797200000, NULL, NULL)",
+                [&damaged],
+            )
+            .unwrap();
+
+        let changed = db.reanchor_reminders(now(), &New_York).unwrap();
+        let ny_14 = ms(utc(2026, 11, 4, 19, 0)); // 14:00 EST
+        assert_eq!(db.reminder(&daily).unwrap().unwrap().due_at, ny_14);
+        assert_eq!(db.reminder(&once).unwrap().unwrap().due_at, ny_14);
+        assert_eq!(
+            db.reminder(&trashed_note).unwrap().unwrap().due_at,
+            ny_14,
+            "a trashed note is re-anchored too, so a restore is right"
+        );
+        // 09:00 Paris tomorrow becomes the next 09:00 in New York (14:00 UTC today, still ahead).
+        assert_eq!(
+            db.reminder(&past_repeat).unwrap().unwrap().due_at,
+            ms(utc(2026, 11, 4, 14, 0))
+        );
+        assert_eq!(changed, 4);
+        // Fired and snoozed rows are untouched.
+        assert_eq!(db.reminder(&fired).unwrap().unwrap().due_at, fired_due);
+        assert_eq!(db.reminder(&snoozed).unwrap().unwrap(), snoozed_before);
+        // Running it again changes nothing.
+        assert_eq!(db.reanchor_reminders(now(), &New_York).unwrap(), 0);
+
+        // A one-off may become overdue in a zone ahead of the old one; it is kept.
+        db.set_reminder(&once, rule("2026-11-04", "14:00", "none"), now(), &Paris)
+            .unwrap();
+        db.reanchor_reminders(now(), &Auckland).unwrap();
+        let o = db.reminder(&once).unwrap().unwrap();
+        assert_eq!(o.due_at, ms(utc(2026, 11, 4, 1, 0)), "14:00 NZDT");
+        assert!(
+            db.due_reminders(now(), &Auckland)
+                .unwrap()
+                .iter()
+                .any(|r| r.note_id == once)
+        );
+    }
+
+    // ---- R7: trashed notes ----
+
+    #[test]
+    fn snooze_and_dismiss_are_refused_on_a_trashed_note() {
+        let (db, id) = db_with_note();
+        let r = set_one_off(&db, &id);
+        db.trash_note(&id).unwrap();
+        let err = db
+            .snooze_reminder(&id, Snooze::Hour1, now(), &Paris)
+            .unwrap_err();
+        assert_eq!(err.code(), "not_allowed");
+        let err = db.dismiss_reminder(&id, now(), &Paris).unwrap_err();
+        assert_eq!(err.code(), "not_allowed");
+        assert_eq!(db.reminder(&id).unwrap(), Some(r), "unchanged");
+        db.restore_note(&id).unwrap();
+        db.snooze_reminder(&id, Snooze::Hour1, now(), &Paris)
+            .unwrap();
     }
 }
