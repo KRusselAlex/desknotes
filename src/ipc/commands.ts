@@ -23,6 +23,7 @@ import type {
   SetupResult,
   ToggleShortcut,
 } from "../types/note";
+import type { ReminderListRow, ReminderView, Repeat } from "../types/reminder";
 
 /** Error shape produced by the Rust side (`IpcError`). */
 export class CommandError extends Error {
@@ -143,6 +144,17 @@ export const commands = {
   recoverWithCode: (code: string) => call<PinCheck>("recover_with_code", { code }),
   /** Settings only, after forgotPinSystem or recoverWithCode succeeded. */
   chooseNewPin: (pin: string) => call<SetupResult>("choose_new_pin", { pin }),
+
+  // Reminders. Rust validates the date, time and repeat and owns every time rule.
+  /** The note's reminder, or null when it has none. */
+  getReminder: (noteId: string) => call<ReminderView | null>("get_reminder", { noteId }),
+  /** Replaces any earlier reminder. `date` is YYYY-MM-DD, `time` HH:MM (24 h). A one-off
+   * in the past is refused with "Pick a time in the future." (CommandError message). */
+  setReminder: (noteId: string, date: string, time: string, repeat: Repeat) =>
+    call<ReminderView>("set_reminder", { noteId, date, time, repeat }),
+  removeReminder: (noteId: string) => call<void>("remove_reminder", { noteId }),
+  /** Reminders on notes not in the trash, earliest first, filtered by title. */
+  listReminders: (query: string) => call<ReminderListRow[]>("list_reminders", { query }),
 };
 
 export type Commands = typeof commands;

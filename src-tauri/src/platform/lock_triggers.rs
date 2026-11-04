@@ -36,15 +36,19 @@ pub fn watch_inactivity(tick: impl Fn() + Send + 'static) {
     }
 }
 
-/// Listen for sleep and screen-lock signals and call `on_lock` for each.
-/// `on_lock` runs on a listener thread and may block (it waits for the note
-/// windows to save); several signals for one event are the caller's to merge.
-/// Only Linux has listeners; elsewhere this does nothing.
-pub fn watch(on_lock: impl Fn() + Send + Sync + Clone + 'static) {
+/// Listen for sleep and screen-lock signals and call `on_lock` for each, and
+/// `on_resume` when the computer wakes from sleep (the reminder scheduler's timer
+/// does not count the time asleep). Both run on a listener thread; `on_lock` may
+/// block (it waits for the note windows to save); several signals for one event
+/// are the caller's to merge. Only Linux has listeners; elsewhere this does nothing.
+pub fn watch(
+    on_lock: impl Fn() + Send + Sync + Clone + 'static,
+    on_resume: impl Fn() + Send + 'static,
+) {
     #[cfg(target_os = "linux")]
-    linux::watch(on_lock);
+    linux::watch(on_lock, on_resume);
     #[cfg(not(target_os = "linux"))]
-    let _ = on_lock;
+    let _ = (on_lock, on_resume);
 }
 
 #[cfg(target_os = "linux")]
@@ -64,11 +68,14 @@ mod linux {
     const SCREEN_SAVER: &str = "org.gnome.ScreenSaver";
     const SCREEN_SAVER_PATH: &str = "/org/gnome/ScreenSaver";
 
-    pub fn watch(on_lock: impl Fn() + Send + Sync + Clone + 'static) {
+    pub fn watch(
+        on_lock: impl Fn() + Send + Sync + Clone + 'static,
+        on_resume: impl Fn() + Send + 'static,
+    ) {
         let sleep = on_lock.clone();
         let screen = on_lock.clone();
         let session = on_lock;
-        spawn("sleep", move || watch_sleep(&sleep));
+        spawn("sleep", move || watch_sleep(&sleep, &on_resume));
         spawn("screen-saver", move || watch_screen_saver(&screen));
         spawn("session-lock", move || watch_session_lock(&session));
     }
@@ -130,8 +137,9 @@ mod linux {
         }
     }
 
-    /// logind `PrepareForSleep(true)` on the system bus.
-    fn watch_sleep(on_lock: &dyn Fn()) -> zbus::Result<()> {
+    /// logind `PrepareForSleep(true)` on the system bus; `PrepareForSleep(false)`
+    /// is the resume.
+    fn watch_sleep(on_lock: &dyn Fn(), on_resume: &dyn Fn()) -> zbus::Result<()> {
         let conn = Connection::system()?;
         let manager = proxy(&conn, LOGIND, LOGIND_PATH, LOGIND_MANAGER)?;
         let mut inhibitor = take_inhibitor(&manager);
@@ -142,7 +150,10 @@ mod linux {
                     // Let the computer sleep; the next inhibitor waits for resume.
                     inhibitor = None;
                 }
-                Some(false) => inhibitor = take_inhibitor(&manager),
+                Some(false) => {
+                    inhibitor = take_inhibitor(&manager);
+                    on_resume();
+                }
                 None => {}
             }
         }

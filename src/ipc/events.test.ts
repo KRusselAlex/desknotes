@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const listen = vi.fn();
 vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listen(...args) }));
 
-import { APP_APPEARANCE_CHANGED, onAppAppearanceChanged } from "./events";
+import { APP_APPEARANCE_CHANGED, REMINDERS_CHANGED, onAppAppearanceChanged, onRemindersChanged } from "./events";
 import { APP_APPEARANCE_DEFAULTS, type AppAppearance } from "../types/note";
 
 describe("onAppAppearanceChanged", () => {
@@ -39,5 +39,23 @@ describe("APP_APPEARANCE_DEFAULTS", () => {
       defaultFont: null,
       defaultSize: 15,
     });
+  });
+});
+
+describe("onRemindersChanged", () => {
+  beforeEach(() => {
+    listen.mockReset();
+    listen.mockResolvedValue(() => {});
+  });
+
+  it("listens on reminders-changed and passes the note id on", async () => {
+    expect(REMINDERS_CHANGED).toBe("reminders-changed");
+    const handler = vi.fn();
+    await onRemindersChanged(handler);
+    const [name, callback] = listen.mock.calls[0] as [string, (e: { payload: { noteId: string | null } }) => void];
+    expect(name).toBe("reminders-changed");
+    callback({ payload: { noteId: "a2" } });
+    callback({ payload: { noteId: null } });
+    expect(handler.mock.calls).toEqual([[{ noteId: "a2" }], [{ noteId: null }]]);
   });
 });

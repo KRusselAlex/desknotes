@@ -46,11 +46,11 @@ All core dependencies are free and open source. None requires a paid service, ac
 | tauri-plugin-opener | 2.7.2 | MIT OR Apache-2.0 | Open http(s)/mailto links in the system browser |
 | tauri-plugin-autostart (M2) | 2.7.0 | MIT OR Apache-2.0 | Launch at login |
 | tauri-plugin-dialog (M2) | 2.8.4 | MIT OR Apache-2.0 | Backup file pickers |
-| tauri-plugin-notification (M4) | 2.8.0 | MIT OR Apache-2.0 | Local OS notifications |
 | rusqlite (`bundled`) | 0.41.1 | MIT (SQLite: public domain) | Native SQLite access |
 | serde / serde_json / thiserror / uuid | current | MIT OR Apache-2.0 | Serialization, errors, stable IDs |
 | argon2 (M3) | 0.6.0 | MIT OR Apache-2.0 | PIN hashing (Argon2id) |
-| zbus (M3, Linux only; blocking API) | 5.13.2 | MIT | Listen for sleep and screen-lock signals on the local D-Bus to lock private notes. Already in the build through Tauri's plugins; no network |
+| zbus (M3, Linux only; blocking API) | 5.13.2 | MIT | Listen for sleep and screen-lock signals on the local D-Bus to lock private notes, and (M4) send reminder notifications with their buttons to the desktop's `org.freedesktop.Notifications` service. Already in the build through Tauri's plugins; no network |
+| chrono (M4) | 0.4.45 (`clock` only) | MIT OR Apache-2.0 | Reminder times: local wall clock, time zones and DST in the core; `Local` and `Utc::now` in the shell |
 | react / react-dom | 19.3.1 | MIT | UI |
 | vite / @vitejs/plugin-react | 8.3.5 / 6.1.2 | MIT | Build tooling |
 | typescript | **6.0.3** (pinned) | Apache-2.0 | Type checking. 7.0 exists but typescript-eslint supports `<6.1` |
@@ -60,6 +60,14 @@ All core dependencies are free and open source. None requires a paid service, ac
 | @tiptap/extension-text-align | 3.32.2 | MIT | Left, centre or right alignment of paragraphs and headings |
 | @tiptap/extension-bold | 3.32.2 | MIT | Already in the build through the starter kit; imported directly to adjust how pasted font weights are read, so a Medium or Semibold weight is not also read as bold |
 | vitest / @testing-library/react / jsdom | 5.0.5 / 16.3.3 / 30.1.3 | MIT | Frontend tests |
+
+Not used, deliberately (M4 reminders): `tauri-plugin-notification` 2.8.0 does show action
+buttons on Linux since 2.6.0, but it sets the application name to the executable name (not
+"DeskNotes") and sends from a background task, so a failed send cannot be detected and the
+reminder retried; `notify-rust` 4.18.2 (MIT OR Apache-2.0, zbus 5) opens a connection per
+notification and needs a waiting thread per notification for its buttons. DeskNotes talks to
+`org.freedesktop.Notifications` directly with the zbus already in the build (one connection,
+one listener thread).
 
 Not used, deliberately: `tauri-plugin-sql` (see ADR-0003), Tailwind (organized CSS is enough),
 zod (validation is enforced on the Rust side, ADR-0003), any Tiptap Pro / Collaboration / Cloud package.

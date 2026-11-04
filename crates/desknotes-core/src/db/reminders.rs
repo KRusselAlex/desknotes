@@ -18,8 +18,8 @@ use super::Database;
 use super::notes::display_label;
 use crate::error::{CoreError, CoreResult};
 use crate::reminders::{
-    FAR_REMINDER, PAST_REMINDER, Reminder, ReminderRow, ReminderRule, Repeat, Snooze, first_due,
-    next_occurrence, snooze, validate_rule, within_range,
+    FAR_REMINDER, PAST_REMINDER, Reminder, ReminderHeading, ReminderRow, ReminderRule, Repeat,
+    Snooze, first_due, next_occurrence, snooze, validate_rule, within_range,
 };
 
 const COLUMNS: &str = "r.note_id, r.local_date, r.local_time, r.repeat, r.due_at, \
@@ -386,6 +386,28 @@ impl Database {
         }
         tx.commit()?;
         Ok(changed)
+    }
+
+    /// The note's title and whether the lock withholds it now, for the notification of
+    /// its reminder (ruling R6). `None` when the note does not exist. The title is the
+    /// real one: the shell replaces it with "Private note" when `locked`.
+    pub fn reminder_heading(&self, note_id: &str) -> CoreResult<Option<ReminderHeading>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT title, private FROM notes WHERE id = ?1",
+                [note_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+            )
+            .optional()?;
+        let Some((title, private)) = row else {
+            return Ok(None);
+        };
+        let lock = self.lock_active()?;
+        Ok(Some(ReminderHeading {
+            title,
+            locked: self.withheld(lock, private, note_id),
+        }))
     }
 
     /// Every reminder on a note that is not in the trash (archived included), earliest
@@ -1309,5 +1331,40 @@ mod tests {
         db.restore_note(&id).unwrap();
         db.snooze_reminder(&id, Snooze::Hour1, now(), &Paris)
             .unwrap();
+    }
+
+    // ---- Notification heading (ruling R6) ----
+
+    #[test]
+    fn reminder_heading_gives_the_title_and_the_locked_flag() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        let doc = serde_json::json!({"type":"doc","content":[{"type":"paragraph","content":[
+            {"type":"text","text":"Bank"}]}]})
+        .to_string();
+        db.save_content(&id, &doc).unwrap();
+        let heading = |db: &Database| db.reminder_heading(&id).unwrap().unwrap();
+        assert_eq!(
+            heading(&db),
+            ReminderHeading {
+                title: "Bank".into(),
+                locked: false
+            }
+        );
+
+        db.set_private(&id, true, "Money").unwrap();
+        assert!(!heading(&db).locked, "private but not locked");
+        db.set_new_pin("482913").unwrap();
+        db.set_privacy_locked(true, &[]);
+        assert!(heading(&db).locked, "the same rule as list_reminders");
+        db.set_privacy_locked(false, &[]);
+        db.set_privacy_locked(true, std::slice::from_ref(&id));
+        assert!(!heading(&db).locked, "kept open across the lock");
+
+        assert_eq!(
+            db.reminder_heading("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d")
+                .unwrap(),
+            None
+        );
     }
 }

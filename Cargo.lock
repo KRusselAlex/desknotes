@@ -784,6 +784,8 @@ dependencies = [
 name = "desknotes"
 version = "0.2.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "desknotes-core",
  "gio",
  "serde",

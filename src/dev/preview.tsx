@@ -28,6 +28,12 @@
 // &method=code or &nosystem (K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ), or explains --reset-pin with
 // &norecovery. &reset shows the manager's "The PIN was reset" notice. While private notes are
 // locked, backup export and restore, purging and duplicating them are refused as natively.
+//
+// Reminders: get_reminder, set_reminder, remove_reminder and list_reminders work on an
+// in-memory list seeded with an overdue one-off (a1), one later today (a2), a weekday
+// repeat tomorrow (a3) and a monthly one on an archived note (r1); &noreminders starts
+// empty. Changes emit reminders-changed like the native side. In the console,
+// previewFire("a2") makes a2's reminder overdue now, as if it had fired.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -46,6 +52,7 @@ import {
   type PrivacyStatus,
   type RecoveryMethod,
 } from "../types/note";
+import type { ReminderListRow, ReminderView, Repeat } from "../types/reminder";
 import "../styles/tokens.css";
 import "../styles/global.css";
 import "../styles/components.css";
@@ -217,6 +224,57 @@ let appAppearance: AppAppearance = {
   layout: params.get("compact") === "1" ? "compact" : "comfortable",
   defaultFont: params.get("font") || null,
 };
+
+// Fake reminders, following the native rules loosely (crates/desknotes-core/src/reminders.rs).
+interface FakeReminder {
+  date: string;
+  time: string;
+  repeat: Repeat;
+  dueAt: number;
+}
+const pad = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const REPEATS: Repeat[] = ["none", "daily", "weekdays", "weekly", "monthly"];
+/** The first occurrence of the rule after `after` (the rule's own time for a one-off). */
+function firstDue(date: string, time: string, repeat: Repeat, after: number): number {
+  const at = new Date(`${date}T${time}`);
+  for (let i = 0; repeat !== "none" && i < 400 && at.getTime() <= after; i++) {
+    if (repeat === "monthly") at.setMonth(at.getMonth() + 1);
+    else at.setDate(at.getDate() + (repeat === "weekly" ? 7 : 1));
+    if (repeat === "weekdays") while (at.getDay() === 0 || at.getDay() === 6) at.setDate(at.getDate() + 1);
+  }
+  return at.getTime();
+}
+const reminders = new Map<string, FakeReminder>();
+if (params.get("noreminders") === null) {
+  const seed = (id: string, at: Date, repeat: Repeat) =>
+    reminders.set(id, { date: ymd(at), time: hm(at), repeat, dueAt: at.getTime() });
+  const today = (h: number, m: number) => {
+    const d = new Date(now);
+    d.setHours(h, m, 0, 0);
+    return d;
+  };
+  seed("a1", new Date(now - 1.5 * H), "none");
+  seed("a2", new Date(now + 2 * H), "none");
+  const tomorrow = today(9, 0);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  seed("a3", tomorrow, "weekdays");
+  const later = today(14, 0);
+  later.setDate(later.getDate() + 12);
+  seed("r1", later, "monthly");
+}
+const reminderView = (r: FakeReminder): ReminderView => ({ ...r, overdue: r.dueAt <= Date.now() });
+const remindersChanged = (noteId: string | null) =>
+  setTimeout(() => void emit("reminders-changed", { noteId }), 0);
+Object.assign(window, {
+  previewFire: (id: string) => {
+    const r = reminders.get(id);
+    if (!r) return;
+    r.dueAt = Date.now() - 1000;
+    remindersChanged(id);
+  },
+});
 
 mockIPC(
   (cmd, args) => {
@@ -394,7 +452,50 @@ mockIPC(
         const i = notes.findIndex((n) => n.id === a.id);
         if (isWithheld(notes[i]!)) throw notLocked();
         notes.splice(i, 1);
+        if (reminders.delete(String(a.id))) remindersChanged(String(a.id));
         return null;
+      }
+      case "get_reminder": {
+        const r = reminders.get(String(a.noteId));
+        return r ? reminderView(r) : null;
+      }
+      case "set_reminder": {
+        const [date, time, repeat] = [String(a.date), String(a.time), a.repeat as Repeat];
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time) || !REPEATS.includes(repeat)) {
+          throw { code: "validation", message: "invalid data: reminder date must be YYYY-MM-DD" };
+        }
+        if (find(a.noteId).deletedAt !== null) throw { code: "not_allowed", message: "operation not allowed: restore the note from the trash first" };
+        const dueAt = firstDue(date, time, repeat, Date.now());
+        if (repeat === "none" && dueAt <= Date.now()) throw { code: "validation", message: "Pick a time in the future." };
+        const r = { date, time, repeat, dueAt };
+        reminders.set(String(a.noteId), r);
+        remindersChanged(String(a.noteId));
+        return reminderView(r);
+      }
+      case "remove_reminder":
+        reminders.delete(String(a.noteId));
+        remindersChanged(String(a.noteId));
+        return null;
+      case "list_reminders": {
+        const q = String(a.query ?? "").trim().toLowerCase();
+        const rows: ReminderListRow[] = [];
+        for (const [noteId, r] of reminders) {
+          const n = notes.find((x) => x.id === noteId);
+          if (!n || n.deletedAt !== null) continue;
+          const locked = isWithheld(n);
+          const searched = locked ? n.privateLabel || PRIVATE_FALLBACK_LABEL : n.title;
+          if (q && !searched.toLowerCase().includes(q)) continue;
+          rows.push({
+            noteId,
+            title: locked ? PRIVATE_FALLBACK_LABEL : n.title,
+            color: n.color,
+            repeat: r.repeat,
+            dueAt: r.dueAt,
+            overdue: r.dueAt <= Date.now(),
+            locked,
+          });
+        }
+        return rows.sort((x, y) => x.dueAt - y.dueAt);
       }
       case "duplicate_note":
         if (isWithheld(find(a.id))) throw notLocked();

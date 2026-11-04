@@ -25,6 +25,13 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+# Same version and features as desknotes-core: `Local` and `Utc::now` for the reminder
+# scheduler (the core's time rules take the time and the zone as arguments).
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+# Same version as desknotes-core's tests: a fixed IANA zone for the reminder tests.
+chrono-tz = "=0.10.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version Tauri uses; only to name the WebKit view type shared between windows.
@@ -32,5 +39,6 @@ webkit2gtk = "=2.0.2"
 # Same version Tauri uses; GNOME settings for the show / hide all shortcut (DES-27).
 gio = "=0.18.4"
 # Already in the build through Tauri's plugins (same version, same features); the
-# blocking API listens for sleep and screen-lock signals on D-Bus (design D3).
+# blocking API listens for sleep and screen-lock signals on D-Bus (design D3) and sends
+# reminder notifications to org.freedesktop.Notifications (M4).
 zbus = "5"

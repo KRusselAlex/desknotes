@@ -129,6 +129,15 @@ pub struct ReminderRow {
     pub locked: bool,
 }
 
+/// What a reminder's notification may say about its note: the real title and whether
+/// the lock withholds the note right now (the same rule as [`ReminderRow::locked`]). The
+/// shell shows "Private note" instead of `title` exactly when `locked` (ruling R6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderHeading {
+    pub title: String,
+    pub locked: bool,
+}
+
 /// The refusal for a one-off in the past. The shell shows it without the error prefix.
 pub const PAST_REMINDER: &str = "Pick a time in the future.";
 /// The refusal for a reminder more than 100 years away.
