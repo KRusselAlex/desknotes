@@ -55,6 +55,10 @@ All core dependencies are free and open source. None requires a paid service, ac
 | vite / @vitejs/plugin-react | 8.3.5 / 6.1.2 | MIT | Build tooling |
 | typescript | **6.0.3** (pinned) | Apache-2.0 | Type checking. 7.0 exists but typescript-eslint supports `<6.1` |
 | @tiptap/* (react, starter-kit, pm, extension-list, …) | 3.32.2 | MIT | Rich-text editor. **Only the MIT open-source packages** are used. Tiptap "Pro"/cloud extensions are paid and are **not** used |
+| @tiptap/extension-text-style | 3.32.2 | MIT | Text style mark carrying font family, size, weight and colour (the Aa popover) |
+| @tiptap/extension-highlight | 3.32.2 | MIT | Highlight mark with one of four colours |
+| @tiptap/extension-text-align | 3.32.2 | MIT | Left, centre or right alignment of paragraphs and headings |
+| @tiptap/extension-bold | 3.32.2 | MIT | Already in the build through the starter kit; imported directly to adjust how pasted font weights are read, so a Medium or Semibold weight is not also read as bold |
 | vitest / @testing-library/react / jsdom | 5.0.5 / 16.3.3 / 30.1.3 | MIT | Frontend tests |
 
 Not used, deliberately: `tauri-plugin-sql` (see ADR-0003), Tailwind (organized CSS is enough),
