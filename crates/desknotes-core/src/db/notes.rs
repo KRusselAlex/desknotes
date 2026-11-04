@@ -62,7 +62,7 @@ pub(super) fn appearance_json(appearance: &Appearance) -> CoreResult<String> {
 
 /// What a locked private note shows instead of its title (design D2): its
 /// label, or the fallback when it has none. Never the derived title.
-fn display_label(label: &str) -> &str {
+pub(super) fn display_label(label: &str) -> &str {
     if label.is_empty() {
         PRIVATE_FALLBACK_LABEL
     } else {
@@ -182,7 +182,7 @@ impl Database {
 
     /// True when the lock is in effect and the note with this id is not kept open.
     /// Only meaningful for private notes. `lock` is `self.lock_active()`.
-    fn withheld(&self, lock: bool, private: bool, id: &str) -> bool {
+    pub(super) fn withheld(&self, lock: bool, private: bool, id: &str) -> bool {
         private && lock && !self.kept_open.borrow().contains(id)
     }
 
@@ -714,6 +714,91 @@ mod tests {
             .query_row("SELECT count(*) FROM note_windows", [], |r| r.get(0))
             .unwrap();
         assert_eq!(windows, 0, "window row removed by cascade");
+    }
+
+    fn reminder_rule() -> crate::reminders::ReminderRule {
+        crate::reminders::validate_rule("2026-01-01", "09:00", "daily").unwrap()
+    }
+
+    #[test]
+    fn purge_removes_the_notes_reminder() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        let other = db.create_note(None).unwrap().id;
+        let now = chrono::Utc::now();
+        for n in [&id, &other] {
+            db.set_reminder(n, reminder_rule(), now, &chrono::Utc)
+                .unwrap();
+        }
+        db.trash_note(&id).unwrap();
+        assert!(
+            db.reminder(&id).unwrap().is_some(),
+            "kept while in the trash"
+        );
+        db.purge_note(&id).unwrap();
+        let rows: i64 = db
+            .conn
+            .query_row(
+                "SELECT count(*) FROM reminders WHERE note_id = ?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0, "reminder row removed by cascade");
+        assert!(
+            db.reminder(&other).unwrap().is_some(),
+            "other notes keep theirs"
+        );
+    }
+
+    #[test]
+    fn duplicate_does_not_copy_the_reminder() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_reminder(&id, reminder_rule(), chrono::Utc::now(), &chrono::Utc)
+            .unwrap();
+        let copy = db.duplicate_note(&id).unwrap();
+        assert_eq!(db.reminder(&copy.id).unwrap(), None);
+        assert!(db.reminder(&id).unwrap().is_some(), "the original keeps it");
+    }
+
+    #[test]
+    fn migration_6_adds_reminders_and_keeps_every_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        let content = r#"{"type":"doc","content":[{"type":"paragraph"}]}"#;
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply_until(&mut conn, 0, 5).unwrap();
+            for (id, title, trashed) in [
+                ("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d", "v5 note", "NULL"),
+                ("3a2d9e1f-7b9c-4d62-8e5f-3c9a6b2b0d4e", "v5 trashed", "9"),
+            ] {
+                conn.execute_batch(&format!(
+                    "INSERT INTO notes (id, title, content_json, color, created_at, updated_at, deleted_at)
+                     VALUES ('{id}', '{title}', '{content}', '#fff4a3', 1, 7, {trashed});
+                     INSERT INTO note_windows (note_id, width, height) VALUES ('{id}', 300, 280);"
+                ))
+                .unwrap();
+            }
+        }
+
+        let db = Database::open(&path, &backups).unwrap();
+        assert_eq!(db.schema_version().unwrap(), crate::db::LATEST_VERSION);
+        assert_eq!(db.count_all_notes().unwrap(), 2);
+        let note = db.get_note("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d").unwrap();
+        assert_eq!((note.title.as_str(), note.updated_at), ("v5 note", 7));
+        assert_eq!(db.list_notes(NoteFilter::Trash, None).unwrap().len(), 1);
+        assert_eq!(
+            db.reminder("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d").unwrap(),
+            None
+        );
+        // The existing safety copy was taken before the upgrade.
+        let copies: Vec<_> = std::fs::read_dir(&backups).unwrap().collect();
+        assert_eq!(copies.len(), 1);
+        let name = copies[0].as_ref().unwrap().file_name();
+        assert!(name.to_string_lossy().starts_with("pre-migration-v5-"));
     }
 
     #[test]

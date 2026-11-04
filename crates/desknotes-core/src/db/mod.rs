@@ -4,6 +4,7 @@ mod backup;
 mod migrations;
 mod notes;
 mod privacy;
+mod reminders;
 mod settings;
 
 use std::cell::{Cell, RefCell};

@@ -6,6 +6,7 @@ mod error;
 pub mod platform;
 mod privacy;
 mod quit;
+mod reminders;
 mod reset_pin;
 mod state;
 mod tray;
@@ -18,13 +19,18 @@ use crate::state::AppState;
 /// Command-line flag for the show / hide all keyboard shortcut (DES-27).
 pub const TOGGLE_NOTES_ARG: &str = "--toggle-notes";
 
-/// Lock private notes on sleep, screen lock and inactivity (design D3). Each
-/// watcher has its own thread; none can stop or slow the app.
+/// Lock private notes on sleep, screen lock and inactivity (design D3), and wake
+/// the reminder scheduler on resume. Each watcher has its own thread; none can stop
+/// or slow the app.
 fn start_lock_triggers(app: &tauri::AppHandle) {
     let on_event = app.clone();
-    platform::lock_triggers::watch(move || {
-        privacy::lock_automatically(&on_event);
-    });
+    let on_resume = app.clone();
+    platform::lock_triggers::watch(
+        move || {
+            privacy::lock_automatically(&on_event);
+        },
+        move || reminders::wake(&on_resume),
+    );
     let on_tick = app.clone();
     platform::lock_triggers::watch_inactivity(move || privacy::lock_if_inactive(&on_tick));
 }
@@ -59,6 +65,8 @@ pub fn run() {
             app.manage(AppState::open(&handle));
             windows::restore_on_startup(&handle);
             tray::install(&handle);
+            // After the manager exists: a click on a notification may open a note.
+            reminders::start(&handle);
             start_lock_triggers(&handle);
             Ok(())
         })
@@ -121,6 +129,10 @@ pub fn run() {
             commands::privacy::forgot_pin_system,
             commands::privacy::recover_with_code,
             commands::privacy::choose_new_pin,
+            commands::reminders::get_reminder,
+            commands::reminders::set_reminder,
+            commands::reminders::remove_reminder,
+            commands::reminders::list_reminders,
         ])
         .build(tauri::generate_context!())
         .expect("DeskNotes failed to start");

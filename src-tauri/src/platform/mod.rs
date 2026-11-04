@@ -4,6 +4,7 @@ pub mod fonts;
 #[cfg(target_os = "linux")]
 pub mod gnome_shortcut;
 pub mod lock_triggers;
+pub mod notify;
 pub mod single_instance;
 pub mod system_auth;
 

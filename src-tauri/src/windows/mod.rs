@@ -32,6 +32,9 @@ pub const APP_APPEARANCE_CHANGED: &str = "app-appearance-changed";
 pub const NOTE_RESIZED: &str = "note-resized";
 /// Sent to an open note settings window: show the note whose id is the payload.
 pub const NOTE_SETTINGS_NOTE: &str = "note-settings-note";
+/// Sent to every window when a reminder was set, removed, fired, snoozed or
+/// dismissed. The payload names the note (or none when several changed); never a title.
+pub const REMINDERS_CHANGED: &str = "reminders-changed";
 
 /// Payload of `note-resized`: the note's new size in logical pixels.
 #[derive(Clone, Serialize)]
@@ -57,6 +60,27 @@ pub fn emit_changed(app: &AppHandle, id: Option<&str>, kind: &'static str) {
     };
     if let Err(e) = app.emit(NOTES_CHANGED, payload) {
         eprintln!("DeskNotes: could not notify windows: {e}");
+    }
+    // Trash, restore, purge and a backup restore change which reminders can fire.
+    // Text saves ("content") never do.
+    if kind != "content" {
+        crate::reminders::wake(app);
+    }
+}
+
+/// Payload of `reminders-changed`.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemindersChanged {
+    pub note_id: Option<String>,
+}
+
+pub fn emit_reminders_changed(app: &AppHandle, note_id: Option<&str>) {
+    let payload = RemindersChanged {
+        note_id: note_id.map(str::to_owned),
+    };
+    if let Err(e) = app.emit(REMINDERS_CHANGED, payload) {
+        eprintln!("DeskNotes: could not notify windows of reminders: {e}");
     }
 }
 

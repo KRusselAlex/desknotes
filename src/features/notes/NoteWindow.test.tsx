@@ -5,6 +5,7 @@ import fixture from "../../../tests/fixtures/rich-doc.json";
 import { readFileSync } from "node:fs";
 import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Note, type PrivacyStatus } from "../../types/note";
+import type { RemindersChanged, ReminderView } from "../../types/reminder";
 import { appearanceStyle } from "../appearance/appearance";
 
 const handlers: {
@@ -13,6 +14,7 @@ const handlers: {
   willQuit?: () => void;
   privacy?: (e: PrivacyChanged) => void;
   notesChanged?: (e: NotesChanged) => void;
+  reminders?: (e: RemindersChanged) => void;
 } = {};
 vi.mock("../../ipc/events", () => ({
   onNotesChanged: (h: (e: NotesChanged) => void) => {
@@ -33,6 +35,10 @@ vi.mock("../../ipc/events", () => ({
   },
   onAppAppearanceChanged: (h: (a: AppAppearance) => void) => {
     handlers.appAppearance = h;
+    return Promise.resolve(() => undefined);
+  },
+  onRemindersChanged: (h: (e: RemindersChanged) => void) => {
+    handlers.reminders = h;
     return Promise.resolve(() => undefined);
   },
 }));
@@ -66,6 +72,9 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     reopenNote: vi.fn().mockResolvedValue(undefined),
     getAppAppearance: vi.fn(),
     listFonts: vi.fn().mockResolvedValue([]),
+    getReminder: vi.fn().mockResolvedValue(null),
+    setReminder: vi.fn(),
+    removeReminder: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -134,6 +143,7 @@ describe("NoteWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(commands.getAppAppearance).mockResolvedValue({ ...APP_APPEARANCE_DEFAULTS });
+    vi.mocked(commands.getReminder).mockResolvedValue(null);
     // Like the core: the title is derived from the first line of the note.
     vi.mocked(commands.saveNoteContent).mockResolvedValue({ title: "Groceries for Saturday", updatedAt: Date.now() });
   });
@@ -675,6 +685,180 @@ describe("NoteWindow", () => {
     });
   });
 
+  describe("reminders", () => {
+    const view = (over: Partial<ReminderView> = {}): ReminderView => {
+      const due = new Date();
+      due.setHours(due.getHours() + 3);
+      return { date: "2030-01-01", time: "14:00", repeat: "none", dueAt: due.getTime(), overdue: false, ...over };
+    };
+    const hhmm = (ms: number) => {
+      const d = new Date(ms);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    };
+    afterEach(() => {
+      window.innerWidth = 1024;
+    });
+
+    it("offers Set reminder… right after Always on top, with a bell, and opens the popover", async () => {
+      const { container } = await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      const menu = screen.getByRole("menu");
+      const order = Array.from(menu.querySelectorAll('[role^="menuitem"]')).map((i) => i.textContent ?? "");
+      expect(order.findIndex((l) => l.includes("Set reminder…"))).toBe(order.findIndex((l) => l.includes("Always on top")) + 1);
+      expect(menu.querySelector('[role="menuitem"]:has(svg)')).not.toBeNull();
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      expect(screen.getByRole("dialog", { name: "Reminder" })).toBeInTheDocument();
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(container.querySelector(".dn-reminder-chip")).toBeNull();
+    });
+
+    it("keeps focus in the dialog, on the date, when opened from the menu (the editor's deferred focus must not take it back)", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(screen.getByLabelText("Date")).toHaveFocus();
+    });
+
+    it("gives focus back to the note when the popover closes", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await userEvent.keyboard("{Escape}");
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(editorBox()).toHaveFocus();
+    });
+
+    it("saves from the popover and closes it", async () => {
+      vi.mocked(commands.setReminder).mockResolvedValue(view());
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+      expect(commands.setReminder).toHaveBeenCalledWith(ID, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), expect.stringMatching(/^\d{2}:00$/), "none");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reminder" })).toBeNull());
+    });
+
+    it("shows no chip when the note has no reminder", async () => {
+      const { container } = await openNote();
+      expect(container.querySelector(".dn-reminder-chip")).toBeNull();
+    });
+
+    it("shows the chip with the time while the note has a reminder, even on a read-only note", async () => {
+      const r = view();
+      vi.mocked(commands.getReminder).mockResolvedValue(r);
+      vi.mocked(commands.getNote).mockResolvedValue(note({ editLocked: true }));
+      render(<NoteWindow noteId={ID} />);
+      const chip = await screen.findByRole("button", { name: `Reminder ${hhmm(r.dueAt)}` });
+      expect(chip).toHaveTextContent(hhmm(r.dueAt));
+      expect(chip.textContent).not.toMatch(/overdue/i);
+      expect(chip).not.toHaveClass("is-overdue");
+    });
+
+    it("draws an overdue reminder in the danger style", async () => {
+      vi.mocked(commands.getReminder).mockResolvedValue(view({ dueAt: Date.now() - 60_000, overdue: true }));
+      await openNote();
+      const chip = await screen.findByRole("button", { name: /^Reminder overdue · \d\d:\d\d$/ });
+      expect(chip).toHaveClass("is-overdue");
+      expect(chip.textContent).toMatch(/^\d\d:\d\d$/); // the visible text is unchanged
+    });
+
+    it("opens the popover on the existing reminder when the chip is clicked, and again to close", async () => {
+      vi.mocked(commands.getReminder).mockResolvedValue(view({ date: "2030-01-01", time: "14:00", repeat: "daily" }));
+      await openNote();
+      const chip = await screen.findByRole("button", { name: /^Reminder / });
+      await userEvent.click(chip);
+      expect(screen.getByLabelText("Date")).toHaveValue("2030-01-01");
+      expect(screen.getByRole("radio", { name: "Daily" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+      await userEvent.click(chip);
+      expect(screen.queryByRole("dialog", { name: "Reminder" })).toBeNull();
+    });
+
+    it("opens the popover with Set reminder… on the existing reminder, with Remove", async () => {
+      vi.mocked(commands.getReminder).mockResolvedValue(view({ date: "2030-01-01", time: "14:00" }));
+      await openNote();
+      await screen.findByRole("button", { name: /^Reminder / });
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      expect(screen.getByLabelText("Date")).toHaveValue("2030-01-01");
+      await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+      expect(commands.removeReminder).toHaveBeenCalledWith(ID);
+    });
+
+    it("refreshes on reminders-changed for this note, and for several (null), not for another note", async () => {
+      const { container } = await openNote();
+      expect(container.querySelector(".dn-reminder-chip")).toBeNull();
+      vi.mocked(commands.getReminder).mockResolvedValue(view());
+      vi.mocked(commands.getReminder).mockClear();
+      await act(async () => handlers.reminders!({ noteId: "someone-else" }));
+      expect(commands.getReminder).not.toHaveBeenCalled();
+      await act(async () => handlers.reminders!({ noteId: ID }));
+      expect(await screen.findByRole("button", { name: /^Reminder / })).toBeInTheDocument();
+      vi.mocked(commands.getReminder).mockResolvedValue(null);
+      await act(async () => handlers.reminders!({ noteId: null }));
+      await waitFor(() => expect(container.querySelector(".dn-reminder-chip")).toBeNull());
+    });
+
+    it("looks again every minute, so today and overdue stay right", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        vi.mocked(commands.getNote).mockResolvedValue(note());
+        render(<NoteWindow noteId={ID} />);
+        await screen.findByText("Groceries for Saturday");
+        vi.mocked(commands.getReminder).mockClear();
+        vi.mocked(commands.getReminder).mockResolvedValue(view({ dueAt: Date.now() - 1_000, overdue: true }));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(60_000);
+        });
+        expect(commands.getReminder).toHaveBeenCalledWith(ID);
+        expect(await screen.findByRole("button", { name: /^Reminder / })).toHaveClass("is-overdue");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("hides the chip at narrow widths, with the date", async () => {
+      window.innerWidth = 240;
+      vi.mocked(commands.getReminder).mockResolvedValue(view());
+      const { container } = await openNote();
+      await waitFor(() => expect(commands.getReminder).toHaveBeenCalled());
+      expect(screen.queryByRole("button", { name: /^Reminder / })).toBeNull();
+      expect(container.querySelector(".dn-note-date")).toBeNull();
+    });
+
+    it("has no chip and no menu on a locked private note", async () => {
+      vi.mocked(commands.getReminder).mockResolvedValue(view());
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      expect(screen.queryByRole("button", { name: /^Reminder / })).toBeNull();
+      expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+    });
+
+    it("closes the reminder popover when another header popover opens", async () => {
+      vi.mocked(commands.getReminder).mockResolvedValue(view());
+      await openNote();
+      await userEvent.click(await screen.findByRole("button", { name: /^Reminder / }));
+      expect(screen.getByRole("dialog", { name: "Reminder" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Colour" }));
+      expect(screen.queryByRole("dialog", { name: "Reminder" })).toBeNull();
+      expect(screen.getByRole("dialog", { name: "Note colour" })).toBeInTheDocument();
+    });
+
+    it("closes the popover on Escape", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog", { name: "Reminder" })).toBeNull();
+    });
+  });
+
   describe("appearance", () => {
     it("offers Note settings… after Always on top and opens it for this note", async () => {
       await openNote();
@@ -683,7 +867,7 @@ describe("NoteWindow", () => {
       const order = Array.from(menu.querySelectorAll('[role^="menuitem"]')).map((i) => i.textContent ?? "");
       const pin = order.findIndex((l) => l.includes("Always on top"));
       const settings = order.findIndex((l) => l.includes("Note settings…"));
-      expect(settings).toBe(pin + 1);
+      expect(settings).toBe(pin + 2); // after "Set reminder…"
       await userEvent.click(screen.getByRole("menuitem", { name: "Note settings…" }));
       expect(commands.openNoteSettings).toHaveBeenCalledWith(ID);
     });
@@ -954,6 +1138,30 @@ describe("NoteWindow", () => {
       // No broad rule that puts an outline back on controls that draw their own ring.
       expect(noteCss).not.toMatch(/is-high-contrast[^{]*:is\(button/);
       expect(noteCss).not.toMatch(/is-high-contrast[^{]*\{[^}]*outline:\s*var\(--dn-hc-focus\)/);
+    });
+
+    it("keeps the light danger tokens inside notes under a dark system theme (R14)", () => {
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const tokens = readFileSync("src/styles/tokens.css", "utf8");
+      const light = /:root\s*\{([^}]*)\}/.exec(tokens)![1]!;
+      const dark = /\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(tokens)![1]!;
+      const value = (block: string, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(block)?.[1]?.trim();
+      // A rule on the note root itself (not the high-contrast one) re-declares them.
+      const rootBlocks = [...noteCss.matchAll(/(?:^|\n)\.dn-note\s*\{([^}]*)\}/g)].map((m) => m[1]!);
+      const scoped = rootBlocks.find((b) => b.includes("--dn-danger"));
+      expect(scoped).toBeDefined();
+      const darkDanger = [...dark.matchAll(/(--dn-danger[a-z-]*):/g)].map((m) => m[1]!);
+      expect(darkDanger).toEqual(["--dn-danger", "--dn-danger-hover", "--dn-danger-press", "--dn-danger-bg", "--dn-danger-ink"]);
+      for (const token of darkDanger) {
+        expect(value(scoped!, token), token).toBe(value(light, token));
+        expect(value(scoped!, token), token).not.toBe(value(dark, token));
+      }
+      // The overdue chip needs no dark-theme exception any more: white on the light red.
+      expect(noteCss).not.toMatch(/\[data-theme="dark"\][^{]*\.dn-reminder-chip/);
+      expect(noteCss).toMatch(/\.dn-reminder-chip\.is-overdue[^{]*\{\s*background:\s*var\(--dn-danger\);\s*color:\s*#fff;/);
+      // High contrast still wins: it is more specific and sets every danger token itself.
+      const hc = /\.dn-note\.is-high-contrast\s*\{([^}]*)\}/.exec(noteCss)![1]!;
+      for (const token of darkDanger) expect(value(hc, token), token).toMatch(/^var\(--dn-hc-(ink|bg)\)$/);
     });
 
     it("styles high contrast and compact from the tokens, in the stylesheet", () => {

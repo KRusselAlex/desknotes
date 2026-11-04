@@ -6,7 +6,7 @@ use rusqlite::params;
 
 use super::Database;
 use super::notes::appearance_json;
-use crate::backup::{BACKUP_FORMAT, BACKUP_VERSION, Backup, BackupNote};
+use crate::backup::{BACKUP_FORMAT, BACKUP_VERSION, Backup, BackupNote, BackupReminder};
 use crate::error::CoreResult;
 use crate::now_ms;
 use crate::validation::{derive_search_text, derive_title, parse_appearance};
@@ -33,6 +33,22 @@ impl Database {
     /// effect and any private note exists (design §4.4, D12).
     pub fn export_backup(&self, app_version: &str) -> CoreResult<Export> {
         self.refuse_if_any_private_locked()?;
+        // A reminder row that cannot be read back is left out, as if the note had none.
+        let mut reminders: std::collections::HashMap<String, BackupReminder> = self
+            .all_reminders()?
+            .into_iter()
+            .map(|r| {
+                let backup = BackupReminder {
+                    local_date: r.rule.local_date.format("%Y-%m-%d").to_string(),
+                    local_time: r.rule.local_time.format("%H:%M").to_string(),
+                    repeat: r.rule.repeat.as_str().to_string(),
+                    due_at: r.due_at,
+                    snoozed_until: r.snoozed_until,
+                    fired_at: r.fired_at,
+                };
+                (r.note_id, backup)
+            })
+            .collect();
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.content_json, n.color, n.created_at, n.updated_at, n.archived_at,
                     n.deleted_at, n.edit_locked, w.x, w.y, w.width, w.height, w.visible,
@@ -57,6 +73,7 @@ impl Database {
                     private_label: r.get(16)?,
                     // Same leniency as reading a note: damaged text means defaults.
                     appearance: parse_appearance(&r.get::<_, String>(17)?).unwrap_or_default(),
+                    reminder: None,
                     window: crate::model::NoteWindow {
                         x: r.get(8)?,
                         y: r.get(9)?,
@@ -75,6 +92,7 @@ impl Database {
             match serde_json::from_str(&raw) {
                 Ok(content) => {
                     note.content = content;
+                    note.reminder = reminders.remove(&note.id);
                     notes.push(note);
                 }
                 Err(_) => skipped.push(id),
@@ -107,7 +125,7 @@ impl Database {
         let copy = safety_dir.join(format!("pre-restore-{}.db", now_ms()));
         self.backup_to(&copy)?;
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM notes", [])?; // note_windows rows go with ON DELETE CASCADE
+        tx.execute("DELETE FROM notes", [])?; // note_windows and reminders go with ON DELETE CASCADE
         for n in &backup.notes {
             tx.execute(
                 "INSERT INTO notes (id, title, content_json, search_text, color, created_at,
@@ -136,6 +154,22 @@ impl Database {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![n.id, w.x, w.y, w.width, w.height, w.visible, w.always_on_top, w.collapsed],
             )?;
+            if let Some(r) = &n.reminder {
+                tx.execute(
+                    "INSERT INTO reminders (note_id, local_date, local_time, repeat, due_at,
+                                            snoozed_until, fired_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        n.id,
+                        r.local_date,
+                        r.local_time,
+                        r.repeat,
+                        r.due_at,
+                        r.snoozed_until,
+                        r.fired_at
+                    ],
+                )?;
+            }
         }
         tx.commit()?;
         // Notes kept open across a lock belonged to the replaced collection.
@@ -259,7 +293,7 @@ mod tests {
         )
         .unwrap();
         let export = src.export_backup("0.3.0").unwrap();
-        assert_eq!(export.backup.version, 3);
+        assert_eq!(export.backup.version, crate::backup::BACKUP_VERSION);
         let text = serde_json::to_string(&export.backup).unwrap();
 
         let dst = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
@@ -271,6 +305,104 @@ mod tests {
         for id in [&a, &b, &c] {
             assert_eq!(dst.get_note(id).unwrap(), src.get_note(id).unwrap());
         }
+    }
+
+    #[test]
+    fn version_4_round_trip_keeps_reminders() {
+        use chrono_tz::Europe::Paris;
+
+        use crate::reminders::validate_rule;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = Database::open_in_memory().unwrap();
+        let (a, b, c) = sample(&src);
+        let now = chrono::Utc::now();
+        let rule = |d: &str, t: &str, r: &str| validate_rule(d, t, r).unwrap();
+        let far = (now + chrono::TimeDelta::days(3))
+            .format("%Y-%m-%d")
+            .to_string();
+        src.set_reminder(&a, rule(&far, "14:05", "weekdays"), now, &Paris)
+            .unwrap();
+        let before_a = src.reminder(&a).unwrap().unwrap();
+        src.mark_fired(&a, before_a.due_at).unwrap();
+        src.snooze_reminder(&a, crate::reminders::Snooze::Hour1, now, &Paris)
+            .unwrap();
+        src.set_reminder(&b, rule(&far, "07:30", "daily"), now, &Paris)
+            .unwrap();
+        // The trashed note keeps its reminder in a backup too.
+        src.restore_note(&c).unwrap();
+        src.set_reminder(&c, rule(&far, "23:59", "monthly"), now, &Paris)
+            .unwrap();
+        src.trash_note(&c).unwrap();
+        let export = src.export_backup("0.4.0").unwrap();
+        assert_eq!(export.backup.version, 4);
+        let text = serde_json::to_string(&export.backup).unwrap();
+        assert!(text.contains("\"reminder\":{\"localDate\""), "{text}");
+
+        let dst = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        let stray = dst.create_note(None).unwrap().id;
+        dst.set_reminder(&stray, rule(&far, "10:00", "none"), now, &Paris)
+            .unwrap();
+        dst.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        for id in [&a, &b, &c] {
+            assert_eq!(dst.reminder(id).unwrap(), src.reminder(id).unwrap());
+            assert!(dst.reminder(id).unwrap().is_some());
+        }
+        let restored = dst.reminder(&a).unwrap().unwrap();
+        assert!(restored.snoozed_until.is_some() && restored.fired_at.is_some());
+        assert_eq!(
+            dst.reminder(&stray).unwrap(),
+            None,
+            "replaced with the backup's notes"
+        );
+
+        // A note without a reminder restores without one.
+        let plain = Database::open_in_memory().unwrap();
+        let p = plain.create_note(None).unwrap().id;
+        let text = serde_json::to_string(&plain.export_backup("0.4.0").unwrap().backup).unwrap();
+        dst.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        assert_eq!(dst.reminder(&p).unwrap(), None);
+    }
+
+    #[test]
+    fn export_leaves_out_a_damaged_reminder_row() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        db.conn
+            .execute(
+                "INSERT INTO reminders VALUES (?1, 'nope', '14:00', 'none', 1793797200000, NULL, NULL)",
+                [&id],
+            )
+            .unwrap();
+        let export = db.export_backup("0.4.0").unwrap();
+        assert_eq!(export.backup.notes.len(), 1);
+        assert_eq!(export.backup.notes[0].reminder, None);
+    }
+
+    #[test]
+    fn version_3_file_restores_with_no_reminders() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
+        let v3 = serde_json::json!({
+            "format": "desknotes-backup", "version": 3, "appVersion": "0.3.0", "exportedAt": 3,
+            "notes": [{
+                "id": id,
+                "content": {"type":"doc","content":[{"type":"paragraph"}]},
+                "color": "#fff4a3", "createdAt": 1, "updatedAt": 2,
+                "archivedAt": null, "deletedAt": null, "editLocked": false,
+                "private": false, "privateLabel": "", "appearance": {"fontSize": 18},
+                "window": {"x": 10.0, "y": 20.0, "width": 300.0, "height": 280.0,
+                           "visible": true, "alwaysOnTop": false, "collapsed": false}
+            }]
+        })
+        .to_string();
+        let db = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        db.restore_backup(&parse_backup(&v3).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        assert_eq!(db.get_note(id).unwrap().appearance.font_size, Some(18));
+        assert_eq!(db.reminder(id).unwrap(), None);
     }
 
     #[test]

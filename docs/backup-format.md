@@ -1,13 +1,13 @@
-# DeskNotes backup format (version 3)
+# DeskNotes backup format (version 4)
 
 A backup is one UTF-8 JSON file, usually named `desknotes-YYYY-MM-DD.json`. It holds
 every note — active, archived and in the trash — with its window state, its text and
-window styling, and whether it is private. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
+window styling, whether it is private, and its reminder. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
 
 ```json
 {
   "format": "desknotes-backup",
-  "version": 3,
+  "version": 4,
   "appVersion": "0.1.0",
   "exportedAt": 1793520000000,
   "notes": [
@@ -23,6 +23,8 @@ window styling, and whether it is private. It holds no settings, no PIN and no r
       "private": true,
       "privateLabel": "Bank",
       "appearance": { "fontSize": 18, "textColor": "#1d4f91", "opacity": 90 },
+      "reminder": { "localDate": "2026-11-04", "localTime": "14:00", "repeat": "weekdays",
+                    "dueAt": 1793797200000, "snoozedUntil": null, "firedAt": null },
       "window": { "x": 130, "y": 96, "width": 300, "height": 280,
                   "visible": true, "alwaysOnTop": false, "collapsed": false }
     }
@@ -51,6 +53,17 @@ window styling, and whether it is private. It holds no settings, no PIN and no r
   and `opacity` (80 to 100 percent, steps of 5). Unknown keys and out-of-range values
   refuse the whole file (an out-of-range value names the note). The background colour is the note's `color`.
 
+- `reminder` (optional, default `null` = no reminder) is the note's one reminder. A note
+  in the trash keeps its reminder. `localDate` (`YYYY-MM-DD`, a real calendar date),
+  `localTime` (`HH:MM`, 24 h) and `repeat` (`none`, `daily`, `weekdays`, `weekly` or
+  `monthly`) are the wall-clock choice the user made; they stay the same in any time
+  zone. `dueAt` is the next occurrence and `snoozedUntil` (optional) the snoozed time, both
+  Unix ms in UTC; `firedAt` (optional) is the due time already notified, so a restored
+  reminder is not notified twice. Every time must be 0 or more and within 100 years of
+  the day of the restore, `repeat` must be one of the five names, and unknown keys refuse
+  the whole file (the error names the note). A reminder DeskNotes cannot read back from
+  its own database is left out of an export.
+
 ## Versions
 
 | Version | Changes |
@@ -58,10 +71,11 @@ window styling, and whether it is private. It holds no settings, no PIN and no r
 | 1 | First format. |
 | 2 | Adds the optional `private` and `privateLabel` fields per note. |
 | 3 | Adds the optional `appearance` object per note. |
+| 4 | Adds the optional `reminder` object per note. |
 
-DeskNotes writes version 3 and still restores version 1 and 2 files; their notes come
-back with default appearance, and version 1 notes also come back not private, with an
-empty label.
+DeskNotes writes version 4 and still restores version 1, 2 and 3 files; their notes come
+back without reminders, version 1 and 2 notes with default appearance, and version 1
+notes also not private, with an empty label.
 
 ## Exporting
 

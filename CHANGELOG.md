@@ -33,6 +33,13 @@ All notable changes are documented here. The format follows
   rings), compact or comfortable layout, a default font and text size for notes without
   their own, and Reset appearance. Applies to every open note at once; a note's own Note
   settings still win, and nothing is changed in the notes themselves.
+- Reminders (Milestone 4): ⋯ → Set reminder… on a note, with date, time and repeat (none,
+  daily, weekdays, weekly, monthly). A bell chip in the note shows when it is due. At that
+  time a desktop notification shows the note's title ("Private note" while locked) with
+  10 min, 1 h, Dismiss and Tomorrow. The manager has a Reminders tab (Today, Tomorrow,
+  Later, overdue first). Reminders missed while DeskNotes was closed appear once at the next
+  start; repeats keep their clock time across daylight-saving changes. Backups include
+  reminders (backup format 4).
 
 ### Changed
 - Settings opens at a given section from other windows (for example Privacy).

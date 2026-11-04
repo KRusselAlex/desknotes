@@ -14,6 +14,18 @@
   line-height: var(--dn-leading);
 }
 
+/* Note surfaces are always light (notes keep their own colours, R14), so inside a note
+   window the danger tokens keep their light-theme values from tokens.css even under a
+   dark system theme: the reminder popover's Remove, the link error, the save error and
+   the overdue chip stay readable. High contrast (more specific, below) still wins. */
+.dn-note {
+  --dn-danger: #b3261e;
+  --dn-danger-hover: #962019;
+  --dn-danger-press: #7a1b14;
+  --dn-danger-bg: #fde7e3;
+  --dn-danger-ink: #7a1b14;
+}
+
 /* Below 100 % opacity every region must show the window behind at the same
    opacity, painted once. The header and the format bar paint --note-hd themselves,
    so the root paints --note-bg only between them (a bottom inset when the bar shows).
@@ -800,4 +812,113 @@ html.dn-see-through #root {
 .dn-note.is-compact .dn-note-body {
   padding-left: var(--dn-compact-pad);
   padding-right: var(--dn-compact-pad);
+}
+
+/* Reminder chip (B2): the bell and the time, always visible in the header like the pin;
+   danger-coloured when overdue (as R2's overdue chip). Hides with the date when narrow. */
+.dn-reminder-chip {
+  height: 24px;
+  flex: none;
+  padding: 0 9px 0 7px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-ink-fill);
+  color: var(--dn-ink);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.dn-reminder-chip:hover,
+.dn-reminder-chip[aria-expanded="true"] {
+  background: var(--dn-ink-press);
+}
+.dn-reminder-chip.is-overdue,
+.dn-reminder-chip.is-overdue:hover {
+  background: var(--dn-danger);
+  color: #fff;
+}
+
+/* Set reminder (R1): a popover under the header with the date and time, Repeat, Remove and Save. */
+.dn-reminder {
+  top: 36px;
+  left: 8px;
+  right: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+.dn-reminder-when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dn-reminder-when input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid var(--dn-ink-line);
+  background: transparent;
+  color: var(--dn-ink);
+  font: inherit;
+}
+.dn-reminder-date {
+  flex: 1 1 120px;
+}
+/* Wide enough for "02:00 PM" where the system shows a 12-hour clock (R1 draws 76 px for "14:00"). */
+.dn-reminder-time {
+  width: 118px;
+  flex: none;
+}
+.dn-reminder-error {
+  padding-left: 0;
+}
+/* Repeat: the shared segmented control drawn as R1's pills (ink when chosen, outlined otherwise). */
+.dn-reminder .dn-segmented {
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0;
+  background: transparent;
+}
+.dn-reminder .dn-segmented > button {
+  border: 1px solid var(--dn-ink-line);
+  color: var(--dn-ink);
+}
+.dn-reminder .dn-segmented > button:hover:not([aria-checked="true"]) {
+  background: var(--dn-ink-hover);
+}
+.dn-reminder .dn-segmented > button[aria-checked="true"] {
+  background: var(--dn-ink);
+  border-color: var(--dn-ink);
+  color: #fff;
+  box-shadow: none;
+}
+.dn-reminder-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+}
+.dn-reminder-remove {
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--dn-danger-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.dn-reminder .dn-pill-ink {
+  font-size: 13px;
+}
+.dn-reminder .dn-pill-ink:disabled,
+.dn-reminder-remove:disabled {
+  opacity: 0.5;
 }

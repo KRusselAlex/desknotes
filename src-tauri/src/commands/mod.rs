@@ -6,4 +6,5 @@ pub mod backup;
 pub mod note_settings;
 pub mod notes;
 pub mod privacy;
+pub mod reminders;
 pub mod settings;

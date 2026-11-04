@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppAppearance } from "../types/note";
+import type { RemindersChanged } from "../types/reminder";
 
 /** Emitted by Rust after any change. `id` is null when many notes changed.
  * `kind` is "content" for text saves and "other" for everything else. */
@@ -86,4 +87,11 @@ export const APP_APPEARANCE_CHANGED = "app-appearance-changed";
 /** The app-wide note appearance was saved in Settings (sent to every window). */
 export function onAppAppearanceChanged(handler: (a: AppAppearance) => void): Promise<UnlistenFn> {
   return listen<AppAppearance>(APP_APPEARANCE_CHANGED, (event) => handler(event.payload));
+}
+
+export const REMINDERS_CHANGED = "reminders-changed";
+
+/** A reminder was set, removed, fired, snoozed or dismissed (sent to every window). */
+export function onRemindersChanged(handler: (e: RemindersChanged) => void): Promise<UnlistenFn> {
+  return listen<RemindersChanged>(REMINDERS_CHANGED, (event) => handler(event.payload));
 }

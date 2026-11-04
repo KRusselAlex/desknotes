@@ -249,7 +249,13 @@ pub fn purge_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Ipc
 
 #[tauri::command]
 pub async fn show_note(app: AppHandle, state: State<'_, AppState>, id: String) -> IpcResult<()> {
-    let id = parse_note_id(&id)?;
+    show_note_window(&app, &state, &id)
+}
+
+/// Open (or focus) the note's window and remember it as visible. Refused for an
+/// archived or trashed note. Also used by a click on a reminder notification.
+pub fn show_note_window(app: &AppHandle, state: &AppState, id: &str) -> IpcResult<()> {
+    let id = parse_note_id(id)?;
     let note = state.with_db(|db| db.get_note(&id))?;
     if note.archived_at.is_some() || note.deleted_at.is_some() {
         return Err(IpcError::new(
@@ -258,8 +264,8 @@ pub async fn show_note(app: AppHandle, state: State<'_, AppState>, id: String) -
         ));
     }
     state.with_db(|db| db.set_visible(&id, true))?;
-    windows::open_note(&app, &note)?;
-    emit_changed(&app, Some(&id), "other");
+    windows::open_note(app, &note)?;
+    emit_changed(app, Some(&id), "other");
     Ok(())
 }
 

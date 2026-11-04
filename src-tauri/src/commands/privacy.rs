@@ -481,6 +481,10 @@ pub fn set_note_private(
         }
         db.set_private(&id, private, label.as_deref().unwrap_or(""))
     })?;
+    if private {
+        // Made private while the lock is on: its title may now be withheld (R10).
+        crate::reminders::on_locked(&app);
+    }
     emit_changed(&app, Some(&id), "other");
     Ok(())
 }
