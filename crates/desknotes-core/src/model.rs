@@ -50,6 +50,41 @@ pub struct NoteWindow {
     pub collapsed: bool,
 }
 
+/// Reading direction of a note's text. `Auto` lets each paragraph decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextDirection {
+    Auto,
+    Ltr,
+    Rtl,
+}
+
+/// How a note's text and window are styled. `None` means the default, so a
+/// note that was never styled stores `{}`. Validated by
+/// [`crate::validation::validate_appearance`]; the background colour is not
+/// part of this (it is `Note::color`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Appearance {
+    /// A font family name; never a CSS fragment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Text size in px.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
+    /// One of `validation::TEXT_COLORS`, lower-case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    /// Line height as a percentage of the text size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_spacing: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<TextDirection>,
+    /// Window opacity in percent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
@@ -71,6 +106,9 @@ pub struct Note {
     /// True while the privacy lock withholds this note: `content` is then an
     /// empty document and `title` the label (or "Private note"), never the text.
     pub locked: bool,
+    /// Text styling and window opacity. Revealed even while the note is locked:
+    /// styling says nothing about the text.
+    pub appearance: Appearance,
     pub window: NoteWindow,
 }
 

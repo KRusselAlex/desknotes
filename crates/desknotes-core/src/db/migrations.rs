@@ -51,6 +51,10 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE notes ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE notes ADD COLUMN private_label TEXT NOT NULL DEFAULT '';
     "#,
+    // v5 — per-note text styling and window opacity, a JSON object ('{}' = defaults)
+    r#"
+    ALTER TABLE notes ADD COLUMN appearance TEXT NOT NULL DEFAULT '{}';
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;

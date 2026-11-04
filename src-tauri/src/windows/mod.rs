@@ -2,6 +2,7 @@
 //! Windows are only ever created here, never from the webview.
 
 pub mod geometry;
+pub mod note_settings;
 
 use desknotes_core::geometry::{Rect, keep_on_screen};
 use desknotes_core::{COLLAPSED_HEIGHT, Note, NoteSize};
@@ -24,6 +25,19 @@ pub const SAVE_ALL_NOTES: &str = "save-all-notes";
 pub const QUIT_BLOCKED: &str = "quit-blocked";
 /// Sent to a note window: perform "hide", "archive" or "trash" after saving.
 pub const NOTE_ACTION: &str = "note-action";
+/// Sent to the note settings window when a note window changes size.
+pub const NOTE_RESIZED: &str = "note-resized";
+/// Sent to an open note settings window: show the note whose id is the payload.
+pub const NOTE_SETTINGS_NOTE: &str = "note-settings-note";
+
+/// Payload of `note-resized`: the note's new size in logical pixels.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteResized {
+    pub id: String,
+    pub width: f64,
+    pub height: f64,
+}
 
 /// Payload of `notes-changed`. `kind` is "content" for text saves (the
 /// manager refreshes titles) and "other" for everything else.
@@ -52,7 +66,7 @@ fn note_id_from_label(label: &str) -> Option<&str> {
 }
 
 /// Work areas (monitor minus panels) in logical pixels, primary first.
-fn work_areas(app: &AppHandle) -> Vec<Rect> {
+pub(crate) fn work_areas(app: &AppHandle) -> Vec<Rect> {
     let to_rect = |m: &tauri::Monitor| {
         let scale = m.scale_factor();
         let area = m.work_area();
@@ -76,7 +90,24 @@ fn work_areas(app: &AppHandle) -> Vec<Rect> {
     areas
 }
 
-fn geometry_of(
+/// The work area that shares the most with `rect`; the first one (the
+/// primary monitor) when `rect` touches none. `areas` is never empty.
+pub(crate) fn best_area(rect: &Rect, areas: &[Rect]) -> Rect {
+    areas
+        .iter()
+        .copied()
+        .filter(|a| rect.overlap_area(a) > 0.0)
+        .max_by(|a, b| rect.overlap_area(a).total_cmp(&rect.overlap_area(b)))
+        .unwrap_or(areas[0])
+}
+
+/// The work area of the screen a note sits on. `rect` is where the note is,
+/// open or not.
+pub(crate) fn work_area_for(app: &AppHandle, rect: &Rect) -> Rect {
+    best_area(rect, &work_areas(app))
+}
+
+pub(crate) fn geometry_of(
     scale: tauri::Result<f64>,
     position: tauri::Result<PhysicalPosition<i32>>,
     size: tauri::Result<PhysicalSize<u32>>,
@@ -171,9 +202,16 @@ type RelatedView = webkit2gtk::WebView;
 type RelatedView = ();
 
 fn report_window_error(app: &AppHandle, e: tauri::Error) {
-    app.state::<AppState>().push_error(format!(
-        "A note window could not be opened (its content is safe): {e}"
-    ));
+    report_window_problem(
+        app,
+        format!("A note window could not be opened (its content is safe): {e}"),
+    );
+}
+
+/// Tell the owner about a window that could not be (re)opened: the message goes
+/// on the manager's error list and the manager is shown.
+pub(crate) fn report_window_problem(app: &AppHandle, message: String) {
+    app.state::<AppState>().push_error(message);
     let _ = show_manager(app);
 }
 
@@ -198,6 +236,10 @@ where
 }
 
 pub const SETTINGS: &str = "settings";
+/// The per-note settings window (one at a time). The label deliberately does
+/// not start with `NOTE_PREFIX` ("note-"): code keyed on that prefix would take
+/// this window for a note.
+pub const NOTE_SETTINGS: &str = "note_settings";
 /// Sent to an open Settings window: show the section named in the payload.
 pub const SETTINGS_SECTION: &str = "settings-section";
 
@@ -258,11 +300,21 @@ pub fn open_settings(app: &AppHandle, section: Option<&'static str>) -> tauri::R
 /// Open (or focus) the window of a note. On Linux the window itself is created a
 /// moment later on the main thread; errors then appear in the manager.
 pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
+    open_note_with_focus(app, note, true)
+}
+
+/// `open_note`, but the window may be opened without taking the focus. A note
+/// recreated for the opacity switch (`reopen_note`) is opened that way: the
+/// owner is working in the Note settings window, which keeps the focus (and
+/// stays in front of the note) when it is open.
+pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri::Result<()> {
     let label = note_label(&note.id);
     if let Some(existing) = app.get_webview_window(&label) {
         existing.show()?;
         existing.unminimize()?;
-        existing.set_focus()?;
+        if focus {
+            existing.set_focus()?;
+        }
         return Ok(());
     }
 
@@ -280,6 +332,9 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
     let positioning = window_positioning_supported();
     let always_on_top = w.always_on_top;
     let collapsed = w.collapsed;
+    // Transparency is a creation-time property of the window, so only a note
+    // below 100 % opacity gets it; crossing 100 % reopens the window.
+    let transparent = note.appearance.opacity.unwrap_or(100) < 100;
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
@@ -288,7 +343,7 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
         // Requests are queued; a second one for the same note just focuses it.
         if let Some(existing) = handle.get_webview_window(&label) {
             existing.show()?;
-            return existing.set_focus();
+            return if focus { existing.set_focus() } else { Ok(()) };
         }
         // Read here, on the main thread like `set_min_note_size`, so a change made
         // while this build was queued is not missed. A smaller note opens at the
@@ -319,6 +374,9 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
                 // title bar and the note keeps that extra height, growing on every
                 // restart. Mapping only after it is undecorated avoids this.
                 .visible(false);
+        if transparent {
+            builder = builder.transparent(true);
+        }
         if positioning {
             builder = builder.position(rect.x, rect.y);
         }
@@ -341,10 +399,27 @@ pub fn open_note(app: &AppHandle, note: &Note) -> tauri::Result<()> {
             .geometry
             .update(&note_id, position, width, saved_height);
         window.show()?;
-        window.set_focus()
+        focus_after_show(&handle, &window, focus)
     };
 
     build_sharing_process(app, build)
+}
+
+/// After a note window is shown: focus it, or (`focus` false) give the focus
+/// back to the Note settings window when that is open, since showing a window
+/// makes the window manager focus it and put it in front.
+fn focus_after_show(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    focus: bool,
+) -> tauri::Result<()> {
+    if focus {
+        return window.set_focus();
+    }
+    match app.get_webview_window(NOTE_SETTINGS) {
+        Some(settings) => settings.set_focus(),
+        None => Ok(()),
+    }
 }
 
 /// Roll a note window up to its header strip, or back to `height`.
@@ -519,6 +594,7 @@ pub fn restore_on_startup(app: &AppHandle) {
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            let resized = matches!(event, WindowEvent::Resized(_));
             let Some(id) = note_id_from_label(window.label()) else {
                 return;
             };
@@ -535,6 +611,21 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                     .state::<AppState>()
                     .geometry
                     .update(id, position, r.width, r.height);
+                // The note settings window follows the size while it is open.
+                // A collapsed strip is not the note's size: leave it out.
+                if resized && r.height > COLLAPSED_HEIGHT + 1.0 {
+                    let app = window.app_handle();
+                    if app.get_webview_window(NOTE_SETTINGS).is_some() {
+                        let payload = NoteResized {
+                            id: id.to_owned(),
+                            width: r.width,
+                            height: r.height,
+                        };
+                        if let Err(e) = app.emit_to(NOTE_SETTINGS, NOTE_RESIZED, payload) {
+                            eprintln!("DeskNotes: could not notify the note settings: {e}");
+                        }
+                    }
+                }
             }
         }
         WindowEvent::Destroyed => {
@@ -562,6 +653,32 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_note_settings_window_is_not_taken_for_a_note() {
+        assert_eq!(note_id_from_label(NOTE_SETTINGS), None);
+        assert_eq!(note_id_from_label(&note_label("abc")), Some("abc"));
+    }
+
+    #[test]
+    fn a_note_belongs_to_the_screen_it_mostly_overlaps() {
+        let left = Rect::new(0.0, 0.0, 1920.0, 1040.0);
+        let right = Rect::new(1920.0, 0.0, 1280.0, 1000.0);
+        let areas = [left, right];
+        assert_eq!(
+            best_area(&Rect::new(1800.0, 100.0, 300.0, 280.0), &areas),
+            right
+        );
+        assert_eq!(
+            best_area(&Rect::new(1700.0, 100.0, 300.0, 280.0), &areas),
+            left
+        );
+        // Off every screen: the primary one.
+        assert_eq!(
+            best_area(&Rect::new(9000.0, 9000.0, 300.0, 280.0), &areas),
+            left
+        );
+    }
 
     #[test]
     fn only_known_settings_sections_are_accepted() {

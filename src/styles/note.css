@@ -14,6 +14,19 @@
   line-height: var(--dn-leading);
 }
 
+/* Below 100 % opacity every region must show the window behind at the same
+   opacity, painted once. The header and the format bar paint --note-hd themselves,
+   so the root paints --note-bg only between them (a bottom inset when the bar shows).
+   A note rolled up to its strip paints --note-hd on the root alone, so it needs nothing. */
+.dn-note.is-see-through {
+  --note-bar: 0px;
+  background: linear-gradient(var(--note-bg), var(--note-bg)) 0 var(--dn-header-h) / 100%
+    calc(100% - var(--dn-header-h) - var(--note-bar)) no-repeat;
+}
+.dn-note.is-see-through.has-bar {
+  --note-bar: var(--dn-bar-h);
+}
+
 /* Header: grip always; window controls on hover or keyboard focus (N1 vs N2). */
 .dn-note-header {
   height: var(--dn-header-h);
@@ -108,6 +121,17 @@
 .dn-note-body .tiptap {
   outline: none;
   min-height: 100%;
+  /* The note's own text styling (appearanceStyle); only the text uses it, never the controls. */
+  color: var(--note-ink, var(--dn-ink));
+  font-family: var(--note-font, var(--dn-font));
+  font-size: var(--note-font-size, var(--dn-text-base));
+  line-height: var(--note-leading, var(--dn-leading));
+}
+/* Direction "Automatic" (dir="auto" on the editor, set by NoteWindow): every block
+   decides its own direction from its first strong character, as dir="auto" does on a
+   paragraph, so an Arabic line and an English line in one note each read their own way. */
+.dn-note-body .tiptap[dir="auto"] :is(p, h1, h2, h3, li, blockquote) {
+  unicode-bidi: plaintext;
 }
 .dn-note-body .tiptap p {
   margin: 0 0 8px;
@@ -115,14 +139,14 @@
 .dn-note-body .tiptap h1,
 .dn-note-body .tiptap h2,
 .dn-note-body .tiptap h3 {
-  font-size: var(--dn-text-h);
+  font-size: calc(var(--note-font-size, var(--dn-text-base)) * 16.5 / 15);
   font-weight: 700;
   line-height: 1.3;
   margin: 4px 0;
 }
 /* The first line reads as the note's title (N1). */
 .dn-note-body .tiptap > :first-child:is(p, h1, h2, h3) {
-  font-size: var(--dn-text-title);
+  font-size: calc(var(--note-font-size, var(--dn-text-base)) * 18 / 15);
   font-weight: 700;
   line-height: 1.3;
   margin: 0 0 6px;
@@ -511,4 +535,12 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Opacity below 100 %: the native window is transparent, so the page must be too.
+   Only the note background (and header) carry the alpha; see appearanceStyle. */
+html.dn-see-through,
+html.dn-see-through body,
+html.dn-see-through #root {
+  background: transparent;
 }

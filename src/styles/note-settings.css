@@ -1,0 +1,369 @@
+/* Note settings window (design "Note settings", B: 400 px wide, scrolls, changes apply live).
+   Sizes are the design's; colours come from tokens.css. */
+.dn-ns {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--dn-app-bg);
+  color: var(--dn-app-text);
+  font-size: var(--dn-text-compact);
+}
+.dn-ns-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dn-ns .dn-banner-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The note is shown by its colour only, never by its text. */
+.dn-ns-head {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+}
+.dn-ns-note-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--dn-radius-pill);
+  box-shadow: inset 0 0 0 1px var(--dn-app-line);
+}
+
+.dn-ns-card {
+  padding: 14px 16px;
+  border-radius: var(--dn-radius-lg);
+  background: var(--dn-app-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dn-ns-card-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dn-app-muted);
+  line-height: var(--dn-leading);
+}
+.dn-ns-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dn-ns-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dn-ns-hint {
+  font-size: 12px;
+  color: var(--dn-app-muted);
+}
+.dn-ns-spacer {
+  flex: 1;
+}
+
+/* Font */
+.dn-ns-select {
+  position: relative;
+  box-sizing: border-box;
+  width: 170px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  border: 1px solid var(--dn-app-line);
+  display: flex;
+  align-items: center;
+}
+.dn-ns-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 100%;
+  padding: 0 31px 0 12px; /* room for the chevron */
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.dn-ns-select select option {
+  background: var(--dn-app-raised);
+  color: var(--dn-app-text);
+}
+.dn-ns-select svg {
+  position: absolute;
+  right: 12px;
+  pointer-events: none;
+}
+
+/* Size −/+ */
+.dn-ns-stepper {
+  box-sizing: border-box;
+  height: 32px;
+  flex: none;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  border: 1px solid var(--dn-app-line);
+  display: flex;
+  align-items: center;
+}
+.dn-ns-stepper > button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+}
+.dn-ns-stepper > button:hover:not(:disabled) {
+  background: var(--dn-app-hover);
+}
+.dn-ns-stepper-value {
+  width: 30px;
+  text-align: center;
+  font-weight: 650;
+}
+
+/* Text colour */
+.dn-ns-inks {
+  display: flex;
+  gap: 6px;
+}
+.dn-ns-inks > button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  box-shadow: inset 0 0 0 1px var(--dn-app-line);
+}
+.dn-ns-inks > button[aria-checked="true"] {
+  box-shadow: 0 0 0 2px var(--dn-app-surface), 0 0 0 3.5px var(--dn-app-text);
+}
+
+/* Sliders: 4 px line, accent fill, 18 px knob ringed in accent. */
+.dn-ns-row.is-slider {
+  justify-content: flex-start;
+}
+.dn-ns-slider-label {
+  flex: none;
+}
+.dn-ns-track {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* Mark at the lowest allowed value (design "Opacity"). */
+.dn-ns-track.has-floor::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 12px;
+  margin-top: -6px;
+  border-left: 2px solid var(--dn-app-muted);
+  pointer-events: none;
+}
+.dn-ns-track input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  border-radius: var(--dn-radius-pill); /* rounds the focus ring */
+  background: transparent;
+  cursor: pointer;
+}
+.dn-ns-track input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--dn-radius-pill);
+  background: linear-gradient(to right, var(--dn-accent) var(--fill), var(--dn-app-line) var(--fill));
+}
+.dn-ns-track input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  box-shadow: var(--dn-shadow-sm), inset 0 0 0 2px var(--dn-accent);
+}
+.dn-ns-track input::-moz-range-track {
+  height: 4px;
+  border-radius: var(--dn-radius-pill);
+  background: linear-gradient(to right, var(--dn-accent) var(--fill), var(--dn-app-line) var(--fill));
+}
+.dn-ns-track input::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  box-shadow: var(--dn-shadow-sm), inset 0 0 0 2px var(--dn-accent);
+}
+.dn-ns-readout {
+  width: 40px;
+  flex: none;
+  text-align: right;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* Direction: the shared segmented control at the design's smaller size. */
+.dn-ns .dn-segmented {
+  font-size: 12.5px;
+}
+.dn-ns .dn-segmented > button {
+  height: 26px;
+  padding: 0 9px;
+}
+
+/* Background colours */
+.dn-ns-swatches {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.dn-ns-swatches > button,
+.dn-ns-custom {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  box-shadow: inset 0 0 0 1px var(--dn-app-line);
+}
+.dn-ns-swatches > button[aria-checked="true"],
+.dn-ns-custom.is-chosen {
+  box-shadow: 0 0 0 2px var(--dn-app-surface), 0 0 0 4px var(--dn-app-text);
+}
+.dn-ns-custom {
+  position: relative;
+  display: grid;
+  place-items: center;
+  box-shadow: none;
+  border: 1.5px dashed var(--dn-app-muted);
+  color: var(--dn-app-muted);
+  cursor: pointer;
+}
+.dn-ns-custom.is-chosen {
+  border: 0;
+}
+.dn-ns-custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.dn-ns-custom:has(input:focus-visible) {
+  outline: 2px solid var(--dn-focus);
+  outline-offset: 2px;
+}
+.dn-ns-row.is-later {
+  opacity: 0.5;
+}
+.dn-ns-later {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid var(--dn-app-line);
+}
+
+/* Size: W × H pills */
+.dn-ns-dims {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dn-ns-dim {
+  box-sizing: border-box;
+  width: 80px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-app-raised);
+  border: 1px solid var(--dn-app-line);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: text;
+}
+.dn-ns-dim:focus-within {
+  outline: 2px solid var(--dn-focus);
+  outline-offset: 2px;
+}
+.dn-ns-dim input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.dn-ns-dim input:focus-visible {
+  outline: none; /* the pill shows focus */
+}
+.dn-ns-dim > span {
+  color: var(--dn-app-muted);
+  font-size: 11.5px;
+}
+
+/* Text buttons and the footer */
+.dn-ns-link {
+  height: 34px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: transparent;
+  color: var(--dn-accent-ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.dn-ns-link.is-small {
+  height: 32px;
+  font-size: 13px;
+}
+.dn-ns-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--dn-app-line);
+}
+.dn-ns-close {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: var(--dn-radius-pill);
+  border: 1px solid var(--dn-app-line);
+  background: transparent;
+  color: var(--dn-app-text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.dn-ns-close:hover,
+.dn-ns-link:hover:not(:disabled) {
+  background: var(--dn-app-hover);
+}

@@ -1,6 +1,8 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
+// @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
+import { readFileSync } from "node:fs";
 import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import type { Note, PrivacyStatus } from "../../types/note";
 
@@ -54,6 +56,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     forgotPinSystem: vi.fn(),
     recoverWithCode: vi.fn(),
     duplicateNote: vi.fn().mockResolvedValue({}),
+    openNoteSettings: vi.fn().mockResolvedValue(undefined),
+    reopenNote: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -74,6 +78,7 @@ const note = (over: Partial<Note> = {}): Note => ({
   private: false,
   privateLabel: "",
   locked: false,
+  appearance: {},
   window: { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false, collapsed: false },
   ...over,
 });
@@ -639,6 +644,146 @@ describe("NoteWindow", () => {
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       await userEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
+    });
+  });
+
+  describe("appearance", () => {
+    it("offers Note settings… after Always on top and opens it for this note", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      const menu = screen.getByRole("menu");
+      const order = Array.from(menu.querySelectorAll('[role^="menuitem"]')).map((i) => i.textContent ?? "");
+      const pin = order.findIndex((l) => l.includes("Always on top"));
+      const settings = order.findIndex((l) => l.includes("Note settings…"));
+      expect(settings).toBe(pin + 1);
+      await userEvent.click(screen.getByRole("menuitem", { name: "Note settings…" }));
+      expect(commands.openNoteSettings).toHaveBeenCalledWith(ID);
+    });
+
+    it("shows the note's own text styling and opacity", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(
+        note({ appearance: { fontSize: 22, textColor: "#1d4f91", lineSpacing: 120, opacity: 85, font: "Ubuntu Mono" } }),
+      );
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Groceries for Saturday");
+      const root = container.querySelector(".dn-note") as HTMLElement;
+      expect(root.style.getPropertyValue("--note-font-size")).toBe("22px");
+      expect(root.style.getPropertyValue("--note-ink")).toBe("#1d4f91");
+      expect(root.style.getPropertyValue("--note-leading")).toBe("1.2");
+      expect(root.style.getPropertyValue("--note-bg")).toBe("rgba(255, 244, 163, 0.85)");
+      expect(root.style.getPropertyValue("--note-font")).toBe('"Ubuntu Mono", var(--dn-font)');
+      expect(document.documentElement).toHaveClass("dn-see-through");
+    });
+
+    it("paints each region's opacity once: no root fill behind the header or the format bar", async () => {
+      const { container } = await openNote({ appearance: { opacity: 80 } });
+      const root = container.querySelector(".dn-note") as HTMLElement;
+      // note.css gives `.dn-note.is-see-through` a body-only background; the header and
+      // the format bar paint --note-hd themselves, so nothing is composited twice.
+      expect(root).toHaveClass("is-see-through");
+      expect(root).not.toHaveClass("has-bar");
+      expect(container.querySelector(".dn-note-header")).toBeInTheDocument();
+      await act(async () => (container.querySelector(".tiptap") as HTMLElement).focus());
+      await waitFor(() => expect(root).toHaveClass("has-bar"));
+      expect(container.querySelector(".dn-format-bar")).toBeInTheDocument();
+    });
+
+    it("keeps the plain root background at 100 %", async () => {
+      const { container } = await openNote({ appearance: { opacity: 100 } });
+      expect(container.querySelector(".dn-note")).not.toHaveClass("is-see-through");
+    });
+
+    it("applies the single-paint root to the locked private view too", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote({ appearance: { opacity: 90 } }));
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      expect(container.querySelector(".dn-note")).toHaveClass("is-see-through");
+    });
+
+    it("is not see-through at 100 %", async () => {
+      await openNote({ appearance: { opacity: 100 } });
+      expect(document.documentElement).not.toHaveClass("dn-see-through");
+    });
+
+    it("restyles on notes-changed without reloading the editor or losing typed text", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "typed-before ");
+      expect(container.querySelector(".tiptap")).toHaveTextContent("typed-before");
+      vi.mocked(commands.getNote).mockResolvedValue(
+        note({ appearance: { fontSize: 28, textColor: "#8c491a" } }),
+      );
+      await act(async () => handlers.notesChanged?.({ id: ID, kind: "other" }));
+      const root = container.querySelector(".dn-note") as HTMLElement;
+      await waitFor(() => expect(root.style.getPropertyValue("--note-font-size")).toBe("28px"));
+      expect(root.style.getPropertyValue("--note-ink")).toBe("#8c491a");
+      expect(container.querySelector(".tiptap")).toHaveTextContent("typed-before");
+      expect(commands.saveNoteContent).not.toHaveBeenCalled();
+    });
+
+    it("passes the direction to the editor", async () => {
+      const { container } = await openNote({ appearance: { direction: "rtl" } });
+      expect(container.querySelector(".tiptap")).toHaveAttribute("dir", "rtl");
+    });
+
+    it("uses automatic direction by default and follows a change", async () => {
+      const { container } = await openNote();
+      expect(container.querySelector(".tiptap")).toHaveAttribute("dir", "auto");
+      vi.mocked(commands.getNote).mockResolvedValue(note({ appearance: { direction: "ltr" } }));
+      await act(async () => handlers.notesChanged?.({ id: ID, kind: "other" }));
+      await waitFor(() => expect(container.querySelector(".tiptap")).toHaveAttribute("dir", "ltr"));
+    });
+
+    it("lets each block decide its own direction in automatic mode (not one direction for the note)", async () => {
+      const { container } = await openNote();
+      // The editor is dir="auto" ...
+      expect(container.querySelector(".tiptap")).toHaveAttribute("dir", "auto");
+      // ... and the stylesheet makes every block resolve its own base direction under it,
+      // and only under it: a fixed LTR or RTL note is left alone.
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const rule = /\.dn-note-body \.tiptap\[dir="auto"\] :is\(([^)]*)\)\s*\{([^}]*)\}/.exec(noteCss);
+      expect(rule).not.toBeNull();
+      const blocks = rule![1]!.split(",").map((b) => b.trim());
+      expect(blocks).toEqual(expect.arrayContaining(["p", "h1", "h2", "h3", "li"]));
+      expect(rule![2]).toMatch(/unicode-bidi:\s*plaintext/);
+      expect(noteCss).not.toMatch(/\.tiptap\[dir="(ltr|rtl)"\][^{]*\{[^}]*unicode-bidi/);
+    });
+
+    it("does not leave a failed reopen unhandled", async () => {
+      vi.mocked(commands.reopenNote).mockRejectedValueOnce(new Error("did not close in time"));
+      await openNote();
+      await act(async () => handlers.noteAction?.("reopen"));
+      await waitFor(() => expect(commands.reopenNote).toHaveBeenCalledWith(ID));
+      await act(async () => undefined); // an unhandled rejection would fail the run
+    });
+
+    it("saves first and reopens the window only after a successful save", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "keep me ");
+      await act(async () => handlers.noteAction?.("reopen"));
+      await waitFor(() => expect(commands.reopenNote).toHaveBeenCalledWith(ID));
+      expect(commands.saveNoteContent).toHaveBeenCalled();
+      expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(commands.reopenNote).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("reopens a locked private note at once: it holds no text to save", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote({ appearance: { opacity: 90 } }));
+      render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      expect(document.documentElement).toHaveClass("dn-see-through");
+      await act(async () => handlers.noteAction?.("reopen"));
+      expect(commands.reopenNote).toHaveBeenCalledWith(ID);
+    });
+
+    it("does not reopen when the save fails, and keeps the text", async () => {
+      vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("disk full"));
+      const { container } = await openNote();
+      await typeIntoNote(container, "precious ");
+      await act(async () => handlers.noteAction?.("reopen"));
+      expect(await screen.findByText(/Not saved/)).toBeInTheDocument();
+      expect(commands.reopenNote).not.toHaveBeenCalled();
+      expect(container.querySelector(".tiptap")).toHaveTextContent("precious");
     });
   });
 });

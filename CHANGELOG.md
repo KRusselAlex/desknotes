@@ -20,6 +20,11 @@ All notable changes are documented here. The format follows
   `desknotes --reset-pin` with DeskNotes closed; the next start says so.
 - Backups keep private notes private (backup format 2); export and restore ask for the
   PIN while private notes are locked.
+- Note settings for one note (⋯ → Note settings…): font from the fonts on this computer,
+  text size, text colour, line spacing, direction (automatic per paragraph, left-to-right,
+  right-to-left), background colour, see-through background down to 80 %, width and height
+  with "lock aspect ratio" and "Reset size", lock editing and always on top. Changes show
+  at once and are kept after a restart, by Duplicate and in backups (backup format 3).
 
 ### Changed
 - Settings opens at a given section from other windows (for example Privacy).

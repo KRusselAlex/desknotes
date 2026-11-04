@@ -22,9 +22,9 @@ export function onSaveAllRequest(handler: () => void): Promise<UnlistenFn> {
 
 export const NOTE_ACTION = "note-action";
 export const QUIT_BLOCKED = "quit-blocked";
-export type NoteAction = "hide" | "archive" | "trash";
+export type NoteAction = "hide" | "archive" | "trash" | "reopen";
 
-/** Rust asks this note window to save, then hide, archive or trash itself. */
+/** Rust asks this note window to save, then hide, archive, trash or reopen itself. */
 export function onNoteAction(handler: (action: NoteAction) => void): Promise<UnlistenFn> {
   return listen<NoteAction>(NOTE_ACTION, (event) => handler(event.payload));
 }
@@ -58,4 +58,24 @@ export const SETTINGS_SECTION = "settings-section";
 /** Another window asked the open Settings window to show a section. */
 export function onSettingsSection(handler: (section: string) => void): Promise<UnlistenFn> {
   return listen<string>(SETTINGS_SECTION, (event) => handler(event.payload));
+}
+
+export const NOTE_RESIZED = "note-resized";
+
+/** A note window was resized (sent to the Note settings window only). */
+export interface NoteResized {
+  id: string;
+  width: number;
+  height: number;
+}
+
+export function onNoteResized(handler: (e: NoteResized) => void): Promise<UnlistenFn> {
+  return listen<NoteResized>(NOTE_RESIZED, (event) => handler(event.payload));
+}
+
+export const NOTE_SETTINGS_NOTE = "note-settings-note";
+
+/** The Note settings window was pointed at another note (its id; sent to that window only). */
+export function onNoteSettingsNote(handler: (id: string) => void): Promise<UnlistenFn> {
+  return listen<string>(NOTE_SETTINGS_NOTE, (event) => handler(event.payload));
 }

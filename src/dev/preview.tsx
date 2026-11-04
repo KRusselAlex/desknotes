@@ -14,6 +14,9 @@
 // computer-password route, &method=code: recovery code chosen); &section=privacy-new-pin opens
 // "choose a new PIN" as after a forgotten-PIN proof. 123456 is refused as too easy.
 //
+// Note settings: ?w=note-settings opens the Note settings window for &id= (default a2), as the
+// native side does with ?note=<id>. Changes apply to the fake note; reload to start again.
+//
 // Forgotten PIN: "Forgot your PIN?" uses the computer password (accepted after a second;
 // &systemcancel: refused, as when its dialog is cancelled), the recovery code with
 // &method=code or &nosystem (K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ), or explains --reset-pin with
@@ -42,6 +45,7 @@ import "../styles/note.css";
 import "../styles/manager.css";
 import "../styles/settings.css";
 import "../styles/privacy.css";
+import "../styles/note-settings.css";
 
 const now = Date.now();
 const H = 3_600_000;
@@ -61,6 +65,7 @@ const base = {
   private: false,
   privateLabel: "",
   locked: false,
+  appearance: {},
 };
 const win = { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: false, collapsed: false };
 const notes: Note[] = [
@@ -183,7 +188,12 @@ function announce(locked: boolean) {
   }, 0);
 }
 Object.assign(window, { previewLock: () => announce(true), previewUnlock: () => announce(false) });
-const label = which === "note" ? `note-${noteId}` : which;
+const label = which === "note" ? `note-${noteId}` : which === "note-settings" ? "note_settings" : which;
+// The native side opens the Note settings window at `?note=<id>`.
+if (label === "note_settings" && !params.has("note")) {
+  params.set("note", noteId);
+  history.replaceState(null, "", `${location.pathname}?${params}`);
+}
 mockWindows(label);
 let shortcut: { available: boolean; binding: string | null; label: string | null } = {
   available: params.get("noshortcut") === null,
@@ -226,6 +236,20 @@ mockIPC(
       case "set_note_color":
         find(a.id).color = String(a.color);
         return null;
+      case "set_note_appearance":
+        find(a.id).appearance = structuredClone(a.appearance) as Note["appearance"];
+        void emit("notes-changed", { id: a.id, kind: "other" });
+        return null;
+      case "set_note_size": {
+        const n = find(a.id);
+        n.window = { ...n.window, width: Number(a.width), height: Number(a.height) };
+        return { width: Number(a.width), height: Number(a.height) };
+      }
+      case "list_fonts":
+        return ["DejaVu Sans", "Noto Serif", "Ubuntu", "Ubuntu Mono"];
+      case "open_note_settings":
+      case "reopen_note":
+        return null;
       case "hidden_note_count":
         return 0;
       case "get_settings":
@@ -247,6 +271,9 @@ mockIPC(
         return { width: a.width, height: a.height };
       case "set_edit_locked":
         find(a.id).editLocked = Boolean(a.locked);
+        return null;
+      case "set_always_on_top":
+        find(a.id).window.alwaysOnTop = Boolean(a.on);
         return null;
       case "privacy_status":
         return privacyStatus();
