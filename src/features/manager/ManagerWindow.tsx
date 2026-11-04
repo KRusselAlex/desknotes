@@ -1,18 +1,30 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { dateGroup, listDateLabel } from "../../app/time";
 import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onActionFailed, onNotesChanged, onPrivacyChanged, onQuitBlocked } from "../../ipc/events";
+import { onActionFailed, onNotesChanged, onPrivacyChanged, onQuitBlocked, onRemindersChanged } from "../../ipc/events";
 import { PRIVATE_FALLBACK_LABEL, type NoteCounts, type NoteFilter, type NoteSummary, type PrivacyStatus } from "../../types/note";
+import type { ReminderListRow } from "../../types/reminder";
 import { refusalText } from "../privacy/refusal";
+import { highlight } from "./highlight";
+import { RemindersList } from "./RemindersList";
 
-const TABS: { id: NoteFilter; label: string }[] = [
+export { highlight };
+
+/** The tab bar's own ids: the note lists, plus Reminders, which is not a note filter. */
+type ManagerTab = NoteFilter | "reminders";
+
+const TABS: { id: ManagerTab; label: string }[] = [
   { id: "active", label: "Active" },
+  { id: "reminders", label: "Reminders" },
   { id: "archived", label: "Archived" },
   { id: "trash", label: "Trash" },
 ];
+
+/** While the Reminders tab is shown it reloads this often, so Today, Tomorrow and Overdue stay right. */
+const REMINDERS_TICK_MS = 60_000;
 
 /** Above this many notes the list switches to compact rows grouped by date (design M7). */
 const GROUP_THRESHOLD = 12;
@@ -26,25 +38,14 @@ function rowName(n: NoteSummary): string {
   return n.locked ? n.privateLabel || PRIVATE_FALLBACK_LABEL : n.title;
 }
 
-/** Highlight the first case-insensitive occurrence of `query` in `text`. */
-export function highlight(text: string, query: string): ReactNode {
-  const q = query.trim().toLowerCase();
-  const i = q ? text.toLowerCase().indexOf(q) : -1;
-  if (i < 0) return text;
-  return (
-    <>
-      {text.slice(0, i)}
-      <mark>{text.slice(i, i + q.length)}</mark>
-      {text.slice(i + q.length)}
-    </>
-  );
-}
-
 export function ManagerWindow() {
-  const [tab, setTab] = useState<NoteFilter>("active");
+  const [tab, setTab] = useState<ManagerTab>("active");
   const [query, setQuery] = useState("");
   const [notes, setNotes] = useState<NoteSummary[] | null>(null);
   const [counts, setCounts] = useState<NoteCounts | null>(null);
+  // The Reminders tab: its rows, the clock they were read at, and how many reminders exist in all.
+  const [reminders, setReminders] = useState<{ rows: ReminderListRow[]; now: number } | null>(null);
+  const [reminderTotal, setReminderTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [startupErrors, setStartupErrors] = useState<string[]>([]);
   const [confirmPurge, setConfirmPurge] = useState<string | null>(null);
@@ -59,13 +60,19 @@ export function ManagerWindow() {
     // The lock state only decides "Lock now" and the reset notice; the list does not wait for it.
     commands.privacyStatus().then(setPrivacy, () => setPrivacy(null));
     try {
-      const [list, c, hidden] = await Promise.all([
-        commands.listNotes(tab, query),
+      // The tab's count is every reminder, whatever the search says (R2).
+      const all = commands.listReminders("");
+      const [list, c, hidden, allReminders, shownReminders] = await Promise.all([
+        tab === "reminders" ? null : commands.listNotes(tab, query),
         commands.noteCounts(),
         commands.hiddenNoteCount(),
+        all,
+        tab !== "reminders" ? null : query.trim() === "" ? all : commands.listReminders(query),
       ]);
-      setNotes(list);
+      if (list) setNotes(list);
       setCounts(c);
+      setReminderTotal(allReminders.length);
+      if (shownReminders) setReminders({ rows: shownReminders, now: Date.now() });
       setHiddenCount(hidden);
       setError(null);
     } catch (e) {
@@ -81,11 +88,19 @@ export function ManagerWindow() {
   useEffect(() => {
     const unlisten = onNotesChanged(() => void refresh());
     const unlistenPrivacy = onPrivacyChanged(() => void refresh());
+    const unlistenReminders = onRemindersChanged(() => void refresh());
     return () => {
       void unlisten.then((f) => f());
       void unlistenPrivacy.then((f) => f());
+      void unlistenReminders.then((f) => f());
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (tab !== "reminders") return;
+    const id = setInterval(() => void refresh(), REMINDERS_TICK_MS);
+    return () => clearInterval(id);
+  }, [tab, refresh]);
 
   useEffect(() => {
     commands.startupErrors().then(setStartupErrors, () => undefined);
@@ -129,6 +144,7 @@ export function ManagerWindow() {
   }
 
   const banner = error ?? startupErrors[0] ?? null;
+  const countOf = (id: ManagerTab) => (id === "reminders" ? reminderTotal : (counts?.[id] ?? 0));
   const grouped = !searching && tab === "active" && (notes?.length ?? 0) > GROUP_THRESHOLD;
 
   return (
@@ -246,18 +262,31 @@ export function ManagerWindow() {
             }}
           >
             {t.label}
-            {counts && counts[t.id] > 0 && <span className="dn-tab-count">{counts[t.id]}</span>}
+            {counts && countOf(t.id) > 0 && <span className="dn-tab-count">{countOf(t.id)}</span>}
           </button>
         ))}
       </div>
 
-      {searching && notes && notes.length > 0 && (
+      {searching && tab !== "reminders" && notes && notes.length > 0 && (
         <div className="dn-search-info">
           {notes.length} {notes.length === 1 ? "note" : "notes"} in {TABS.find((t) => t.id === tab)?.label}
         </div>
       )}
 
-      {notes === null ? (
+      {tab === "reminders" ? (
+        reminders === null ? (
+          <div className="dn-list" aria-busy="true" />
+        ) : reminders.rows.length === 0 ? (
+          <EmptyState tab={tab} searching={searching} onCreate={() => undefined} />
+        ) : (
+          <RemindersList
+            rows={reminders.rows}
+            now={reminders.now}
+            query={query}
+            onOpen={(id) => void run(() => commands.showNote(id))}
+          />
+        )
+      ) : notes === null ? (
         <div className="dn-list" aria-busy="true" />
       ) : notes.length === 0 ? (
         <EmptyState tab={tab} searching={searching} onCreate={() => void run(commands.createNote)} />
@@ -457,7 +486,7 @@ function EmptyState({
   searching,
   onCreate,
 }: {
-  tab: NoteFilter;
+  tab: ManagerTab;
   searching: boolean;
   onCreate: () => void;
 }) {
@@ -467,10 +496,18 @@ function EmptyState({
         <span className="dn-empty-badge">
           <Icon name="search" size={20} />
         </span>
-        <div className="dn-empty-title">No notes match your search</div>
+        <div className="dn-empty-title">{tab === "reminders" ? "No reminders match your search" : "No notes match your search"}</div>
         <div className="dn-empty-sub">
           {tab === "active" ? "Archived and trashed notes are not included." : "Try another tab or other words."}
         </div>
+      </div>
+    );
+  }
+  if (tab === "reminders") {
+    return (
+      <div className="dn-empty is-quiet">
+        <Icon name="bell" size={18} />
+        <span>No reminders.</span>
       </div>
     );
   }

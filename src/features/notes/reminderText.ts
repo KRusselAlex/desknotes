@@ -5,10 +5,11 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const pad = (n: number) => String(n).padStart(2, "0");
-const hhmm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+/** `HH:MM`, 24 h, of a local date. */
+export const hhmm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
 /** Whole calendar days from `from`'s date to `to`'s (not 24-hour steps, so DST days count once). */
-function calendarDays(from: Date, to: Date): number {
+export function calendarDays(from: Date, to: Date): number {
   const a = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
   const b = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
   return Math.round((b - a) / 86_400_000);
@@ -24,6 +25,11 @@ export function chipText(dueAt: number, now: Date): string {
   const days = calendarDays(now, due);
   if (days === 0) return hhmm(due);
   if (days >= 1 && days <= 6) return `${WEEKDAYS[due.getDay()]} ${hhmm(due)}`;
+  return shortDate(due, now);
+}
+
+/** "4 Nov", with the year ("4 Nov 2027") when it is not `now`'s year. */
+export function shortDate(due: Date, now: Date): string {
   const date = `${due.getDate()} ${MONTHS[due.getMonth()]}`;
   return due.getFullYear() === now.getFullYear() ? date : `${date} ${due.getFullYear()}`;
 }

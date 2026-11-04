@@ -393,6 +393,77 @@
   height: 30px;
 }
 
+/* Reminders tab (R2) */
+.dn-rem-row {
+  flex: none;
+  border-radius: 12px;
+}
+.dn-rem-row.is-overdue {
+  background: var(--dn-danger-bg);
+}
+.dn-rem-btn {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 8px 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.dn-rem-row:not(.is-overdue) .dn-rem-btn:hover {
+  background: var(--dn-app-hover);
+}
+.dn-rem-row.is-overdue .dn-rem-btn:hover {
+  background: color-mix(in srgb, var(--dn-danger) 10%, transparent);
+}
+.dn-rem-btn:focus-visible {
+  outline: 2px solid var(--dn-focus);
+  outline-offset: -2px;
+}
+.dn-rem-btn .dn-row-dot {
+  width: 12px;
+  height: 12px;
+}
+.dn-rem-btn .dn-row-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+.dn-rem-repeat {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--dn-app-muted);
+}
+.dn-rem-chip {
+  flex: none;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-sage-tint);
+  color: var(--dn-sage-ink);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.dn-rem-row.is-overdue .dn-rem-chip {
+  background: var(--dn-danger);
+  color: #fff;
+}
+.dn-rem-btn mark {
+  background: var(--dn-accent-tint);
+  color: var(--dn-app-text);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
 /* Delete confirmation (M5) */
 .dn-purge {
   display: flex;

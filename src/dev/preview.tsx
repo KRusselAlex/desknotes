@@ -38,6 +38,9 @@
 // three days from today (the chip shows that day's short name and the time; click it or use
 // ⋯ → Set reminder…), &reminder=open also opens the popover (R1). Without &reminder, the
 // note keeps the reminder seeded for it above, if any (a2's is two hours from now).
+// The manager's Reminders tab (R2) lists them: click the tab; a1 shows as overdue, a2 and a3
+// fall under Today and Tomorrow (or Today only, near midnight), r1 under Later. With
+// ?w=manager&locked=private, a2 is private and locked, so its row reads "Private note".
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
