@@ -1140,6 +1140,30 @@ describe("NoteWindow", () => {
       expect(noteCss).not.toMatch(/is-high-contrast[^{]*\{[^}]*outline:\s*var\(--dn-hc-focus\)/);
     });
 
+    it("keeps the light danger tokens inside notes under a dark system theme (R14)", () => {
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const tokens = readFileSync("src/styles/tokens.css", "utf8");
+      const light = /:root\s*\{([^}]*)\}/.exec(tokens)![1]!;
+      const dark = /\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(tokens)![1]!;
+      const value = (block: string, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(block)?.[1]?.trim();
+      // A rule on the note root itself (not the high-contrast one) re-declares them.
+      const rootBlocks = [...noteCss.matchAll(/(?:^|\n)\.dn-note\s*\{([^}]*)\}/g)].map((m) => m[1]!);
+      const scoped = rootBlocks.find((b) => b.includes("--dn-danger"));
+      expect(scoped).toBeDefined();
+      const darkDanger = [...dark.matchAll(/(--dn-danger[a-z-]*):/g)].map((m) => m[1]!);
+      expect(darkDanger).toEqual(["--dn-danger", "--dn-danger-hover", "--dn-danger-press", "--dn-danger-bg", "--dn-danger-ink"]);
+      for (const token of darkDanger) {
+        expect(value(scoped!, token), token).toBe(value(light, token));
+        expect(value(scoped!, token), token).not.toBe(value(dark, token));
+      }
+      // The overdue chip needs no dark-theme exception any more: white on the light red.
+      expect(noteCss).not.toMatch(/\[data-theme="dark"\][^{]*\.dn-reminder-chip/);
+      expect(noteCss).toMatch(/\.dn-reminder-chip\.is-overdue[^{]*\{\s*background:\s*var\(--dn-danger\);\s*color:\s*#fff;/);
+      // High contrast still wins: it is more specific and sets every danger token itself.
+      const hc = /\.dn-note\.is-high-contrast\s*\{([^}]*)\}/.exec(noteCss)![1]!;
+      for (const token of darkDanger) expect(value(hc, token), token).toMatch(/^var\(--dn-hc-(ink|bg)\)$/);
+    });
+
     it("styles high contrast and compact from the tokens, in the stylesheet", () => {
       const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
       const tokens = readFileSync("src/styles/tokens.css", "utf8");

@@ -1,5 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+// @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
+import { readFileSync } from "node:fs";
 import type { ReminderListRow } from "../../types/reminder";
 import { RemindersList } from "./RemindersList";
 
@@ -60,5 +62,13 @@ describe("RemindersList", () => {
   it("highlights the search text in the title", () => {
     const { container } = render(<RemindersList rows={[row()]} now={now} query="stand" onOpen={() => undefined} />);
     expect(container.querySelector("mark")).toHaveTextContent("Stand");
+  });
+
+  it("keeps the overdue chip readable in the dark theme (R22)", () => {
+    const css = readFileSync("src/styles/manager.css", "utf8"); // vitest blanks imported CSS
+    expect(css).toMatch(/\n\.dn-rem-row\.is-overdue \.dn-rem-chip\s*\{\s*background:\s*var\(--dn-danger\);\s*color:\s*#fff;/);
+    // The dark theme's danger is a pale red: dark ink on it, the same fill.
+    const dark = /\[data-theme="dark"\] \.dn-rem-row\.is-overdue \.dn-rem-chip\s*\{([^}]*)\}/.exec(css)?.[1];
+    expect(dark?.trim()).toBe("color: var(--dn-on-accent);");
   });
 });

@@ -457,6 +457,10 @@
   background: var(--dn-danger);
   color: #fff;
 }
+/* The dark theme's danger is a pale red: white on it would not read, dark ink does (R22). */
+[data-theme="dark"] .dn-rem-row.is-overdue .dn-rem-chip {
+  color: var(--dn-on-accent);
+}
 .dn-rem-btn mark {
   background: var(--dn-accent-tint);
   color: var(--dn-app-text);
