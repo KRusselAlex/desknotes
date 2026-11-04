@@ -353,6 +353,85 @@ describe("editor commands for text style", () => {
   });
 });
 
+describe("own font", () => {
+  const styled: JSONContent = para([
+    { type: "text", text: "x", marks: [{ type: "textStyle", attrs: { fontFamily: "Comic Neue" } }] },
+  ]);
+
+  it("falls back to the note's font when it is missing", () => {
+    const editor = editorWith(styled);
+    const span = editor.view.dom.querySelector("span")!;
+    expect(span.getAttribute("style")).toBe('font-family: "Comic Neue", var(--note-font, var(--dn-font));');
+    editor.destroy();
+  });
+
+  it("round-trips through the rendered HTML", () => {
+    const editor = editorWith(styled);
+    editor.commands.setContent(editor.getHTML());
+    expect(editor.getJSON().content![0]!.content![0]!.marks).toEqual([
+      { type: "textStyle", attrs: { fontFamily: "Comic Neue", fontSize: null, fontWeight: null, color: null } },
+    ]);
+    editor.destroy();
+  });
+
+  it("refuses any other list", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    editor.commands.setContent('<p><span style="font-family: &quot;X&quot;, var(--other)">a</span></p>');
+    expect(serializeDoc(editor.getJSON())).not.toContain("fontFamily");
+    editor.destroy();
+  });
+});
+
+describe("alignment shortcuts", () => {
+  const key = (editor: Editor, letter: string) =>
+    editor.view.dom.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: letter.toUpperCase(),
+        code: `Key${letter.toUpperCase()}`,
+        keyCode: letter.toUpperCase().charCodeAt(0),
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+  const withDir = (dir: string | null, content: JSONContent) =>
+    new Editor({
+      extensions: createExtensions(),
+      content,
+      editorProps: dir ? { attributes: { dir } } : {},
+    });
+  const alignOf = (editor: Editor) => editor.getJSON().content![0]!.attrs?.textAlign ?? null;
+
+  it("choosing the default with the keyboard removes the stored alignment", () => {
+    const editor = withDir("ltr", para([{ type: "text", text: "word" }], { textAlign: "center" }));
+    key(editor, "l");
+    expect(alignOf(editor)).toBeNull();
+    key(editor, "r");
+    expect(alignOf(editor)).toBe("right");
+    key(editor, "e");
+    expect(alignOf(editor)).toBe("center");
+    editor.destroy();
+  });
+
+  it("follows a right-to-left note", () => {
+    const editor = withDir("rtl", para([{ type: "text", text: "word" }]));
+    key(editor, "l");
+    expect(alignOf(editor)).toBe("left");
+    key(editor, "r");
+    expect(alignOf(editor)).toBeNull();
+    editor.destroy();
+  });
+
+  it("in Automatic direction follows the paragraph's own direction", () => {
+    const editor = withDir("auto", para([{ type: "text", text: "مرحبا" }]));
+    key(editor, "r");
+    expect(alignOf(editor)).toBeNull();
+    key(editor, "l");
+    expect(alignOf(editor)).toBe("left");
+    editor.destroy();
+  });
+});
+
 describe("sanitizeDoc on text style", () => {
   const textNode = (marks: { type: string; attrs?: Record<string, unknown> }[]): JSONContent => ({ type: "text", text: "x", marks });
   const marksOf = (doc: JSONContent) => doc.content![0]!.content![0]!.marks;
@@ -383,30 +462,129 @@ describe("sanitizeDoc on text style", () => {
     expect(marksOf(sanitizeDoc(ok))).toEqual([{ type: "highlight", attrs: { color: "#ffc6a5" } }]);
   });
 
-  it("turns an unknown textAlign into null on paragraphs and headings", () => {
+  it("drops an unknown or null textAlign on paragraphs and headings, and attrs left empty", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
         { type: "paragraph", attrs: { textAlign: "justify" }, content: [{ type: "text", text: "a" }] },
         { type: "heading", attrs: { level: 2, textAlign: "start" }, content: [{ type: "text", text: "b" }] },
         { type: "paragraph", attrs: { textAlign: "right" }, content: [{ type: "text", text: "c" }] },
+        { type: "paragraph", attrs: { textAlign: null }, content: [{ type: "text", text: "d" }] },
+        { type: "heading", attrs: { level: 3, textAlign: null }, content: [{ type: "text", text: "e" }] },
+        { type: "orderedList", attrs: { start: 1, type: null }, content: [] },
       ],
     };
     const clean = sanitizeDoc(doc).content!;
-    expect(clean[0]!.attrs).toEqual({ textAlign: null });
-    expect(clean[1]!.attrs).toEqual({ level: 2, textAlign: null });
+    expect(clean[0]).not.toHaveProperty("attrs");
+    expect(clean[1]!.attrs).toEqual({ level: 2 });
     expect(clean[2]!.attrs).toEqual({ textAlign: "right" });
+    expect(clean[3]).not.toHaveProperty("attrs");
+    expect(clean[4]!.attrs).toEqual({ level: 3 });
+    // Other null attributes are left alone.
+    expect(clean[5]!.attrs).toEqual({ start: 1, type: null });
   });
 });
 
 describe("old documents", () => {
   it("serialize unchanged after a load", () => {
-    const old = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }] };
-    const editor = editorWith(old);
-    const first = serializeDoc(editor.getJSON());
-    editor.commands.setContent(JSON.parse(first));
-    const second = serializeDoc(editor.getJSON());
-    expect(second).toBe(first);
+    // As stored before text style existed: no textAlign anywhere.
+    const stored = JSON.stringify({
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Title" }] },
+        { type: "paragraph", content: [{ type: "text", marks: [{ type: "bold" }], text: "x" }] },
+        {
+          type: "bulletList",
+          content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "item" }] }] }],
+        },
+        { type: "paragraph" },
+      ],
+    });
+    const editor = editorWith(JSON.parse(stored));
+    expect(serializeDoc(editor.getJSON())).toBe(stored);
+    editor.commands.setContent(JSON.parse(stored));
+    expect(serializeDoc(editor.getJSON())).toBe(stored);
     editor.destroy();
+  });
+
+  it("the shared fixture saves without null textAlign (the editor's own JSON still has it)", () => {
+    const editor = editorWith(fixture);
+    const saved = serializeDoc(editor.getJSON());
+    expect(saved).not.toContain('"textAlign":null');
+    expect(saved).toContain('"textAlign":"center"');
+    // Saving that form and loading it again gives the same editor document.
+    const reloaded = editorWith(JSON.parse(saved));
+    expect(reloaded.getJSON()).toEqual(fixture);
+    editor.destroy();
+    reloaded.destroy();
+  });
+});
+
+describe("pasted HTML", () => {
+  // jsdom has no ClipboardEvent; the paste logic only passes the event on.
+  const paste = (editor: Editor, html: string) => editor.view.pasteHTML(html, new Event("paste") as ClipboardEvent);
+  const webHtml =
+    '<p style="text-align:center"><span style="font-size:16px;font-weight:400;color:rgb(29,79,145);font-family:Arial">x</span></p>';
+
+  it("from the web keeps the text and drops font, size, weight, colour and alignment", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(editor, webHtml);
+    const saved = serializeDoc(editor.getJSON());
+    expect(editor.getText()).toBe("x");
+    expect(saved).not.toContain("textStyle");
+    expect(saved).not.toContain("textAlign");
+    editor.destroy();
+  });
+
+  it("from the web drops a highlight colour, keeping the text", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(editor, '<p>a <mark data-color="#ffe36e" style="background-color:#ffe36e">b</mark></p>');
+    expect(editor.getText()).toBe("a b");
+    expect(serializeDoc(editor.getJSON())).not.toContain("highlight");
+    editor.destroy();
+  });
+
+  it("copied from DeskNotes (data-pm-slice) keeps the allowed values", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(editor, webHtml.replace("<p ", '<p data-pm-slice="0 0 []" '));
+    const block = editor.getJSON().content![0]!;
+    expect(block.attrs).toEqual({ textAlign: "center" });
+    expect(block.content![0]!.marks).toEqual([
+      { type: "textStyle", attrs: { color: "#1d4f91", fontFamily: "Arial", fontSize: "16px", fontWeight: "400" } },
+    ]);
+    editor.destroy();
+  });
+
+  it("bold from the web still becomes the bold mark", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(editor, '<p><span style="font-weight:700">b</span> <span style="font-weight:bold">c</span></p>');
+    // As saved: the span's empty textStyle mark is dropped by sanitizeDoc.
+    const runs = (JSON.parse(serializeDoc(editor.getJSON())) as JSONContent).content![0]!.content!;
+    expect(runs.filter((r) => r.text !== " ").map((r) => r.marks)).toEqual([[{ type: "bold" }], [{ type: "bold" }]]);
+    editor.destroy();
+  });
+
+  it("keeps links, lists and headings from the web", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(
+      editor,
+      '<h2 style="color:red">T</h2><ul><li><p><a href="https://a.b" style="font-size:20px">l</a></p></li></ul>',
+    );
+    const json = editor.getJSON();
+    expect(json.content!.map((n) => n.type)).toEqual(["heading", "bulletList"]);
+    expect(JSON.stringify(json)).toContain('"href":"https://a.b"');
+    expect(serializeDoc(json)).not.toContain("textStyle");
+    editor.destroy();
+  });
+
+  it("copy and paste between two notes keeps every text style", () => {
+    const source = editorWith(fixture);
+    source.commands.selectAll();
+    const { dom } = source.view.serializeForClipboard(source.state.selection.content());
+    const target = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(target, dom.innerHTML);
+    expect(target.getJSON()).toEqual(source.getJSON());
+    source.destroy();
+    target.destroy();
   });
 });

@@ -14,15 +14,19 @@ import TextAlign from "@tiptap/extension-text-align";
 import { Color, FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { isSafeLink } from "./links";
 import {
   DEFAULT_HIGHLIGHT,
+  editorDirection,
   normalizeAlign,
   normalizeFontFamily,
   normalizeFontSize,
   normalizeFontWeight,
   normalizeHighlight,
   normalizeTextColor,
+  setAlign,
+  type TextAlignment,
 } from "./textStyle";
 
 /**
@@ -41,6 +45,9 @@ const SafeLink = Link.extend({
   },
 });
 
+/** A CSS font-weight that reads as bold: `bold`, `bolder` or 700 and up. */
+const BOLD_WEIGHT = /^(bold(er)?|[7-9]\d{2,})$/;
+
 /**
  * Bold that treats only weights of 700 and up (and `bold`) as bold when pasted. The
  * stock rule also matches 500 and 600, so a note's own "Medium" or "Semibold" text
@@ -55,7 +62,7 @@ const NoteBold = Bold.extend({
       { tag: "strong" },
       { tag: "b", getAttrs: (node) => (node as HTMLElement).style.fontWeight !== "normal" && null },
       { style: "font-weight=400", clearMark: (mark) => mark.type.name === this.name },
-      { style: "font-weight", getAttrs: (value) => /^(bold(er)?|[7-9]\d{2,})$/.test(value as string) && null },
+      { style: "font-weight", getAttrs: (value) => BOLD_WEIGHT.test(value as string) && null },
     ];
   },
 });
@@ -131,6 +138,14 @@ const NoteColor = Color.extend({
   },
 });
 
+/**
+ * What follows an own font in the page: the note's font (Note settings, set by
+ * NoteWindow as `--note-font`), then the app's, so a font uninstalled later falls back
+ * to the note's font (spec §3.1).
+ */
+const NOTE_FONT_FALLBACK = "var(--note-font, var(--dn-font))";
+const NOTE_FONT_FALLBACK_TAIL = /\s*,\s*var\(\s*--note-font\s*,\s*var\(\s*--dn-font\s*\)\s*\)\s*$/;
+
 const NoteFontFamily = FontFamily.extend({
   addGlobalAttributes() {
     return [
@@ -139,12 +154,15 @@ const NoteFontFamily = FontFamily.extend({
         attributes: {
           fontFamily: {
             default: null,
-            parseHTML: (element) =>
-              normalizeFontFamily(getStyleProperty(element, "font-family") ?? element.style.fontFamily),
+            // Our own output carries the fallback tail; any other list is refused.
+            parseHTML: (element) => {
+              const value = getStyleProperty(element, "font-family") ?? element.style.fontFamily;
+              return normalizeFontFamily(value.replace(NOTE_FONT_FALLBACK_TAIL, ""));
+            },
             // Quoted, so a name such as "3270 Nerd Font" is valid CSS.
             renderHTML: (attributes) => {
               const family = normalizeFontFamily(attributes.fontFamily);
-              return family ? { style: `font-family: "${family}"` } : {};
+              return family ? { style: `font-family: "${family}", ${NOTE_FONT_FALLBACK}` } : {};
             },
           },
         },
@@ -242,6 +260,55 @@ const NoteHighlight = Highlight.extend({
 });
 
 /**
+ * Alignment whose shortcuts (Ctrl+Shift+L/E/R) follow the popover's rule: choosing a
+ * block's default alignment removes the stored value. The default comes from the
+ * direction the editor is drawn with. No "justify": the core refuses it, so
+ * Ctrl+Shift+J does nothing.
+ */
+const NoteTextAlign = TextAlign.extend({
+  addKeyboardShortcuts() {
+    const align = (value: TextAlignment) => () =>
+      setAlign(this.editor, value, { direction: editorDirection(this.editor) }, { focus: false });
+    return { "Mod-Shift-l": align("left"), "Mod-Shift-e": align("center"), "Mod-Shift-r": align("right") };
+  },
+});
+
+/** Style properties pasted HTML keeps only when it was copied from DeskNotes. */
+const FOREIGN_STYLES = ["font", "font-size", "font-family", "font-weight", "color", "background", "background-color", "text-align"];
+
+/**
+ * Pasted HTML from anywhere but DeskNotes keeps its text and structure (links, lists,
+ * headings, bold, italic …) but not its font, size, weight, colour, highlight or
+ * alignment: a web page's 16 px Arial in its own blue would otherwise be pinned on the
+ * note's text. DeskNotes' own copies carry ProseMirror's `data-pm-slice` and keep
+ * everything (the allowlist still applies). A bold weight stays, so it becomes the bold
+ * mark; on elements other than `<span>` (only spans make a `textStyle`) the weight stays
+ * too, so a `<b style="font-weight:normal">` wrapper is still not bold.
+ */
+export function stripForeignStyles(html: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const content = template.content;
+  if (content.querySelector("[data-pm-slice]")) return html;
+  for (const el of content.querySelectorAll<HTMLElement>("[style]")) {
+    const weight = el.style.getPropertyValue("font-weight").trim();
+    const keepWeight = BOLD_WEIGHT.test(weight) || (weight !== "" && el.tagName !== "SPAN");
+    for (const name of FOREIGN_STYLES) el.style.removeProperty(name);
+    if (keepWeight) el.style.setProperty("font-weight", weight);
+    if (el.style.length === 0) el.removeAttribute("style");
+  }
+  for (const el of content.querySelectorAll("[data-color]")) el.removeAttribute("data-color");
+  return template.innerHTML;
+}
+
+const PasteStyleFilter = Extension.create({
+  name: "pasteStyleFilter",
+  addProseMirrorPlugins() {
+    return [new Plugin({ key: new PluginKey("pasteStyleFilter"), props: { transformPastedHTML: stripForeignStyles } })];
+  },
+});
+
+/**
  * Editor extensions. Every node and mark they can produce must be in the
  * allowlist in crates/desknotes-core/src/validation.rs.
  */
@@ -268,7 +335,8 @@ export function createExtensions(): Extensions {
     FontWeight,
     NoteHighlight.configure({ multicolor: true }),
     // No "justify": the core refuses it, and the shortcut for it does nothing.
-    TextAlign.configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: null }),
+    NoteTextAlign.configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: null }),
+    PasteStyleFilter,
     TaskList,
     TaskItem.configure({ nested: true }),
     Placeholder.configure({ placeholder: "Write something…" }),
@@ -309,6 +377,10 @@ function sanitizeMark(m: NonNullable<JSONContent["marks"]>[number]): typeof m | 
  * targets `_blank`. Keep only allowed values in text style, highlight and
  * alignment. The native layer rejects other documents, so fixing them here
  * prevents a failed save, including for content already in an open note.
+ *
+ * A `textAlign` that is null (no alignment, which the editor writes on every
+ * paragraph and heading) or not allowed is left out, and so is an `attrs` it
+ * leaves empty: a note saved before alignment existed serializes exactly as stored.
  */
 export function sanitizeDoc(node: JSONContent): JSONContent {
   const copy: JSONContent = { ...node };
@@ -316,9 +388,11 @@ export function sanitizeDoc(node: JSONContent): JSONContent {
     copy.marks = node.marks.flatMap((m) => sanitizeMark(m) ?? []);
     if (copy.marks.length === 0) delete copy.marks;
   }
-  const align: unknown = node.attrs?.textAlign;
-  if (align !== undefined && align !== null && normalizeAlign(align) === null) {
-    copy.attrs = { ...node.attrs, textAlign: null };
+  if (node.attrs && "textAlign" in node.attrs && normalizeAlign(node.attrs.textAlign) === null) {
+    const attrs: Record<string, unknown> = { ...node.attrs };
+    delete attrs.textAlign;
+    if (Object.keys(attrs).length > 0) copy.attrs = attrs;
+    else delete copy.attrs;
   }
   if (node.content) copy.content = node.content.map(sanitizeDoc);
   return copy;
