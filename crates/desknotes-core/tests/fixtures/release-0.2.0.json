@@ -1,0 +1,121 @@
+{
+  "notes": [
+    {
+      "archived": false,
+      "archived_at": null,
+      "color": "#fff4a3",
+      "content_json": "{\"content\":[{\"attrs\":{\"level\":1},\"content\":[{\"text\":\"Shopping list\",\"type\":\"text\"}],\"type\":\"heading\"},{\"content\":[{\"text\":\"For the weekend \",\"type\":\"text\"},{\"marks\":[{\"type\":\"bold\"}],\"text\":\"only\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"content\":[{\"content\":[{\"content\":[{\"text\":\"Bread\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"listItem\"},{\"content\":[{\"content\":[{\"text\":\"Oat milk\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"listItem\"},{\"content\":[{\"content\":[{\"text\":\"Coffee\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"listItem\"}],\"type\":\"bulletList\"}],\"type\":\"doc\"}",
+      "created_at": 1793900749204,
+      "deleted_at": null,
+      "edit_locked": false,
+      "id": "274d7f15-47e4-4ec7-8fb8-cbb9faa176aa",
+      "title": "Shopping list",
+      "trashed": false,
+      "updated_at": 1793900749205,
+      "window": {
+        "always_on_top": true,
+        "collapsed": false,
+        "height": 300.0,
+        "visible": true,
+        "width": 320.0,
+        "x": 120.0,
+        "y": 80.0
+      }
+    },
+    {
+      "archived": false,
+      "archived_at": null,
+      "color": "#cde8ff",
+      "content_json": "{\"content\":[{\"attrs\":{\"level\":2},\"content\":[{\"text\":\"Project checklist\",\"type\":\"text\"}],\"type\":\"heading\"},{\"content\":[{\"attrs\":{\"checked\":true},\"content\":[{\"content\":[{\"text\":\"Write the plan\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"taskItem\"},{\"attrs\":{\"checked\":false},\"content\":[{\"content\":[{\"text\":\"Review with the team\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"taskItem\"},{\"attrs\":{\"checked\":false},\"content\":[{\"content\":[{\"text\":\"Ship it\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"taskItem\"}],\"type\":\"taskList\"},{\"attrs\":{\"start\":1},\"content\":[{\"content\":[{\"content\":[{\"text\":\"First\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"listItem\"},{\"content\":[{\"content\":[{\"text\":\"Second\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"listItem\"}],\"type\":\"orderedList\"}],\"type\":\"doc\"}",
+      "created_at": 1793900749205,
+      "deleted_at": null,
+      "edit_locked": false,
+      "id": "8c250b20-dbf5-4c9e-b98e-9ea95af0e3d4",
+      "title": "Project checklist",
+      "trashed": false,
+      "updated_at": 1793900749206,
+      "window": {
+        "always_on_top": false,
+        "collapsed": true,
+        "height": 340.0,
+        "visible": true,
+        "width": 360.0,
+        "x": 480.0,
+        "y": 90.0
+      }
+    },
+    {
+      "archived": false,
+      "archived_at": null,
+      "color": "#d4f5d0",
+      "content_json": "{\"content\":[{\"attrs\":{\"level\":3},\"content\":[{\"text\":\"Reading\",\"type\":\"text\"}],\"type\":\"heading\"},{\"content\":[{\"text\":\"Docs: \",\"type\":\"text\"},{\"marks\":[{\"attrs\":{\"class\":null,\"href\":\"https://example.org/docs\",\"rel\":\"noopener noreferrer nofollow\",\"target\":\"_blank\"},\"type\":\"link\"}],\"text\":\"example.org\",\"type\":\"text\"},{\"text\":\" and \",\"type\":\"text\"},{\"marks\":[{\"type\":\"italic\"}],\"text\":\"a note to self\",\"type\":\"text\"}],\"type\":\"paragraph\"},{\"content\":[{\"content\":[{\"text\":\"Write it down.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"blockquote\"}],\"type\":\"doc\"}",
+      "created_at": 1793900749206,
+      "deleted_at": null,
+      "edit_locked": true,
+      "id": "0b8de275-5f78-4fe9-83e6-dc5dbe097546",
+      "title": "Reading",
+      "trashed": false,
+      "updated_at": 1793900749207,
+      "window": {
+        "always_on_top": false,
+        "collapsed": false,
+        "height": 260.0,
+        "visible": true,
+        "width": 300.0,
+        "x": 200.0,
+        "y": 420.0
+      }
+    },
+    {
+      "archived": true,
+      "archived_at": 1793900749207,
+      "color": "#ffd6e0",
+      "content_json": "{\"content\":[{\"attrs\":{\"level\":1},\"content\":[{\"text\":\"Old idea\",\"type\":\"text\"}],\"type\":\"heading\"},{\"content\":[{\"text\":\"Kept for later.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+      "created_at": 1793900749207,
+      "deleted_at": null,
+      "edit_locked": false,
+      "id": "36d50a4e-056c-4175-a993-8ec9c1050e94",
+      "title": "Old idea",
+      "trashed": false,
+      "updated_at": 1793900749207,
+      "window": {
+        "always_on_top": false,
+        "collapsed": false,
+        "height": 220.0,
+        "visible": false,
+        "width": 280.0,
+        "x": 60.0,
+        "y": 500.0
+      }
+    },
+    {
+      "archived": false,
+      "archived_at": null,
+      "color": "#e6d9ff",
+      "content_json": "{\"content\":[{\"attrs\":{\"level\":1},\"content\":[{\"text\":\"Throw away\",\"type\":\"text\"}],\"type\":\"heading\"},{\"content\":[{\"text\":\"Not needed any more.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\"}",
+      "created_at": 1793900749207,
+      "deleted_at": 1793900749208,
+      "edit_locked": false,
+      "id": "4c080daa-4215-4b99-bc30-b4af8329ac73",
+      "title": "Throw away",
+      "trashed": true,
+      "updated_at": 1793900749208,
+      "window": {
+        "always_on_top": false,
+        "collapsed": false,
+        "height": 200.0,
+        "visible": false,
+        "width": 260.0,
+        "x": 640.0,
+        "y": 500.0
+      }
+    }
+  ],
+  "release": "v0.2.0",
+  "schema_version": 3,
+  "settings": {
+    "hidden_by_hide_all": "[\"274d7f15-47e4-4ec7-8fb8-cbb9faa176aa\"]",
+    "min_note_size": "{\"width\":220,\"height\":160}",
+    "new_note_color": "#cde8ff"
+  }
+}
