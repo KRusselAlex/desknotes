@@ -796,7 +796,11 @@ html.dn-see-through #root {
 .dn-note.is-high-contrast :focus-visible {
   outline-width: var(--dn-hc-focus);
 }
-.dn-note.is-high-contrast .dn-menu-item:focus-visible {
+/* An on quick toggle also gets a rule: the light press shading alone is faint on white. */
+.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"] {
+  box-shadow: inset 0 0 0 var(--dn-hc-rule) var(--dn-hc-line);
+}
+.dn-note.is-high-contrast :is(.dn-menu-item, .dn-menu-quick-btn):focus-visible {
   box-shadow: inset 0 0 0 var(--dn-hc-focus) var(--dn-hc-ink);
 }
 .dn-note.is-high-contrast :is(.dn-link-field:focus-within, .dn-code-group.is-current) {

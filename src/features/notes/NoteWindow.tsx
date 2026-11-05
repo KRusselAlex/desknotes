@@ -4,7 +4,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import { noteDateLabel } from "../../app/time";
 import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
-import { Menu, type MenuItem } from "../../components/Menu";
+import { Menu, type MenuItem, type QuickAction } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
 import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged, onRemindersChanged } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
@@ -574,11 +574,13 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     editor?.commands.focus();
   }, [editor]);
 
-  async function setEditLock(value: boolean) {
+  /** From the menu, focus stays on its toggle (the menu stays open); elsewhere, allowing edits
+   * puts the caret at the end of the text. */
+  async function setEditLock(value: boolean, focusEditor = true) {
     if (value) await autosave.flush();
     await commands.setEditLocked(note.id, value);
     setLocked(value);
-    if (!value) editor?.commands.focus("end");
+    if (!value && focusEditor) editor?.commands.focus("end");
   }
 
   useEffect(() => {
@@ -669,34 +671,31 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     else await run();
   }
 
-  const menuItems: MenuItem[] = [
-    { id: "new", label: "New note", icon: "plus", shortcut: "Ctrl+N", onSelect: () => void commands.createNote() },
+  // DES-38 option B: the quick row, then the list. The toggles keep the menu open.
+  const quickActions: QuickAction[] = [
+    { id: "new", label: "New", name: "New note", icon: "plus", title: "New note (Ctrl+N)", onSelect: () => void commands.createNote() },
+    {
+      id: "dup",
+      label: "Duplicate",
+      name: "Duplicate",
+      icon: "duplicate",
+      title: "Duplicate this note",
+      onSelect: () => void act(() => commands.duplicateNote(note.id)),
+    },
+    { id: "pin", label: "On top", name: "Always on top", icon: "pin", checkable: true, checked: pinned, onSelect: () => void togglePinned() },
     {
       id: "lock",
-      label: locked ? "Allow editing" : "Lock editing",
+      label: "Lock",
+      name: "Lock editing",
       icon: "editlock",
-      onSelect: () => void setEditLock(!locked),
-    },
-    ...(isPrivate
-      ? [
-          {
-            id: "private-label",
-            label: "Change private label…",
-            icon: "type" as const,
-            onSelect: () => setLabelDialog("rename"),
-          },
-          { id: "private", label: "Make not private", icon: "unlock" as const, onSelect: () => void makeNotPrivate() },
-        ]
-      : [{ id: "private", label: "Make private", icon: "lock" as const, onSelect: () => void makePrivate() }]),
-    { id: "dup", label: "Duplicate", icon: "duplicate", onSelect: () => void act(() => commands.duplicateNote(note.id)) },
-    {
-      id: "pin",
-      label: "Always on top",
-      icon: "pin",
+      title: locked ? "Allow editing" : "Lock editing",
       checkable: true,
-      checked: pinned,
-      onSelect: () => void togglePinned(),
+      checked: locked,
+      onSelect: () => void setEditLock(!locked, false),
     },
+  ];
+
+  const menuItems: MenuItem[] = [
     {
       id: "reminder",
       label: "Set reminder…",
@@ -707,7 +706,19 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       },
     },
     { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
-    { id: "manager", label: "Open manager", icon: "note", separatorBefore: true, onSelect: () => void commands.showManager() },
+    {
+      id: "private",
+      label: "Private",
+      icon: "lock",
+      checked: isPrivate,
+      submenu: isPrivate
+        ? [
+            { id: "private-label", label: "Change private label…", icon: "type", onSelect: () => setLabelDialog("rename") },
+            { id: "not-private", label: "Make not private", icon: "unlock", onSelect: () => void makeNotPrivate() },
+          ]
+        : [{ id: "make-private", label: "Make private", icon: "lock", onSelect: () => void makePrivate() }],
+    },
+    { id: "manager", label: "Open manager", icon: "note", onSelect: () => void commands.showManager() },
     { id: "archive", label: "Archive", icon: "archive", separatorBefore: true, onSelect: () => void act(() => commands.setArchived(note.id, true)) },
     { id: "trash", label: "Move to trash", icon: "trash", danger: true, onSelect: () => void act(() => commands.trashNote(note.id)) },
   ];
@@ -875,7 +886,9 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         />
       )}
       {reminderOpen && <ReminderPopover noteId={note.id} initial={reminder} onClose={closeReminder} />}
-      {popover === "menu" && <Menu label="Note actions" items={menuItems} onClose={closePopover} className="dn-note-menu" />}
+      {popover === "menu" && (
+        <Menu label="Note actions" quick={quickActions} items={menuItems} onClose={closePopover} className="dn-note-menu" />
+      )}
       {popover === "link" && editor && <LinkEditor editor={editor} onClose={() => setPopover("none")} />}
       {labelDialog && (
         <PrivateLabelDialog

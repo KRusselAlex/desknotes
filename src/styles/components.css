@@ -86,6 +86,56 @@
   background: var(--dn-ink-line);
   margin: 4px 6px;
 }
+/* An item that opens a list in place (the note menu's Private, DES-38): a muted chevron
+   after it, and a back row on top of the list, its chevron turned to point back. */
+.dn-menu-chevron {
+  color: var(--dn-ink-muted);
+}
+.dn-menu-back-icon {
+  transform: rotate(180deg);
+}
+
+/* Quick-action row (note menu, DES-38): four equal buttons, an icon over an 11 px muted
+   label; an on toggle is shaded like the header pin. They stay in one row at 180 px. */
+.dn-menu-quick {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+}
+.dn-menu-quick-btn {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dn-space-1);
+  padding: var(--dn-space-2) 0;
+  border: 0;
+  border-radius: var(--dn-radius-sm);
+  background: transparent;
+  color: var(--dn-ink);
+}
+.dn-menu-quick-btn:hover,
+.dn-menu-quick-btn:focus-visible {
+  background: var(--dn-ink-hover);
+  outline: none;
+}
+.dn-menu-quick-btn:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--dn-focus);
+}
+.dn-menu-quick-btn[aria-checked="true"] {
+  background: var(--dn-ink-press);
+}
+.dn-menu-quick-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--dn-text-xs);
+  color: var(--dn-ink-muted);
+}
+.dn-menu-quick-btn[aria-checked="true"] .dn-menu-quick-label {
+  color: var(--dn-ink);
+}
 
 .dn-tooltip {
   position: fixed;
