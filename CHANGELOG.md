@@ -40,6 +40,10 @@ All notable changes are documented here. The format follows
   Later, overdue first). Reminders missed while DeskNotes was closed appear once at the next
   start; repeats keep their clock time across daylight-saving changes. Backups include
   reminders (backup format 4).
+- Completed notes (Milestone 4): ⋯ → Mark as done (or Ctrl+D) shows "Marked done · Undo"
+  for 5 seconds, then the note leaves the desktop. The manager's Completed tab lists done
+  notes with when they were done, Reopen and Move to trash; Reopen puts the note back where
+  it was. Reminders on done notes don't fire. Backups keep the done date (backup format 5).
 
 ### Changed
 - The note's ⋯ menu is shorter: a row of New, Duplicate, On top and Lock at the top (pressed
