@@ -152,6 +152,7 @@ function LockedNote({ note, onNote, app }: { note: Note; onNote: (n: Note) => vo
       if (action === "hide") hide();
       else if (action === "archive") void commands.setArchived(note.id, true).catch(() => undefined);
       else if (action === "trash") void commands.trashNote(note.id).catch(() => undefined);
+      else if (action === "complete") void commands.setNoteCompleted(note.id, true).catch(() => undefined);
       // Nothing to save while locked: the window can be recreated at once (opacity crossed 100 %).
       else if (action === "reopen") void commands.reopenNote(note.id).catch(() => undefined);
     });
@@ -407,12 +408,13 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     }
   }, [autosave, note.id, saveThen]);
 
-  // The manager asked to hide, archive or trash this note: save first, here.
+  // The manager asked to hide, archive, trash or complete this note: save first, here.
   useEffect(() => {
     const unlisten = onNoteAction((action) => {
       if (action === "hide") void hide();
       else if (action === "archive") void saveThen(() => commands.setArchived(note.id, true));
       else if (action === "trash") void saveThen(() => commands.trashNote(note.id));
+      else if (action === "complete") void saveThen(() => commands.setNoteCompleted(note.id, true));
       // The opacity crossed 100 %: the shell recreates this window. Only after the text is saved.
       // A failed reopen is reported by the native side (the manager's error list); nothing to add here.
       else if (action === "reopen") void saveThen(() => commands.reopenNote(note.id)).catch(() => undefined);

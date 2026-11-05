@@ -200,10 +200,53 @@ pub async fn set_archived(
         windows::after_note_hidden(&app, &id);
     } else {
         let note = state.with_db(|db| db.get_note(&id))?;
-        windows::open_note(&app, &note)?;
+        // A done note goes back to Completed, not onto the desktop.
+        if opens_after_unarchive(note.archived_at, note.deleted_at, note.completed_at) {
+            windows::open_note(&app, &note)?;
+        }
     }
     emit_changed(&app, Some(&id), "other");
     Ok(())
+}
+
+/// Whether unarchiving a note puts its window on screen: only when the note is
+/// now an active one (a done note goes back to Completed).
+fn opens_after_unarchive(
+    archived_at: Option<i64>,
+    deleted_at: Option<i64>,
+    completed_at: Option<i64>,
+) -> bool {
+    window_refusal(archived_at, deleted_at, completed_at).is_none()
+}
+
+/// Whether restoring a note from the trash puts its window on screen: it was
+/// visible and is now an active note. A note that was done (or archived) before
+/// it was trashed returns to Completed (or Archived) with no window.
+fn opens_after_restore(
+    visible: bool,
+    archived_at: Option<i64>,
+    deleted_at: Option<i64>,
+    completed_at: Option<i64>,
+) -> bool {
+    visible && window_refusal(archived_at, deleted_at, completed_at).is_none()
+}
+
+/// How `set_note_completed` runs.
+#[derive(Debug, PartialEq, Eq)]
+enum CompleteRoute {
+    /// Run it here.
+    Direct,
+    /// Ask the open note window to save and then call the command itself, so a
+    /// pending edit is not lost when its window is destroyed.
+    Delegate,
+}
+
+fn complete_route(done: bool, caller_is_note: bool, note_window_open: bool) -> CompleteRoute {
+    if done && !caller_is_note && note_window_open {
+        CompleteRoute::Delegate
+    } else {
+        CompleteRoute::Direct
+    }
 }
 
 /// Mark a note done (its window closes, as for archive) or reopen it (its window
@@ -213,11 +256,19 @@ pub async fn set_archived(
 #[tauri::command]
 pub async fn set_note_completed(
     app: AppHandle,
+    caller: WebviewWindow,
     state: State<'_, AppState>,
     id: String,
     done: bool,
 ) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
+    let label = windows::note_label(&id);
+    let open = app.get_webview_window(&label).is_some();
+    if complete_route(done, caller.label() == label, open) == CompleteRoute::Delegate
+        && windows::delegate_to_note(&app, caller.label(), &id, "complete")
+    {
+        return Ok(());
+    }
     let now = desknotes_core::now_ms();
     state.with_db(|db| db.set_completed(&id, done, now))?;
     if done {
@@ -260,7 +311,12 @@ pub async fn restore_note(app: AppHandle, state: State<'_, AppState>, id: String
     let id = parse_note_id(&id)?;
     state.with_db(|db| db.restore_note(&id))?;
     let note = state.with_db(|db| db.get_note(&id))?;
-    if note.window.visible {
+    if opens_after_restore(
+        note.window.visible,
+        note.archived_at,
+        note.deleted_at,
+        note.completed_at,
+    ) {
         windows::open_note(&app, &note)?;
     }
     emit_changed(&app, Some(&id), "other");
@@ -416,5 +472,32 @@ mod tests {
     fn a_done_note_is_told_to_reopen_first() {
         let message = window_refusal(None, None, Some(1)).unwrap();
         assert!(message.contains("reopen"), "{message}");
+    }
+
+    #[test]
+    fn unarchiving_a_done_note_does_not_open_it() {
+        // Done, then archived, then unarchived: it goes back to Completed.
+        assert!(!opens_after_unarchive(None, None, Some(1)));
+        assert!(opens_after_unarchive(None, None, None));
+        assert!(!opens_after_unarchive(None, Some(1), None));
+    }
+
+    #[test]
+    fn restoring_a_done_note_from_the_trash_does_not_open_it() {
+        // Done, then trashed, then restored: it goes back to Completed, even
+        // though its window was visible when it was marked done.
+        assert!(!opens_after_restore(true, None, None, Some(1)));
+        assert!(opens_after_restore(true, None, None, None));
+        assert!(!opens_after_restore(false, None, None, None));
+        assert!(!opens_after_restore(true, Some(1), None, None));
+    }
+
+    #[test]
+    fn done_is_handed_to_an_open_note_window_not_called_from_it() {
+        assert_eq!(complete_route(true, false, true), CompleteRoute::Delegate);
+        assert_eq!(complete_route(true, true, true), CompleteRoute::Direct);
+        assert_eq!(complete_route(true, false, false), CompleteRoute::Direct);
+        // Reopening never waits for a window: there is none.
+        assert_eq!(complete_route(false, false, true), CompleteRoute::Direct);
     }
 }

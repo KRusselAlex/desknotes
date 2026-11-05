@@ -55,6 +55,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     setEditLocked: vi.fn().mockResolvedValue(undefined),
     hideNote: vi.fn().mockResolvedValue(undefined),
     setArchived: vi.fn().mockResolvedValue(undefined),
+    setNoteCompleted: vi.fn().mockResolvedValue(undefined),
     trashNote: vi.fn().mockResolvedValue(undefined),
     showManager: vi.fn().mockResolvedValue(undefined),
     createNote: vi.fn().mockResolvedValue({}),
@@ -263,6 +264,16 @@ describe("NoteWindow", () => {
     await openNote();
     await act(async () => handlers.noteAction?.("trash"));
     await waitFor(() => expect(commands.trashNote).toHaveBeenCalledWith(ID));
+  });
+
+  it("saves, then marks itself done when the manager asks it to", async () => {
+    const { container } = await openNote();
+    await typeIntoNote(container, "last words ");
+    await act(async () => handlers.noteAction?.("complete"));
+    await waitFor(() => expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true));
+    expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+      vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+    );
   });
 
   it("answers the quit handshake with whether its text is saved", async () => {
