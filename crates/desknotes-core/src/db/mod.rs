@@ -244,29 +244,55 @@ mod tests {
         assert_eq!(v, LATEST_VERSION + 1);
     }
 
-    #[test]
-    fn newer_database_message_and_untouched() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("desknotes.db");
-        let backups = dir.path().join("backups");
+    /// Write a database that claims a newer schema, optionally in `journal_mode`
+    /// first, and return its bytes. The connection is closed, so WAL is checkpointed.
+    fn write_newer_database(path: &Path, journal_mode: Option<&str>) -> Vec<u8> {
         {
-            let conn = Connection::open(&path).unwrap();
+            let conn = Connection::open(path).unwrap();
+            if let Some(mode) = journal_mode {
+                conn.pragma_update(None, "journal_mode", mode).unwrap();
+            }
             conn.pragma_update(None, "user_version", LATEST_VERSION + 1)
                 .unwrap();
         }
-        let before = std::fs::read(&path).unwrap();
+        std::fs::read(path).unwrap()
+    }
 
-        let err = Database::open(&path, &backups).err().unwrap();
+    /// The open is refused with `schema_too_new`, the file keeps its bytes, and the
+    /// folder holds nothing but the database (no -wal, -shm, -journal or backups).
+    fn assert_refused_and_untouched(dir: &Path, before: &[u8]) {
+        let path = dir.join("desknotes.db");
+        let err = Database::open(&path, &dir.join("backups")).err().unwrap();
         assert_eq!(err.code(), "schema_too_new");
         assert_eq!(
             std::fs::read(&path).unwrap(),
             before,
             "a database from a newer version must keep its exact bytes"
         );
-        assert!(
-            !backups.exists(),
-            "no backup is written when the open is refused"
+        let names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["desknotes.db".to_string()],
+            "only the database may be in the folder"
         );
+    }
+
+    #[test]
+    fn newer_database_message_and_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = write_newer_database(&dir.path().join("desknotes.db"), None);
+        assert_refused_and_untouched(dir.path(), &before);
+    }
+
+    #[test]
+    fn newer_wal_database_is_refused_and_untouched() {
+        // Real DeskNotes databases are in WAL mode, so this is the realistic case.
+        let dir = tempfile::tempdir().unwrap();
+        let before = write_newer_database(&dir.path().join("desknotes.db"), Some("WAL"));
+        assert_refused_and_untouched(dir.path(), &before);
     }
 
     #[test]
