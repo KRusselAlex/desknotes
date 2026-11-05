@@ -9,6 +9,10 @@ All notable changes are documented here. The format follows
 Database: migrations 4–7 (private notes, appearance, reminders, completed notes); backup format 5. A copy is made before upgrading.
 
 ### Added
+- A welcome note on the very first launch (once, centred; delete it and it stays gone), and a
+  fuller Settings → About: who made DeskNotes, what it is for, a Copy button for the version
+  and system (for bug reports), links to the source code, issues and more free tools, and the
+  third-party notices and licence. Links open the browser only when clicked.
 - Private notes with a privacy lock (Milestone 3): mark a note private from its ⋯ menu,
   with an optional label. A 6-digit PIN (Settings → Privacy) locks every private note; a
   locked note shows only its colour and label, never its text or title, in every window,
