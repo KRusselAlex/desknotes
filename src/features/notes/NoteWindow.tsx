@@ -688,7 +688,6 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       label: "Lock",
       name: "Lock editing",
       icon: "editlock",
-      title: locked ? "Allow editing" : "Lock editing",
       checkable: true,
       checked: locked,
       onSelect: () => void setEditLock(!locked, false),

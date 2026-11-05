@@ -59,7 +59,6 @@ function QuickMenu({ onNew, onClose, subSelect }: { onNew: () => void; onClose: 
       label: "Lock",
       name: "Lock editing",
       icon: "editlock",
-      title: locked ? "Allow editing" : "Lock editing",
       checkable: true,
       checked: locked,
       onSelect: () => setLocked(!locked),
@@ -98,7 +97,8 @@ describe("Menu quick-action row", () => {
     expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual(["New note", "Duplicate", "Always on top", "Lock editing"]);
     expect(buttons.map((b) => b.textContent)).toEqual(["New", "Duplicate", "On top", "Lock"]);
     expect(within(row).getByRole("menuitem", { name: "New note" })).toHaveAttribute("title", "New note (Ctrl+N)");
-    expect(within(row).getByRole("menuitemcheckbox", { name: "Lock editing" })).toHaveAttribute("title", "Allow editing");
+    // The tooltip repeats the name, whatever the state (the state is aria-checked and the shading).
+    expect(within(row).getByRole("menuitemcheckbox", { name: "Lock editing" })).toHaveAttribute("title", "Lock editing");
     expect(buttons.every((b) => b.querySelector("svg") !== null)).toBe(true);
   });
 
@@ -160,6 +160,9 @@ describe("Menu quick-action row", () => {
     expect(screen.getByRole("menuitem", { name: "Duplicate" })).toHaveFocus();
     await userEvent.keyboard("{End}");
     expect(screen.getByRole("menuitem", { name: "Move to trash" })).toHaveFocus();
+    // ↓ from the last list item wraps within the list, not to the row.
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Set reminder…" })).toHaveFocus();
     await userEvent.keyboard("{Home}");
     expect(screen.getByRole("menuitem", { name: "New note" })).toHaveFocus();
   });

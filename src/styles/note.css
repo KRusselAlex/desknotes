@@ -796,12 +796,19 @@ html.dn-see-through #root {
 .dn-note.is-high-contrast :focus-visible {
   outline-width: var(--dn-hc-focus);
 }
-/* An on quick toggle also gets a rule: the light press shading alone is faint on white. */
-.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"] {
-  box-shadow: inset 0 0 0 var(--dn-hc-rule) var(--dn-hc-line);
-}
 .dn-note.is-high-contrast :is(.dn-menu-item, .dn-menu-quick-btn):focus-visible {
   box-shadow: inset 0 0 0 var(--dn-hc-focus) var(--dn-hc-ink);
+}
+/* An on quick toggle is inverted (the light press shading alone is faint on white). Focused,
+   it keeps that and shows a white ring inside the black one, so focused-on differs from both
+   focused-off (black ring on white) and on (plain black). */
+.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"] {
+  background: var(--dn-hc-ink);
+  color: var(--dn-hc-bg);
+}
+.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"]:focus-visible {
+  box-shadow: inset 0 0 0 var(--dn-hc-focus) var(--dn-hc-ink),
+    inset 0 0 0 calc(var(--dn-hc-focus) + var(--dn-hc-rule)) var(--dn-hc-bg);
 }
 .dn-note.is-high-contrast :is(.dn-link-field:focus-within, .dn-code-group.is-current) {
   box-shadow: 0 0 0 2px var(--dn-hc-bg), 0 0 0 calc(2px + var(--dn-hc-focus)) var(--dn-hc-ink);

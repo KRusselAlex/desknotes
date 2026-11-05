@@ -50,7 +50,8 @@ const focusable = (root: HTMLElement | null, selector: string) =>
 
 /**
  * Keyboard-navigable popup menu: arrows move, Enter selects, Esc closes. With a quick row,
- * ←/→ move along it and ↓/↑ go between it and the list. An item with a submenu opens it in
+ * ←/→ move along it, ↓ goes to the first list item and ↑ from that item comes back (↓ from
+ * the last list item wraps to the first, not to the row). An item with a submenu opens it in
  * place (Enter or →); ← or Esc goes back to the list.
  */
 export function Menu({ label, items, onClose, className, style, radio, quick }: MenuProps) {
@@ -62,6 +63,7 @@ export function Menu({ label, items, onClose, className, style, radio, quick }: 
   /** The quick button ↓ left from, so ↑ from the list comes back to it. */
   const lastQuick = useRef(0);
 
+  // Top level only: a submenu's own items cannot open a further submenu (not needed, not supported).
   const parent = openId === null ? undefined : items.find((i) => i.id === openId && i.submenu);
   const shown = parent?.submenu ?? items;
 
@@ -122,10 +124,8 @@ export function Menu({ label, items, onClose, className, style, radio, quick }: 
       else return;
     } else {
       const item = shown.find((it) => it.id === active?.dataset.menuId);
-      if (e.key === "ArrowDown") {
-        if (i === list.length - 1 && row.length) focusRow(lastQuick.current);
-        else focusList(i + 1);
-      } else if (e.key === "ArrowUp") {
+      if (e.key === "ArrowDown") focusList(i + 1);
+      else if (e.key === "ArrowUp") {
         if (i === 0 && row.length) focusRow(lastQuick.current);
         else focusList(i < 0 ? -1 : i - 1);
       } else if (e.key === "Home") {

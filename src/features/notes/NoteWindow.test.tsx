@@ -366,7 +366,8 @@ describe("NoteWindow", () => {
       await userEvent.click(lock);
       expect(commands.setEditLocked).toHaveBeenCalledWith(ID, true);
       await waitFor(() => expect(lock).toHaveAttribute("aria-checked", "true"));
-      expect(lock).toHaveAttribute("title", "Allow editing");
+      // The tooltip does not contradict the name: the state is aria-checked and the shading.
+      expect(lock).toHaveAttribute("title", "Lock editing");
       expect(lock).toHaveAccessibleName("Lock editing");
       expect(container.querySelector(".tiptap")).toHaveAttribute("contenteditable", "false");
 
@@ -1294,14 +1295,38 @@ describe("NoteWindow", () => {
       expect(noteCss).not.toMatch(/is-high-contrast[^{]*\{[^}]*outline:\s*var\(--dn-hc-focus\)/);
     });
 
-    it("gives the menu's quick buttons the 3 px high-contrast ring, and a rule when on (DES-38)", () => {
+    it("draws the menu's quick toggles in high contrast: 3 px ring, inverted when on, both when focused and on (DES-38)", () => {
       const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const rule = (selector: string) => {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(noteCss)?.[1];
+      };
+      // Focused, off: the 3 px black ring on white, as menu items.
       const ring = /\.dn-note\.is-high-contrast :is\(([^)]*)\):focus-visible\s*\{\s*box-shadow:\s*inset 0 0 0 var\(--dn-hc-focus\) var\(--dn-hc-ink\);/.exec(noteCss);
       expect(ring?.[1]).toContain(".dn-menu-quick-btn");
       expect(ring?.[1]).toContain(".dn-menu-item");
-      expect(noteCss).toMatch(
-        /\.dn-note\.is-high-contrast \.dn-menu-quick-btn\[aria-checked="true"\]\s*\{\s*box-shadow:\s*inset 0 0 0 var\(--dn-hc-rule\) var\(--dn-hc-line\);/,
+      // On, unfocused: inverted, white on black.
+      const on = rule('.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"]');
+      expect(on).toMatch(/background:\s*var\(--dn-hc-ink\);/);
+      expect(on).toMatch(/color:\s*var\(--dn-hc-bg\);/);
+      // The label follows the button's colour when on (components.css), so it turns white too.
+      expect(readFileSync("src/styles/components.css", "utf8")).toMatch(
+        /\.dn-menu-quick-btn\[aria-checked="true"\] \.dn-menu-quick-label\s*\{\s*color:\s*inherit;/,
       );
+      // Focused and on: still inverted, with a white ring inside, so it differs from both.
+      const both = rule('.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"]:focus-visible');
+      expect(both).toMatch(/box-shadow:\s*inset 0 0 0 var\(--dn-hc-focus\) var\(--dn-hc-ink\),\s*inset 0 0 0 calc\(var\(--dn-hc-focus\) \+ var\(--dn-hc-rule\)\) var\(--dn-hc-bg\);/);
+      // It comes after the plain focus rule, which has a lower specificity anyway.
+      expect(noteCss.indexOf('.dn-menu-quick-btn[aria-checked="true"]:focus-visible')).toBeGreaterThan(ring!.index);
+    });
+
+    it("keeps the quick row labels whole: columns at least their label wide, no ellipsis (DES-38)", () => {
+      const css = readFileSync("src/styles/components.css", "utf8"); // vitest blanks imported CSS
+      const row = /\.dn-menu-quick\s*\{([^}]*)\}/.exec(css)?.[1];
+      expect(row).toMatch(/grid-template-columns:\s*repeat\(4, minmax\(min-content, 1fr\)\);/);
+      const label = /\.dn-menu-quick-label\s*\{([^}]*)\}/.exec(css)?.[1];
+      expect(label).toBeDefined();
+      expect(label).not.toMatch(/text-overflow|overflow:/);
     });
 
     it("keeps the light danger tokens inside notes under a dark system theme (R14)", () => {
