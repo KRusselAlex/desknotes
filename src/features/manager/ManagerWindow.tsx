@@ -18,6 +18,7 @@ type ManagerTab = NoteFilter | "reminders";
 
 const TABS: { id: ManagerTab; label: string }[] = [
   { id: "active", label: "Active" },
+  { id: "completed", label: "Completed" },
   { id: "reminders", label: "Reminders" },
   { id: "archived", label: "Archived" },
   { id: "trash", label: "Trash" },
@@ -352,6 +353,7 @@ export function ManagerWindow() {
 
 function rowMeta(n: NoteSummary, tab: NoteFilter): string {
   if (tab === "trash") return `Trashed ${listDateLabel(n.deletedAt ?? n.updatedAt)}`;
+  if (tab === "completed") return `Done ${listDateLabel(n.completedAt ?? n.updatedAt)}`;
   if (tab === "archived") return `Archived ${listDateLabel(n.archivedAt ?? n.updatedAt)}`;
   return `${listDateLabel(n.updatedAt)} · ${n.visible ? "On desktop" : "Hidden"}`;
 }
@@ -439,6 +441,12 @@ function NoteRow({ note: n, tab, query, compact, run, onAskPurge }: RowProps) {
           </span>
           {eye}
         </>
+      )}
+      {tab === "completed" && (
+        <button type="button" className="dn-btn-outline" onClick={stop(() => void run(() => commands.setNoteCompleted(n.id, false)))}>
+          <Icon name="restore" size={14} />
+          Reopen
+        </button>
       )}
       {tab === "archived" && (
         <>
@@ -541,8 +549,8 @@ function EmptyState({
   }
   return (
     <div className="dn-empty is-quiet">
-      <Icon name={tab === "archived" ? "archive" : "trash"} size={18} />
-      <span>{tab === "archived" ? "Nothing archived." : "The trash is empty."}</span>
+      <Icon name={tab === "completed" ? "check" : tab === "archived" ? "archive" : "trash"} size={18} />
+      <span>{tab === "completed" ? "Nothing completed yet." : tab === "archived" ? "Nothing archived." : "The trash is empty."}</span>
     </div>
   );
 }

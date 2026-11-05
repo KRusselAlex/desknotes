@@ -33,6 +33,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     showNote: vi.fn().mockResolvedValue(undefined),
     hideNote: vi.fn().mockResolvedValue(undefined),
     setArchived: vi.fn().mockResolvedValue(undefined),
+    setNoteCompleted: vi.fn().mockResolvedValue(undefined),
     restoreNote: vi.fn().mockResolvedValue(undefined),
     purgeNote: vi.fn().mockResolvedValue(undefined),
     trashNote: vi.fn().mockResolvedValue(undefined),
@@ -131,6 +132,88 @@ describe("ManagerWindow", () => {
     expect(await screen.findByText("No notes yet. Press Ctrl+N to create one.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /Archived/ }));
     expect(await screen.findByText("Nothing archived.")).toBeInTheDocument();
+  });
+
+  describe("Completed tab", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const done = (over: Partial<NoteSummary> = {}) => note({ id: "d1", title: "Book the dentist", completedAt: Date.now() - 1000, ...over });
+
+    it("sits between Active and Reminders with its own count", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([]);
+      vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, completed: 4, archived: 2, trash: 0 });
+      render(<ManagerWindow />);
+      await screen.findByText("No notes yet. Press Ctrl+N to create one.");
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active1", "Completed4", "Reminders", "Archived2", "Trash"]);
+    });
+
+    it("lists completed notes with a Done date and a Reopen button", async () => {
+      vi.mocked(commands.listNotes).mockImplementation(async (f) =>
+        f === "completed"
+          ? [
+              done({ id: "d1", completedAt: Date.now() - 1000 }),
+              done({ id: "d2", title: "Call mum", completedAt: Date.now() - 3 * DAY }),
+              done({ id: "d3", title: "Old thing", completedAt: Date.now() - 400 * DAY }),
+            ]
+          : [],
+      );
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const rows = await screen.findAllByRole("listitem");
+      expect(commands.listNotes).toHaveBeenCalledWith("completed", "");
+      expect(within(rows[0]!).getByText("Book the dentist")).toBeInTheDocument();
+      expect(within(rows[0]!).getByText(/^Done \d{1,2}:\d{2}/)).toBeInTheDocument();
+      expect(within(rows[1]!).getByText(/^Done [A-Z][a-z]{2}$/)).toBeInTheDocument();
+      expect(within(rows[2]!).getByText(/^Done .*20\d\d$/)).toBeInTheDocument();
+      expect(within(rows[0]!).getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    });
+
+    it("Reopen marks the note not done and refreshes", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done()]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const reopen = await screen.findByRole("button", { name: "Reopen" });
+      const countsBefore = vi.mocked(commands.noteCounts).mock.calls.length;
+      await userEvent.click(reopen);
+      expect(commands.setNoteCompleted).toHaveBeenCalledWith("d1", false);
+      await waitFor(() => expect(vi.mocked(commands.noteCounts).mock.calls.length).toBeGreaterThan(countsBefore));
+    });
+
+    it("clicking the row itself does nothing, like an Archived row", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done()]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      await userEvent.click(await screen.findByRole("listitem"));
+      expect(commands.showNote).not.toHaveBeenCalled();
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("searches within the tab", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done({ snippet: "dentist at 5" })]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "dentist");
+      await waitFor(() => expect(commands.listNotes).toHaveBeenLastCalledWith("completed", "dentist"));
+      expect(await screen.findByText("1 note in Completed")).toBeInTheDocument();
+    });
+
+    it("says so when nothing is completed", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      expect(await screen.findByText("Nothing completed yet.")).toBeInTheDocument();
+    });
+
+    it("locked_rows_show_private_note", async () => {
+      vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ enabled: true, locked: true }));
+      vi.mocked(commands.listNotes).mockResolvedValue([
+        done({ id: "p1", private: true, locked: true, privateLabel: "", title: "Doctor letter", snippet: "Doctor" }),
+      ]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const row = await screen.findByRole("listitem");
+      expect(within(row).getByText("Private note")).toBeInTheDocument();
+      expect(row).not.toHaveTextContent("Doctor");
+    });
   });
 
   it("shows errors in a banner instead of failing silently", async () => {
@@ -330,11 +413,11 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Reminders/ }));
   };
 
-  it("puts the tab between Active and Archived, counting the reminders", async () => {
+  it("puts the tab between Completed and Archived, counting the reminders", async () => {
     vi.mocked(commands.listReminders).mockResolvedValue([reminder(), reminder({ noteId: "n2" }), reminder({ noteId: "n3" })]);
     render(<ManagerWindow />);
     await waitFor(() => expect(screen.getByRole("tab", { name: /Reminders/ })).toHaveTextContent("3"));
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active1", "Reminders3", "Archived", "Trash"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active1", "Completed", "Reminders3", "Archived", "Trash"]);
     expect(commands.listReminders).toHaveBeenCalledWith("");
   });
 
