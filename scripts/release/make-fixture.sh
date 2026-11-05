@@ -18,7 +18,7 @@
 # release and commit the result (docs/releasing.md); the committed fixture is never
 # regenerated for an old release.
 #
-# Needs: git, cargo. Cargo reads the dependencies named in the tag's Cargo.lock (the
+# Needs: git, cargo, python3. Cargo reads the dependencies named in the tag's Cargo.lock (the
 # local cargo cache, or crates.io on first use). The app itself is never involved.
 
 set -euo pipefail
@@ -26,6 +26,11 @@ set -euo pipefail
 TAG="${1:-}"
 if [[ -z "$TAG" ]]; then
   echo "usage: $0 TAG   (for example: $0 v0.2.0)" >&2
+  exit 2
+fi
+
+if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+  echo "error: '$TAG' is not a release tag like v0.2.0 or v0.3.0-beta.1" >&2
   exit 2
 fi
 
@@ -232,7 +237,7 @@ fn main() {
     // The fixture is the release's own consistent snapshot (`backup_to`, VACUUM INTO),
     // the same form the app writes for its pre-migration copies: one self-contained
     // file in rollback-journal mode, so tests can open it read-only and compare the
-    // backup of an upgrade with it byte for byte.
+    // pre-migration copy of an upgrade with it (same schema and rows).
     db.backup_to(&out.join("desknotes.db")).unwrap();
 }
 EXAMPLE

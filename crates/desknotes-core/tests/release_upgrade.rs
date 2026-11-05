@@ -2,14 +2,15 @@
 //! design §3.1). `tests/fixtures/release-0.2.0.db` was written by the v0.2.0
 //! release's own code (`scripts/release/make-fixture.sh v0.2.0`), and the JSON
 //! manifest next to it lists what it holds. Opening a copy with today's code must
-//! keep every note and setting, reach the latest schema and leave exactly one
-//! byte-identical pre-migration copy.
+//! keep every note and setting, reach the latest schema, give columns added since
+//! v0.2.0 their defaults, and leave exactly one pre-migration copy with the same
+//! schema and rows.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use desknotes_core::Database;
 use desknotes_core::db::LATEST_VERSION;
+use desknotes_core::{Appearance, Database};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
@@ -127,6 +128,34 @@ fn upgrade_from_release_0_2_0_keeps_everything() {
         );
     }
 
+    // Columns and tables added after v0.2.0 start at their defaults, and the
+    // search index text the old release wrote is neither wiped nor rewritten.
+    let original =
+        Connection::open_with_flags(fixture_db(), OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let upgraded = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let search_text = |conn: &Connection, id: &str| -> String {
+        conn.query_row("SELECT search_text FROM notes WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    for expected in notes {
+        let id = expected["id"].as_str().unwrap();
+        let note = db.get_note(id).unwrap();
+        assert!(!note.private, "{id} is not private");
+        assert_eq!(note.private_label, "", "{id} private_label");
+        assert!(!note.locked, "{id} is not withheld");
+        assert_eq!(note.appearance, Appearance::default(), "{id} appearance");
+        assert_eq!(note.completed_at, None, "{id} completed_at");
+        let before = search_text(&original, id);
+        assert!(!before.is_empty(), "{id} had search text in v0.2.0");
+        assert_eq!(search_text(&upgraded, id), before, "{id} search_text");
+    }
+    let reminders: i64 = upgraded
+        .query_row("SELECT COUNT(*) FROM reminders", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(reminders, 0, "no reminders appear from nowhere");
+
     // No note appeared or went missing.
     let counts = db.count_notes().unwrap();
     let count = |f: fn(&Value) -> bool| notes.iter().filter(|n| f(n)).count() as i64;
@@ -195,8 +224,6 @@ fn upgrade_from_release_0_2_0_keeps_everything() {
         version, RELEASE_0_2_0_VERSION,
         "backup keeps the old schema"
     );
-    let original =
-        Connection::open_with_flags(fixture_db(), OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let before = dump(&original);
     assert!(
         before.iter().any(|l| l.starts_with("notes: ")),
