@@ -1771,6 +1771,44 @@ describe("NoteWindow", () => {
       expect(screen.queryByText("Marked done")).toBeNull();
     });
 
+    it("Ctrl+D is ignored on a note whose content could not be loaded: no invisible strip, nothing marked done", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(
+        note({
+          content: {
+            type: "doc",
+            content: [{ type: "paragraph", content: [{ type: "text", text: "secret", marks: [{ type: "unknownMark" }] }] }],
+          },
+        }),
+      );
+      render(<NoteWindow noteId={ID} />);
+      await screen.findByText("This note could not be opened.");
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("collapsing during the strip marks the note done at once, after saving, like a close", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "last ");
+      await ctrl("d");
+      await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+      await waitFor(() => expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true));
+      expect(commands.setCollapsed).not.toHaveBeenCalled();
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+      );
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("collapsing without a strip still just collapses", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+      expect(commands.setCollapsed).toHaveBeenCalledWith(ID, true);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
     it("draws the strip with tokens only, black on white in high contrast", () => {
       const css = (readFileSync("src/styles/note.css", "utf8") as string).replace(/\/\*[\s\S]*?\*\//g, "");
       const rule = /\.dn-done-strip\s*\{([^}]*)\}/.exec(css);

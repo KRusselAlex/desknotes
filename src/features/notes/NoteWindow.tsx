@@ -448,9 +448,13 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     return p;
   }, [autosave, editor, note.id, saveThen, stopStrip]);
 
-  /** "Mark as done": the strip shows, and the timer starts. Ignored while it already shows or the note is going away. */
+  /**
+   * "Mark as done": the strip shows, and the timer starts. Ignored while it already shows, the
+   * note is going away, or its content could not be loaded (that view has no strip to show, and a
+   * timer must never run unseen).
+   */
   const startStrip = useCallback(() => {
-    if (stripRef.current || closing.current || completing.current) return;
+    if (contentBroken.current || stripRef.current || closing.current || completing.current) return;
     stripRef.current = true;
     setStripShown(true);
     stripTimer.current = setTimeout(() => {
@@ -774,6 +778,12 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** Collapse only after the text is saved; expanding never needs a save. */
   async function setCollapsed(next: boolean) {
     setPopover("none");
+    // The rolled-up note shows no strip, so collapsing during it completes the note at once, as a
+    // close does: the strip must never run unseen.
+    if (next && (stripRef.current || completing.current)) {
+      await completeStrip();
+      return;
+    }
     const run = () => commands.setCollapsed(note.id, next).then(() => setCollapsedView(next));
     if (next) await saveThen(run);
     else await run();
