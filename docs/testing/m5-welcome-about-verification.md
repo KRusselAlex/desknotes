@@ -1,6 +1,6 @@
 # Milestone 5 — welcome note and About page: verification on Ubuntu
 
-Date: 2026-11-05 · Branch: `feat/welcome-about` (1f5ac6c; later commits change only the copy-state edge cases, tests and docs) · Jira: DES-29
+Date: 2026-11-05 · Branch: `feat/welcome-about` (verified at 1f5ac6c; later commits changed only: 7ef9613 the copy-state edge cases, their tests, a logging guard in `place_welcome_note` in `src-tauri/src/windows/mod.rs` and the removal of a 2 px radius in `settings.css`; the final fix wave the About accessibility attributes (link hints as descriptions, a live region for Copied), the `/usr/lib/os-release` fallback and last-`PRETTY_NAME`-wins rule for the OS name, a CSS comment, and this note) · Jira: DES-29
 Design: `docs/superpowers/specs/2026-11-05-welcome-and-about-design.md`
 
 ## Machine and conditions

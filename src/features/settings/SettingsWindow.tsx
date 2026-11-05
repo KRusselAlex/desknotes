@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import appIcon from "../../assets/app-icon.png";
 import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
@@ -236,9 +236,19 @@ export function SettingsWindow() {
 const COPIED_FOR_MS = 2000;
 
 /** A link to the system browser: only the fixed id goes to Rust, which builds the address. */
-function ExternalLink({ id, onOpen, children }: { id: AboutLink; onOpen: (id: AboutLink) => void; children: string }) {
+function ExternalLink({
+  id,
+  onOpen,
+  describedBy,
+  children,
+}: {
+  id: AboutLink;
+  onOpen: (id: AboutLink) => void;
+  describedBy?: string;
+  children: string;
+}) {
   return (
-    <button type="button" className="dn-about-link" onClick={() => onOpen(id)}>
+    <button type="button" className="dn-about-link" aria-describedby={describedBy} onClick={() => onOpen(id)}>
       {children}
     </button>
   );
@@ -253,6 +263,7 @@ function AboutPane({
   onOpenFolder: () => void;
   onOpenLink: (id: AboutLink) => void;
 }) {
+  const hintBase = useId();
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -297,6 +308,9 @@ function AboutPane({
               <button type="button" className="dn-btn-outline" onClick={() => void copyVersion()}>
                 {copied ? "Copied" : "Copy"}
               </button>
+              <span className="dn-visually-hidden" role="status" aria-live="polite">
+                {copied ? "Copied" : ""}
+              </span>
               <span>· MIT license</span>
             </div>
           </div>
@@ -319,10 +333,12 @@ function AboutPane({
             ] as const
           ).map(([id, label]) => (
             <div key={id} className="dn-about-link-row">
-              <ExternalLink id={id} onOpen={onOpenLink}>
+              <ExternalLink id={id} onOpen={onOpenLink} describedBy={`${hintBase}-${id}`}>
                 {label}
               </ExternalLink>
-              <span className="dn-muted dn-about-hint">opens browser</span>
+              <span id={`${hintBase}-${id}`} className="dn-muted dn-about-hint">
+                opens browser
+              </span>
             </div>
           ))}
         </div>

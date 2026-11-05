@@ -152,6 +152,7 @@
 }
 .dn-about-name {
   font-weight: 650;
+  /* Same size as the mockup's app name; tokens.css has no app-name token. */
   font-size: var(--dn-text-h);
 }
 .dn-about-head {
@@ -202,6 +203,18 @@
 .dn-about-link:focus-visible {
   outline: none;
   box-shadow: var(--dn-focus-ring);
+}
+/* Read by screen readers, invisible on screen. */
+.dn-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 .dn-about-hint {
   font-size: var(--dn-text-xs);

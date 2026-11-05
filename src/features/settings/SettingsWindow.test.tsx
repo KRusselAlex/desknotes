@@ -271,6 +271,28 @@ describe("SettingsWindow", () => {
       expect(screen.getAllByText("opens browser")).toHaveLength(3);
     });
 
+    it("ties each browser hint to its link as the description, leaving the names alone", async () => {
+      await openAbout();
+      for (const name of ["Source code on GitHub", "Report a problem or suggest an idea", "More free open-source tools by Alex"]) {
+        const link = screen.getByRole("button", { name });
+        expect(link).toHaveAccessibleName(name);
+        expect(link).toHaveAccessibleDescription("opens browser");
+      }
+    });
+
+    it("announces Copied in a polite live region, empty otherwise", async () => {
+      stubClipboard(vi.fn().mockResolvedValue(undefined));
+      await openAbout();
+      const status = screen.getByRole("status");
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(status).toBeEmptyDOMElement();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await act(async () => screen.getByRole("button", { name: "Copy" }).click());
+      expect(status).toHaveTextContent("Copied");
+      act(() => void vi.advanceTimersByTime(2000));
+      expect(status).toBeEmptyDOMElement();
+    });
+
     it("copies the version and OS name, and says Copied for 2 s", async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       stubClipboard(writeText);
