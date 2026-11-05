@@ -95,24 +95,45 @@
   content: "";
   height: var(--dn-header-h);
 }
-/* Next the Read-only chip drops its word (measured: readOnlyWord.ts) and becomes a 24 px
-   circle, like the on pin; the word stays for screen readers. Only then, as a last resort,
-   the reminder chip shrinks. */
+/* Next the Read-only chip drops its word and becomes a 24 px circle, like the on pin; the
+   word stays for screen readers, so its name and tooltip stay "Read-only". By fixed widths,
+   not measured (a note is its own window, so the viewport is the note), so it cannot flip:
+   - locked with a reminder: below 360 px (with the word, the longest label "24 Nov 2027"
+     needs 347 px; "Tue 14:58" 331 px; "14:58" 308 px, measured in the preview);
+   - any locked note: below 260 px, the NARROW width (240 px needed without a reminder).
+   Only then, as a last resort, the reminder chip shrinks. */
 .dn-readonly-chip {
   flex: none;
 }
-.dn-readonly-chip.is-icon-only {
-  width: 24px;
-  padding: 0;
-  justify-content: center;
+@media (max-width: 359px) {
+  .dn-note.has-readonly-reminder .dn-readonly-chip {
+    width: 24px;
+    padding: 0;
+    justify-content: center;
+  }
+  .dn-note.has-readonly-reminder .dn-readonly-chip .dn-chip-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
-.dn-readonly-chip.is-icon-only .dn-chip-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+@media (max-width: 259px) {
+  .dn-note.is-readonly .dn-readonly-chip {
+    width: 24px;
+    padding: 0;
+    justify-content: center;
+  }
+  .dn-note.is-readonly .dn-readonly-chip .dn-chip-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 .dn-reminder-chip {
   min-width: 0;

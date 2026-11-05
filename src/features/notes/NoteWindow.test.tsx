@@ -1002,13 +1002,29 @@ describe("NoteWindow", () => {
       expect(date).toMatch(/flex-wrap:\s*wrap;/);
       expect(date).toMatch(/overflow:\s*clip;/);
       expect(block(".dn-note-controls > .dn-note-date::before")).toMatch(/height:\s*var\(--dn-header-h\);/);
-      // Next the Read-only chip drops its word (measured, see the test below): it never
-      // shrinks itself, and icon-only it is a 24 px circle whose word stays for screen readers.
+      // Next the Read-only chip drops its word, by fixed widths (a note is its own window, so
+      // the viewport is the note): below 360 px when locked with a reminder (the longest label,
+      // "24 Nov 2027", needs 347 px with the word), below 260 px (NARROW) for any locked note
+      // (240 px needed). It never shrinks itself; icon-only it is a 24 px circle whose word
+      // stays for screen readers. No measuring, so nothing can flip back and forth.
       expect(block(".dn-readonly-chip")).toMatch(/flex:\s*none;/);
-      const iconOnly = block(".dn-readonly-chip.is-icon-only");
-      expect(iconOnly).toMatch(/width:\s*24px;/);
-      expect(iconOnly).toMatch(/padding:\s*0;/);
-      expect(block(".dn-readonly-chip.is-icon-only .dn-chip-text")).toMatch(/clip-path:\s*inset\(50%\);/);
+      expect(css).not.toMatch(/is-icon-only/);
+      const media = (max: number, scope: string) => {
+        const at = css.indexOf(`@media (max-width: ${max}px) {\n  ${scope} .dn-readonly-chip`);
+        expect(at, `@media (max-width: ${max}px)`).toBeGreaterThan(-1);
+        return css.slice(at, css.indexOf("\n}\n", at));
+      };
+      for (const [max, scope] of [
+        [359, ".dn-note.has-readonly-reminder"],
+        [259, ".dn-note.is-readonly"],
+      ] as const) {
+        const rules = media(max, scope);
+        const chip = new RegExp(`${scope.replace(/\./g, "\\.")} \\.dn-readonly-chip\\s*\\{([^}]*)\\}`).exec(rules)?.[1];
+        expect(chip, `${max}: chip`).toMatch(/width:\s*24px;/);
+        expect(chip, `${max}: chip`).toMatch(/padding:\s*0;/);
+        const word = new RegExp(`${scope.replace(/\./g, "\\.")} \\.dn-readonly-chip \\.dn-chip-text\\s*\\{([^}]*)\\}`).exec(rules)?.[1];
+        expect(word, `${max}: word`).toMatch(/clip-path:\s*inset\(50%\);/);
+      }
       // Only as a last resort the reminder chip shrinks (ellipsis); nothing takes that back.
       expect(block(".dn-reminder-chip")).toMatch(/min-width:\s*0;/);
       expect(block(".dn-reminder-chip")).toMatch(/flex-shrink:\s*1;/);
@@ -1023,35 +1039,25 @@ describe("NoteWindow", () => {
       expect(screen.getByRole("button", { name: /Read-only/ }).querySelector(".dn-chip-text")).toHaveTextContent("Read-only");
     });
 
-    it("drops the Read-only word, not the reminder time, when the header is short (locked + reminder)", async () => {
-      const r = view();
-      vi.mocked(commands.getReminder).mockResolvedValue(r);
-      // jsdom does no layout: the header reports content 12 px wider than itself.
-      const header = (el: Element) => el.classList.contains("dn-note-header");
-      const sw = vi.spyOn(Element.prototype, "scrollWidth", "get").mockImplementation(function (this: Element) {
-        return header(this) ? 312 : 0;
-      });
-      const cw = vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
-        return header(this) ? 300 : 0;
-      });
-      try {
-        await openNote({ editLocked: true });
-        const reminderChip = await screen.findByRole("button", { name: /^Reminder / });
-        const readOnly = screen.getByRole("button", { name: "Read-only" });
-        await waitFor(() => expect(readOnly).toHaveClass("is-icon-only"));
-        expect(readOnly).toHaveAttribute("title", "Read-only. Click to allow editing.");
-        expect(reminderChip).toHaveTextContent(hhmm(r.dueAt));
-      } finally {
-        sw.mockRestore();
-        cw.mockRestore();
-      }
-    });
-
-    it("keeps the Read-only word when the header has room", async () => {
+    it("marks the note has-readonly-reminder only while it is locked and has a reminder", async () => {
+      const root = (c: HTMLElement) => c.querySelector(".dn-note")!;
       vi.mocked(commands.getReminder).mockResolvedValue(view());
-      await openNote({ editLocked: true });
+      const both = await openNote({ editLocked: true });
       await screen.findByRole("button", { name: /^Reminder / });
-      expect(screen.getByRole("button", { name: "Read-only" })).not.toHaveClass("is-icon-only");
+      expect(root(both.container)).toHaveClass("has-readonly-reminder");
+      // The word stays in the DOM, so the chip's name and tooltip stay "Read-only".
+      expect(screen.getByRole("button", { name: "Read-only" })).toHaveAttribute("title", "Read-only. Click to allow editing.");
+      both.unmount();
+
+      const reminderOnly = await openNote();
+      await screen.findByRole("button", { name: /^Reminder / });
+      expect(root(reminderOnly.container)).not.toHaveClass("has-readonly-reminder");
+      reminderOnly.unmount();
+
+      vi.mocked(commands.getReminder).mockResolvedValue(null);
+      const lockedOnly = await openNote({ editLocked: true });
+      await waitFor(() => expect(commands.getReminder).toHaveBeenCalled());
+      expect(root(lockedOnly.container)).not.toHaveClass("has-readonly-reminder");
     });
 
     it("hides the chip at narrow widths, with the date", async () => {
