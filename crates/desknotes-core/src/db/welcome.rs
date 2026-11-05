@@ -148,6 +148,77 @@ mod tests {
         assert!(all_note_ids(&db).is_empty());
     }
 
+    /// Same connection: `created_new` is still true and the table is empty again,
+    /// so only the `first_run_done` flag can refuse a second welcome note.
+    #[test]
+    fn flag_alone_refuses_a_second_welcome() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = open(&dir.path().join("desknotes.db"));
+        let note = db.create_welcome_note().unwrap().expect("a new database");
+        db.trash_note(&note.id).unwrap();
+        db.purge_note(&note.id).unwrap();
+        assert!(all_note_ids(&db).is_empty());
+        assert!(db.was_created_new());
+
+        assert!(db.create_welcome_note().unwrap().is_none());
+        assert_eq!(
+            db.get_setting(FIRST_RUN_DONE).unwrap().as_deref(),
+            Some("1")
+        );
+        assert!(all_note_ids(&db).is_empty(), "nothing was written");
+    }
+
+    #[test]
+    fn flag_set_on_an_empty_new_database_gives_no_welcome() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(FIRST_RUN_DONE, "1").unwrap();
+        assert!(db.was_created_new());
+        assert!(db.create_welcome_note().unwrap().is_none());
+        assert!(all_note_ids(&db).is_empty());
+    }
+
+    /// "Any note" means any state: archived, in the trash and completed notes count.
+    #[test]
+    fn a_note_in_any_state_blocks_the_welcome() {
+        type PutInState = fn(&Database, &str);
+        let states: [(&str, PutInState); 4] = [
+            ("active", |_, _| {}),
+            ("archived", |db, id| db.set_archived(id, true).unwrap()),
+            ("trashed", |db, id| db.trash_note(id).unwrap()),
+            ("completed", |db, id| db.set_completed(id, true, 1).unwrap()),
+        ];
+        for (name, put_in_state) in states {
+            let db = Database::open_in_memory().unwrap();
+            let note = db.create_note(None).unwrap();
+            put_in_state(&db, &note.id);
+            assert!(db.was_created_new(), "{name}");
+            assert!(db.create_welcome_note().unwrap().is_none(), "{name}");
+            assert_eq!(db.get_setting(FIRST_RUN_DONE).unwrap(), None, "{name}");
+            assert_eq!(all_note_ids(&db), vec![note.id], "{name}");
+        }
+    }
+
+    /// If the flag cannot be written, the note is not kept either.
+    #[test]
+    fn a_failed_flag_write_rolls_the_note_back() {
+        let db = Database::open_in_memory().unwrap();
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER refuse_flag BEFORE INSERT ON settings \
+                 WHEN NEW.key = 'first_run_done' BEGIN SELECT RAISE(ABORT, 'no'); END;",
+            )
+            .unwrap();
+
+        assert!(db.create_welcome_note().is_err());
+        assert!(all_note_ids(&db).is_empty(), "the note was rolled back");
+        assert_eq!(db.get_setting(FIRST_RUN_DONE).unwrap(), None);
+        let windows: i64 = db
+            .conn
+            .query_row("SELECT count(*) FROM note_windows", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(windows, 0);
+    }
+
     #[test]
     fn existing_database_gets_no_welcome() {
         let dir = tempfile::tempdir().unwrap();
@@ -192,6 +263,41 @@ mod tests {
         for child in node["content"].as_array().into_iter().flatten() {
             collect(child, nodes, marks, lines);
         }
+    }
+
+    /// Each paragraph's text runs, with bold runs wrapped in `**`.
+    fn render_marked(doc: &Value) -> Vec<String> {
+        doc["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|para| {
+                assert_eq!(para["type"], "paragraph");
+                para["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|run| {
+                        let text = run["text"].as_str().unwrap();
+                        let bold = run["marks"]
+                            .as_array()
+                            .is_some_and(|m| m.iter().any(|m| m["type"] == "bold"));
+                        if bold {
+                            format!("**{text}**")
+                        } else {
+                            text.to_string()
+                        }
+                    })
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn welcome_content_bolds_exactly_the_right_phrases() {
+        let db = Database::open_in_memory().unwrap();
+        let note = db.create_welcome_note().unwrap().expect("a new database");
+        assert_eq!(render_marked(&note.content), LINES);
     }
 
     #[test]
