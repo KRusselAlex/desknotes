@@ -30,6 +30,40 @@ pub fn select_display_backend() {
     }
 }
 
+/// The `PRETTY_NAME` line of an os-release file, without quotes. `None` when
+/// absent or empty.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn parse_pretty_name(os_release: &str) -> Option<String> {
+    os_release
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches(['"', '\'']).trim().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
+/// A readable name of the operating system, for the About window.
+pub fn os_name() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/etc/os-release")
+            .ok()
+            .and_then(|text| parse_pretty_name(&text))
+            .unwrap_or_else(|| "Linux".to_owned())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Windows".to_owned()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macOS".to_owned()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        std::env::consts::OS.to_owned()
+    }
+}
+
 /// Whether this session lets the app set and read global window positions.
 pub fn window_positioning_supported() -> bool {
     #[cfg(target_os = "linux")]
@@ -79,8 +113,30 @@ fn data_dir_from(
 
 #[cfg(test)]
 mod tests {
-    use super::data_dir_from;
+    use super::{data_dir_from, parse_pretty_name};
     use std::path::PathBuf;
+
+    #[test]
+    fn pretty_name_is_read_quoted_or_unquoted() {
+        let quoted = "NAME=\"Ubuntu\"\nVERSION=\"24.04.1 LTS (Noble Numbat)\"\nPRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\n";
+        assert_eq!(
+            parse_pretty_name(quoted).as_deref(),
+            Some("Ubuntu 24.04.1 LTS")
+        );
+        assert_eq!(
+            parse_pretty_name("ID=arch\nPRETTY_NAME=Arch Linux\n").as_deref(),
+            Some("Arch Linux")
+        );
+        assert_eq!(
+            parse_pretty_name("PRETTY_NAME='Debian GNU/Linux 12'\n").as_deref(),
+            Some("Debian GNU/Linux 12")
+        );
+        assert_eq!(parse_pretty_name("NAME=Ubuntu\nID=ubuntu\n"), None);
+        assert_eq!(parse_pretty_name("PRETTY_NAME=\"\"\n"), None);
+        assert_eq!(parse_pretty_name(""), None);
+        // A longer key that merely starts with the same letters is not it.
+        assert_eq!(parse_pretty_name("PRETTY_NAME_X=\"no\"\n"), None);
+    }
 
     #[test]
     fn data_dir_follows_xdg_like_tauri() {

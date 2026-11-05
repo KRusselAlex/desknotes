@@ -41,6 +41,7 @@ const settings = {
   minNoteSize: { width: 180, height: 120 },
   appAppearance: { highContrast: false, layout: "comfortable" as const, defaultFont: null, defaultSize: 15 },
   version: "0.1.0",
+  osName: "Ubuntu 24.04 LTS",
   dataDir: "/home/me/.local/share/io.github.krusselalex.desknotes",
   lastBackupAt: null,
 };

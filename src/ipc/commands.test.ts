@@ -18,3 +18,15 @@ describe("setNoteCompleted", () => {
     expect(invoke).toHaveBeenLastCalledWith("set_note_completed", { id: "n1", done: false });
   });
 });
+
+describe("openExternalLink", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(null);
+  });
+
+  it("calls open_external_link with the link id only, never a URL", async () => {
+    await commands.openExternalLink("notices");
+    expect(invoke).toHaveBeenCalledWith("open_external_link", { id: "notices" });
+  });
+});

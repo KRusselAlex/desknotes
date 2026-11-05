@@ -131,6 +131,8 @@ export interface SettingsView {
   minNoteSize: NoteSize;
   appAppearance: AppAppearance;
   version: string;
+  /** Readable OS name for the About window, e.g. "Ubuntu 24.04.1 LTS". */
+  osName: string;
   dataDir: string;
   /** Last successful export, Unix ms. */
   lastBackupAt: number | null;
@@ -201,4 +203,7 @@ export interface RecoveryChange {
 
 /** Settings sections another window may open Settings at (Rust `SETTINGS_SECTIONS`).
  * "privacy-new-pin" opens Privacy at "choose a new PIN", after a forgotten-PIN proof. */
+/** The fixed links of the About window. Rust maps each id to its address. */
+export type AboutLink = "source" | "issues" | "more_tools" | "notices" | "license";
+
 export type SettingsSection = "general" | "appearance" | "privacy" | "privacy-new-pin" | "backup" | "about";
