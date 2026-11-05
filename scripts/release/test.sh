@@ -140,9 +140,12 @@ expect_ok   "section is printed" "- Thing two." bash "$SECTION" 0.3.0 "$CL"
 expect_ok   "section includes its Database line" "Database: migrations 4–7" bash "$SECTION" 0.3.0 "$CL"
 expect_ok   "section includes later subheadings" "### Fixed" bash "$SECTION" 0.3.0 "$CL"
 
-out="$(bash "$SECTION" 0.3.0 "$CL" || true)"
-if [[ "$out" == *"Old thing"* || "$out" == *"Something not released"* || "$out" == *"## ["* ]]; then
-  bad "section stops at the next version heading" "$out"
+rc=0
+out="$(bash "$SECTION" 0.3.0 "$CL" 2>/dev/null)" || rc=$?
+if [[ "$rc" -ne 0 ]]; then bad "section stops at the next version heading" "exit $rc"
+elif [[ "$out" != *"- Thing two."* || "$out" != *"A bug."* ]]; then bad "section stops at the next version heading" "own text missing: $out"
+elif [[ "$out" == *"Old thing"* || "$out" == *"Something not released"* || "$out" == *"Forgot the Database"* || "$out" == *"## ["* ]]; then
+  bad "section stops at the next version heading" "other sections leaked: $out"
 else ok "section stops at the next version heading"; fi
 
 out="$(bash "$SECTION" 0.2.0 "$CL" || true)"
@@ -159,6 +162,18 @@ expect_fail "missing arguments print usage" "usage" bash "$SECTION" 0.3.0
 # 0.3 must not match 0.3.0 by prefix; dots are literal.
 expect_fail "version is matched exactly, not by prefix" "no section for 0.3" bash "$SECTION" 0.3 "$CL"
 expect_fail "dots are literal" "no section for 0x3x0" bash "$SECTION" 0x3x0 "$CL"
+
+# Look-alike headings must not satisfy a request for 0.2.0.
+cat > "$TMP/lookalike.md" <<'MD'
+## [0.2.01] — 2026-01-01
+
+Database: No database change.
+
+## [10.2.0] — 2026-01-02
+
+Database: No database change.
+MD
+expect_fail "look-alike headings (0.2.01, 10.2.0) do not satisfy 0.2.0" "no section for 0.2.0" bash "$SECTION" 0.2.0 "$TMP/lookalike.md"
 
 # A Database line mentioned only inside prose must not count; it must start the line.
 cat > "$TMP/inline.md" <<'MD'
