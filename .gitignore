@@ -14,6 +14,8 @@ coverage/
 *.sqlite3
 backups/
 !tests/fixtures/**
+# Release fixtures: databases written by past releases, used by the upgrade test
+!crates/desknotes-core/tests/fixtures/release-*.db
 
 # Secrets and machine-specific config
 .env

@@ -8,11 +8,11 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use desknotes_core::{Database, now_ms};
+use desknotes_core::{CoreError, Database, now_ms};
 
 use crate::platform::system_auth::{ask_system_password, system_auth_available};
 use crate::platform::{single_instance, user_data_dir};
-use crate::state::{BACKUP_DIR, DB_FILE};
+use crate::state::{BACKUP_DIR, DB_FILE, startup_message};
 
 pub const RESET_PIN_ARG: &str = "--reset-pin";
 
@@ -21,6 +21,16 @@ pub const RESET_PIN_ARG: &str = "--reset-pin";
 pub const APP_IDENTIFIER: &str = "io.github.krusselalex.desknotes";
 
 const NOTHING_CHANGED: &str = "Nothing was changed.";
+
+/// The message when the notes database cannot be opened. A database from a
+/// newer DeskNotes gets the same plain message as at start-up, which already
+/// says nothing was changed; every other failure keeps this command's wording.
+fn open_error(e: &CoreError) -> String {
+    match e {
+        CoreError::SchemaTooNew { .. } => startup_message(e),
+        other => format!("The notes database could not be opened: {other}. {NOTHING_CHANGED}"),
+    }
+}
 
 /// Whether the command line asks for the reset (the program name is skipped).
 pub fn requested(args: impl IntoIterator<Item = OsString>) -> bool {
@@ -75,8 +85,7 @@ fn reset() -> Result<String, String> {
             db_path.display()
         ));
     }
-    let db = Database::open(&db_path, &backup_dir)
-        .map_err(|e| format!("The notes database could not be opened: {e}. {NOTHING_CHANGED}"))?;
+    let db = Database::open(&db_path, &backup_dir).map_err(|e| open_error(&e))?;
     let pin_set = db
         .pin_is_set()
         .map_err(|e| format!("The PIN setting could not be read: {e}. {NOTHING_CHANGED}"))?;
@@ -128,7 +137,28 @@ fn reset() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{APP_IDENTIFIER, RESET_PIN_ARG, requested};
+    use super::{APP_IDENTIFIER, NOTHING_CHANGED, RESET_PIN_ARG, open_error, requested};
+    use crate::state::startup_message;
+    use desknotes_core::CoreError;
+
+    #[test]
+    fn newer_database_gets_the_plain_message_without_nothing_changed() {
+        let newer = CoreError::SchemaTooNew {
+            found: 9,
+            supported: 4,
+        };
+        assert_eq!(open_error(&newer), startup_message(&newer));
+        assert!(!open_error(&newer).contains(NOTHING_CHANGED));
+    }
+
+    #[test]
+    fn other_open_errors_keep_this_commands_wording() {
+        let other = CoreError::NotAllowed("refusing to overwrite".into());
+        assert_eq!(
+            open_error(&other),
+            format!("The notes database could not be opened: {other}. {NOTHING_CHANGED}")
+        );
+    }
 
     #[test]
     fn identifier_matches_the_tauri_config() {

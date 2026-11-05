@@ -39,6 +39,10 @@ impl Database {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        // Refuse before changing anything on disk: switching to WAL rewrites the
+        // file header, and a newer database must keep its exact bytes.
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        refuse_if_newer(version)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, Some(backup_dir))
@@ -58,12 +62,7 @@ impl Database {
             kept_open: RefCell::new(HashSet::new()),
         };
         let version = db.schema_version()?;
-        if version > LATEST_VERSION {
-            return Err(CoreError::SchemaTooNew {
-                found: version,
-                supported: LATEST_VERSION,
-            });
-        }
+        refuse_if_newer(version)?;
         if version > 0
             && version < LATEST_VERSION
             && let Some(dir) = backup_dir
@@ -185,6 +184,17 @@ impl Database {
     }
 }
 
+/// A database written by a newer DeskNotes is never opened or changed.
+fn refuse_if_newer(version: i64) -> CoreResult<()> {
+    if version > LATEST_VERSION {
+        return Err(CoreError::SchemaTooNew {
+            found: version,
+            supported: LATEST_VERSION,
+        });
+    }
+    Ok(())
+}
+
 fn pre_migration_path(dir: &Path, from_version: i64) -> PathBuf {
     dir.join(format!(
         "pre-migration-v{from_version}-{}.db",
@@ -232,6 +242,57 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, LATEST_VERSION + 1);
+    }
+
+    /// Write a database that claims a newer schema, optionally in `journal_mode`
+    /// first, and return its bytes. The connection is closed, so WAL is checkpointed.
+    fn write_newer_database(path: &Path, journal_mode: Option<&str>) -> Vec<u8> {
+        {
+            let conn = Connection::open(path).unwrap();
+            if let Some(mode) = journal_mode {
+                conn.pragma_update(None, "journal_mode", mode).unwrap();
+            }
+            conn.pragma_update(None, "user_version", LATEST_VERSION + 1)
+                .unwrap();
+        }
+        std::fs::read(path).unwrap()
+    }
+
+    /// The open is refused with `schema_too_new`, the file keeps its bytes, and the
+    /// folder holds nothing but the database (no -wal, -shm, -journal or backups).
+    fn assert_refused_and_untouched(dir: &Path, before: &[u8]) {
+        let path = dir.join("desknotes.db");
+        let err = Database::open(&path, &dir.join("backups")).err().unwrap();
+        assert_eq!(err.code(), "schema_too_new");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "a database from a newer version must keep its exact bytes"
+        );
+        let names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["desknotes.db".to_string()],
+            "only the database may be in the folder"
+        );
+    }
+
+    #[test]
+    fn newer_database_message_and_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = write_newer_database(&dir.path().join("desknotes.db"), None);
+        assert_refused_and_untouched(dir.path(), &before);
+    }
+
+    #[test]
+    fn newer_wal_database_is_refused_and_untouched() {
+        // Real DeskNotes databases are in WAL mode, so this is the realistic case.
+        let dir = tempfile::tempdir().unwrap();
+        let before = write_newer_database(&dir.path().join("desknotes.db"), Some("WAL"));
+        assert_refused_and_untouched(dir.path(), &before);
     }
 
     #[test]

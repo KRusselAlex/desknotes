@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use desknotes_core::{CoreResult, Database, now_ms};
+use desknotes_core::{CoreError, CoreResult, Database, now_ms};
 use tauri::{AppHandle, Manager};
 
 use crate::error::{IpcError, IpcResult};
@@ -41,6 +41,18 @@ pub struct PendingRestore {
     pub backup: desknotes_core::backup::Backup,
 }
 
+/// The plain message shown when a database was saved by a newer DeskNotes.
+const NEWER_DATABASE_MESSAGE: &str = "Your notes were saved by a newer version of DeskNotes. Install that version (or newer) to open them; nothing was changed.";
+
+/// What the manager shows when the notes database cannot be opened at startup.
+/// Never includes note text.
+pub fn startup_message(e: &CoreError) -> String {
+    match e {
+        CoreError::SchemaTooNew { .. } => NEWER_DATABASE_MESSAGE.to_string(),
+        other => format!("The notes database could not be opened: {other}"),
+    }
+}
+
 impl AppState {
     pub fn open(app: &AppHandle) -> Self {
         let mut errors = Vec::new();
@@ -48,7 +60,7 @@ impl AppState {
             Ok(dir) => match Database::open(&dir.join(DB_FILE), &dir.join(BACKUP_DIR)) {
                 Ok(db) => Some(db),
                 Err(e) => {
-                    errors.push(format!("The notes database could not be opened: {e}"));
+                    errors.push(startup_message(&e));
                     None
                 }
             },
@@ -127,5 +139,28 @@ impl AppState {
             .lock()
             .map(|e| e.clone())
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_database_message() {
+        let newer = CoreError::SchemaTooNew {
+            found: 9,
+            supported: 4,
+        };
+        assert_eq!(
+            startup_message(&newer),
+            "Your notes were saved by a newer version of DeskNotes. Install that version (or newer) to open them; nothing was changed."
+        );
+
+        let other = CoreError::NotAllowed("refusing to overwrite".into());
+        assert_eq!(
+            startup_message(&other),
+            format!("The notes database could not be opened: {other}")
+        );
     }
 }

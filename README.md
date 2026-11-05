@@ -30,12 +30,13 @@ See [docs/design.md](docs/design.md) for the full design and milestone plan, and
 Everything is stored locally in one SQLite file in the operating system's
 application-data directory (on Linux: `~/.local/share/io.github.krusselalex.desknotes/`).
 DeskNotes makes no network requests. Before a database upgrade, a copy is saved in
-the `backups/` folder next to it.
+the `backups/` folder next to it. How to upgrade, and how to go back to an older version,
+is in [docs/upgrading.md](docs/upgrading.md).
 
 ## Installing (for users)
 
-No release has been published yet. When it is, download `DeskNotes_<version>_amd64.deb`
-from the [releases page](https://github.com/KRusselAlex/desknotes/releases) and run:
+Download `DeskNotes_<version>_amd64.deb` from the
+[releases page](https://github.com/KRusselAlex/desknotes/releases) and run:
 
 ```bash
 sudo apt install ./DeskNotes_<version>_amd64.deb
@@ -46,8 +47,11 @@ sudo apt install ./DeskNotes_<version>_amd64.deb
 - Start it from the applications menu. Remove it with `sudo apt remove desk-notes`;
   your notes stay in `~/.local/share/io.github.krusselalex.desknotes/`.
 - **Other Linux distributions:** download `DeskNotes_<version>_amd64.AppImage` (about
-  80 MB, it carries its own WebKitGTK), make it executable and run it. On Ubuntu 22.04
-  and later AppImages need `sudo apt install libfuse2t64` first.
+  80 MB, it carries its own WebKitGTK), make it executable and run it. AppImages need the
+  FUSE 2 library first: `sudo apt install libfuse2` on Ubuntu 22.04, `libfuse2t64` on
+  Ubuntu 24.04 and later.
+- To upgrade, install the newer file the same way. To go back to an older version, see
+  [docs/upgrading.md](docs/upgrading.md).
 - Windows and macOS packages will follow once those platforms are built and tested.
 
 Users never need Rust, Node.js or the `-dev` packages below: those are only for

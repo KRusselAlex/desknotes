@@ -3,34 +3,59 @@ name: Packages
 # Builds the Linux packages (.deb and AppImage).
 # - On pull requests that change packaging: build and keep the files as workflow
 #   artifacts, so packages can be tested before a release.
-# - On a version tag (for example v0.2.0): build and attach the files to a DRAFT
-#   GitHub release. Nothing is published until a maintainer clicks "Publish release".
+# - On a version tag: build and attach the files to a DRAFT GitHub release. Nothing is
+#   published until a maintainer clicks "Publish release". Nothing here ever deletes,
+#   edits or overwrites a release.
+#     vX.Y.Z         a normal draft
+#     vX.Y.Z-beta.N  a draft marked "pre-release" (any other tag form is refused)
+#   A tag is refused unless it matches the version in tauri.conf.json exactly, its commit
+#   is on main, and CHANGELOG.md has a section for the version with a "Database:" line.
+#   That section becomes the release body. The tests and checks below must pass first.
+#   The checks live in scripts/release/ (tested by scripts/release/test.sh).
 on:
   pull_request:
     paths:
       - ".github/workflows/release.yml"
       - "src-tauri/tauri.conf.json"
       - "src-tauri/icons/**"
+      - "scripts/release/**"
   push:
     tags: ["v*.*.*"]
 
 permissions:
   contents: read
 
+# Every run step uses `bash -eo pipefail`. Without a shell: line GitHub runs `bash -e`,
+# where a failure inside a pipe is hidden by the last command of the pipe.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     name: Build .deb and AppImage
     runs-on: ubuntu-24.04
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
+      # Full history: the on-main check needs it (a shallow clone cannot answer).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Tag must match the app version
+      - name: Check the release tag
+        id: tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          version=$(jq -r .version src-tauri/tauri.conf.json)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match version $version in tauri.conf.json"; exit 1
-          fi
+          git fetch --no-tags origin main
+          # No pipe: a refused tag must stop the run (set -e stops on a failed assignment).
+          out=$(scripts/release/check-tag.sh "$GITHUB_REF_NAME" src-tauri/tauri.conf.json origin/main)
+          echo "$out"
+          echo "$out" >> "$GITHUB_OUTPUT"
+
+      - name: CHANGELOG must have a section for this version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: scripts/release/changelog-section.sh "${GITHUB_REF_NAME#v}" CHANGELOG.md > /dev/null
 
       - name: System packages for Tauri
         run: |
@@ -44,12 +69,23 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
 
-      - name: Tests
+      # The full gate: the same checks as a pull request, before anything is built.
+      - name: Release scripts tests
+        run: bash scripts/release/test.sh
+      - name: Frontend lint, types and tests
         run: |
+          npm run lint
+          npm run typecheck
           npm test
+      - name: Rust format, clippy and tests
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
 
       # The AppImage tool (linuxdeploy) is downloaded by the Tauri bundler on this
@@ -65,7 +101,9 @@ jobs:
         run: |
           mkdir dist-packages
           cp target/release/bundle/deb/*.deb target/release/bundle/appimage/*.AppImage dist-packages/
-          cd dist-packages && sha256sum * > SHA256SUMS && ls -la
+          cd dist-packages
+          sha256sum * > SHA256SUMS
+          ls -la
 
       - uses: actions/upload-artifact@v4
         with:
@@ -79,16 +117,37 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: write # create the draft release
+      id-token: write # sign the provenance statement
+      attestations: write # store it
     steps:
+      # The checkout is only for CHANGELOG.md and scripts/release/.
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: desknotes-linux-packages
           path: dist-packages
+
+      - name: Release notes from CHANGELOG.md
+        run: scripts/release/changelog-section.sh "${GITHUB_REF_NAME#v}" CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+
+      # Provenance: a signed statement that these exact files were built by this workflow
+      # from this commit. Verify a download with: gh attestation verify FILE --repo OWNER/REPO
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist-packages/*
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
+          flags=()
+          case "$PRERELEASE" in
+            true) flags+=(--prerelease) ;;
+            false) ;;
+            *) echo "prerelease output is '$PRERELEASE', expected true or false"; exit 1 ;;
+          esac
           gh release create "$GITHUB_REF_NAME" dist-packages/* \
-            --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
-            --title "DeskNotes $GITHUB_REF_NAME" --generate-notes
+            --repo "$GITHUB_REPOSITORY" --draft --verify-tag "${flags[@]}" \
+            --title "DeskNotes $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"

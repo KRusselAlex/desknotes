@@ -6,6 +6,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+Database: migrations 4–7 (private notes, appearance, reminders, completed notes); backup format 5. A copy is made before upgrading.
+
 ### Added
 - Private notes with a privacy lock (Milestone 3): mark a note private from its ⋯ menu,
   with an optional label. A 6-digit PIN (Settings → Privacy) locks every private note; a
@@ -44,19 +46,28 @@ All notable changes are documented here. The format follows
   for 5 seconds, then the note leaves the desktop. The manager's Completed tab lists done
   notes with when they were done, Reopen and Move to trash; Reopen puts the note back where
   it was. Reminders on done notes don't fire. Backups keep the done date (backup format 5).
+- Upgrade test with a real 0.2.0 database; plain message when notes come from a newer
+  DeskNotes (also in Forgot PIN).
+- Releasing and upgrading guides (`docs/releasing.md`, `docs/upgrading.md`), including how
+  to roll back to an older version.
 
 ### Changed
 - The note's ⋯ menu is shorter: a row of New, Duplicate, On top and Lock at the top (pressed
   ones are shaded), then the rest of the list; "Private" opens its own short list in place.
   It fits a default-size note.
 - Settings opens at a given section from other windows (for example Privacy).
+- Release workflow: tags must be on main, full checks before building, beta tags make
+  pre-releases, release notes come from this file, packages get a provenance attestation.
 
 ### Fixed
 - A note with a reminder chip at 300 px wide no longer has a header wider than the window
   (which could shift the note sideways on a click); the date gives way first, then the
   "Read-only" word, so the reminder time stays whole.
+- A database from a newer DeskNotes is no longer modified when it is refused.
 
 ## [0.2.0] — 2026-11-02 — Milestone 2: desktop reliability
+
+Database: migration 3 (collapsed notes); backup format 1.
 
 ### Added
 - Keyboard shortcut to show / hide all notes (Settings → General). Ubuntu 24.04 has no
@@ -89,6 +100,8 @@ All notable changes are documented here. The format follows
   open fully on a screen, keeping their size.
 
 ## [0.1.0] — 2026-11-01 — Milestone 1: first usable version
+
+Database: migrations 1–2 (first version).
 
 ### Added
 - Note window and manager rebuilt from the Milestone 1 design: header controls on
