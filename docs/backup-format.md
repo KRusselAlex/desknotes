@@ -1,13 +1,13 @@
-# DeskNotes backup format (version 4)
+# DeskNotes backup format (version 5)
 
 A backup is one UTF-8 JSON file, usually named `desknotes-YYYY-MM-DD.json`. It holds
 every note — active, archived and in the trash — with its window state, its text and
-window styling, whether it is private, and its reminder. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
+window styling, whether it is private, its reminder, and when it was marked done. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
 
 ```json
 {
   "format": "desknotes-backup",
-  "version": 4,
+  "version": 5,
   "appVersion": "0.1.0",
   "exportedAt": 1793520000000,
   "notes": [
@@ -19,6 +19,7 @@ window styling, whether it is private, and its reminder. It holds no settings, n
       "updatedAt": 1793519000000,
       "archivedAt": null,
       "deletedAt": null,
+      "completedAt": null,
       "editLocked": false,
       "private": true,
       "privateLabel": "Bank",
@@ -64,6 +65,11 @@ window styling, whether it is private, and its reminder. It holds no settings, n
   the whole file (the error names the note). A reminder DeskNotes cannot read back from
   its own database is left out of an export.
 
+- `completedAt` (optional, default `null` = not done) is when the note was marked done,
+  Unix ms in UTC, 0 or more. A note keeps its `completedAt` while it is archived or in the
+  trash; it appears in the Completed list only when it is neither. A negative value
+  refuses the whole file (the error names the note).
+
 ## Versions
 
 | Version | Changes |
@@ -72,9 +78,10 @@ window styling, whether it is private, and its reminder. It holds no settings, n
 | 2 | Adds the optional `private` and `privateLabel` fields per note. |
 | 3 | Adds the optional `appearance` object per note. |
 | 4 | Adds the optional `reminder` object per note. |
+| 5 | Adds the optional `completedAt` per note (when it was marked done). |
 
-DeskNotes writes version 4 and still restores version 1, 2 and 3 files; their notes come
-back without reminders, version 1 and 2 notes with default appearance, and version 1
+DeskNotes writes version 5 and still restores version 1, 2, 3 and 4 files; their notes come
+back not done, version 1, 2 and 3 notes without reminders, version 1 and 2 notes with default appearance, and version 1
 notes also not private, with an empty label.
 
 ## Exporting

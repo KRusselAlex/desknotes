@@ -129,9 +129,11 @@ impl Database {
         Ok(row.flatten())
     }
 
-    /// Every readable reminder on a note that is not in the trash (archived included).
+    /// Every readable reminder on a note that is not in the trash and not done (archived
+    /// included). A done note's reminder is kept but never fires; after Reopen it is
+    /// overdue like one restored from the trash.
     fn live_reminders(&self) -> CoreResult<Vec<Reminder>> {
-        self.reminders_where("n.deleted_at IS NULL")
+        self.reminders_where("n.deleted_at IS NULL AND n.completed_at IS NULL")
     }
 
     /// Every readable reminder, trashed notes included, for a backup.
@@ -212,7 +214,7 @@ impl Database {
         Ok(())
     }
 
-    /// Reminders to notify now: on notes not in the trash (archived ones included), with
+    /// Reminders to notify now: on notes not in the trash and not done (archived ones included), with
     /// `effective_due <= now` and not already notified for that effective due time.
     /// Ordered by due time. Restoring a trashed note whose reminder passed makes it
     /// appear here once: it was never notified for that time.
@@ -325,7 +327,7 @@ impl Database {
     }
 
     /// When the scheduler should wake: the earliest time after `now` at which a reminder
-    /// on a note that is not in the trash is due. That is its effective due time, or for
+    /// on a note that is not in the trash and not done is due. That is its effective due time, or for
     /// a repeat that already fired for its effective due time, its next occurrence
     /// (ruling R5). `None` if nothing is coming. Reminders already due are handled by
     /// [`Database::due_reminders`], which the scheduler calls first.
@@ -410,7 +412,7 @@ impl Database {
         }))
     }
 
-    /// Every reminder on a note that is not in the trash (archived included), earliest
+    /// Every reminder on a note that is not in the trash and not done (archived included), earliest
     /// effective due first, for the manager's Reminders tab. `query` filters by title,
     /// case-insensitively and Unicode-aware (the way note search lowercases); a blank
     /// query lists all. While a private note is locked the query matches its neutral
@@ -424,7 +426,7 @@ impl Database {
             "SELECT {COLUMNS}, n.title, n.color, n.private, n.private_label,
                     n.archived_at IS NOT NULL
              FROM reminders r JOIN notes n ON n.id = r.note_id
-             WHERE n.deleted_at IS NULL"
+             WHERE n.deleted_at IS NULL AND n.completed_at IS NULL"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map([], |r| {
@@ -744,6 +746,54 @@ mod tests {
             db.next_wake(now(), &Paris).unwrap(),
             Some(ms(utc(2026, 11, 4, 13, 0)))
         );
+    }
+
+    #[test]
+    fn done_notes_do_not_fire() {
+        let (db, id) = db_with_note();
+        let r = set_one_off(&db, &id);
+        db.set_completed(&id, true, ms(now())).unwrap();
+        let after = utc(2026, 11, 4, 13, 30);
+        assert!(
+            db.due_reminders(after, &Paris).unwrap().is_empty(),
+            "a reminder that falls due while the note is done never fires"
+        );
+        assert_eq!(db.next_wake(now(), &Paris).unwrap(), None);
+        assert_eq!(db.reminder(&id).unwrap(), Some(r), "the rule is kept");
+
+        // After Reopen the past due time is overdue and fires once.
+        db.set_completed(&id, false, ms(after)).unwrap();
+        let rows = db.list_reminders("", after).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].overdue);
+        let due_now = db.due_reminders(after, &Paris).unwrap();
+        assert_eq!(due_now.len(), 1);
+        db.mark_fired(&id, due_now[0].effective_due()).unwrap();
+        assert!(db.due_reminders(after, &Paris).unwrap().is_empty());
+    }
+
+    #[test]
+    fn done_repeats_do_not_advance_or_wake_and_resume_after_reopen() {
+        let (db, id) = db_with_note();
+        db.set_reminder(&id, rule("2026-11-04", "14:00", "daily"), now(), &Paris)
+            .unwrap();
+        db.set_completed(&id, true, ms(now())).unwrap();
+        let later = utc(2026, 11, 6, 13, 30);
+        assert!(db.due_reminders(later, &Paris).unwrap().is_empty());
+        assert_eq!(db.next_wake(later, &Paris).unwrap(), None);
+        db.set_completed(&id, false, ms(later)).unwrap();
+        assert_eq!(db.due_reminders(later, &Paris).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn done_notes_not_in_list_reminders() {
+        let (db, id) = db_with_note();
+        set_one_off(&db, &id);
+        assert_eq!(db.list_reminders("", now()).unwrap().len(), 1);
+        db.set_completed(&id, true, ms(now())).unwrap();
+        assert!(db.list_reminders("", now()).unwrap().is_empty());
+        db.set_completed(&id, false, ms(now())).unwrap();
+        assert_eq!(db.list_reminders("", now()).unwrap().len(), 1);
     }
 
     #[test]
