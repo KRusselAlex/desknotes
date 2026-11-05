@@ -65,7 +65,7 @@ The script is deterministic: fixed ids and timestamps where the API allows them.
     - for every manifest note, compare title, content, colour, state and window;
     - compare the settings;
     - assert `schema_version() == LATEST_VERSION`;
-    - assert exactly one `pre-migration-v3-*` file exists and is byte-identical to the fixture.
+    - assert exactly one `pre-migration-v3-*` file exists and has the fixture's content: same `user_version`, schema SQL and rows. It is not byte-identical, because `VACUUM INTO` rewrites pages (ruling R1, decided during execution).
 - [ ] Run it. Expect FAIL: no fixture yet.
 - [ ] Write the script and run `scripts/release/make-fixture.sh v0.2.0`. Commit its output.
 - [ ] Run it again. Expect PASS.
