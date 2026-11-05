@@ -620,6 +620,7 @@ fn place_welcome_note(app: &AppHandle, state: &AppState) {
             }
         }
         Ok(None) => {}
+        Err(e) if e.code == crate::state::DATABASE_UNAVAILABLE => {} // already reported
         Err(e) => eprintln!(
             "DeskNotes: could not create the welcome note: {}",
             e.message

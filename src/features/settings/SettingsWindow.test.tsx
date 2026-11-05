@@ -11,6 +11,7 @@ vi.mock("../../ipc/commands", () => ({
     setAppAppearance: vi.fn(),
     listFonts: vi.fn().mockResolvedValue(["Atkinson Hyperlegible", "Fira Sans"]),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
+    openExternalLink: vi.fn().mockResolvedValue(undefined),
     setRecoveryMethod: vi.fn().mockResolvedValue({ check: { kind: "ok" }, recoveryCode: "K7QD-M2XP-9WTR-4HNB-C6JF-V8LZ" }),
     privacyStatus: vi.fn().mockResolvedValue({
       enabled: true,
@@ -140,9 +141,10 @@ describe("SettingsWindow", () => {
   it("shows version, data folder and the privacy statement in About", async () => {
     render(<SettingsWindow />);
     await userEvent.click(await screen.findByRole("button", { name: "About" }));
-    expect(screen.getByText(/version 0.1.0 · MIT license/)).toBeInTheDocument();
+    expect(screen.getByText("version 0.1.0")).toBeInTheDocument();
+    expect(screen.getByText(/MIT license/)).toBeInTheDocument();
     expect(screen.getByText(settings.dataDir)).toBeInTheDocument();
-    expect(screen.getByText("No data leaves this computer.")).toBeInTheDocument();
+    expect(screen.getByText(/No data leaves this computer\./)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open folder" }));
     expect(commands.openDataFolder).toHaveBeenCalled();
   });
@@ -214,6 +216,116 @@ describe("SettingsWindow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByText("Save your recovery code")).toBeNull();
+  });
+
+  describe("About", () => {
+    const openAbout = async () => {
+      window.history.replaceState(null, "", "/?section=about");
+      render(<SettingsWindow />);
+      window.history.replaceState(null, "", "/");
+      return screen.findByRole("heading", { name: "About" });
+    };
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const stubClipboard = (writeText: (text: string) => Promise<void>) =>
+      Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    afterEach(() => {
+      vi.useRealTimers();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as unknown as Record<string, unknown>).clipboard;
+    });
+
+    it("shows the header, purpose, credit, links, folder, privacy line and footer in that order", async () => {
+      await openAbout();
+      const about = document.querySelector(".dn-about") as HTMLElement;
+      const header = about.querySelector(".dn-about-head") as HTMLElement;
+      expect(header.querySelector("img")).toHaveAttribute("alt", "");
+      expect(header).toHaveTextContent("DeskNotes");
+      expect(header).toHaveTextContent("version 0.1.0");
+      expect(within(header).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+      expect(header).toHaveTextContent("MIT license");
+      const text = about.textContent ?? "";
+      const order = [
+        "DeskNotes",
+        "version 0.1.0",
+        "Copy",
+        "MIT license",
+        "Sticky notes for your desktop that work offline and keep everything on your computer.",
+        "Made by Alex (KRusselAlex) and DeskNotes contributors.",
+        "Source code on GitHub",
+        "Report a problem or suggest an idea",
+        "More free open-source tools by Alex",
+        "Your notes are stored in",
+        "Open folder",
+        "No data leaves this computer. The app never connects to the internet on its own.",
+        "Icons derived from Lucide (ISC).",
+        "Third-party notices",
+        "Licence text",
+      ];
+      let at = -1;
+      for (const part of order) {
+        const next = text.indexOf(part, at + 1);
+        expect(next, part).toBeGreaterThan(at);
+        at = next;
+      }
+      expect(screen.getByText("Alex", { selector: "strong" })).toBeInTheDocument();
+      expect(screen.getAllByText("opens browser")).toHaveLength(3);
+    });
+
+    it("copies the version and OS name, and says Copied for 2 s", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      stubClipboard(writeText);
+      await openAbout();
+      const copy = await screen.findByRole("button", { name: "Copy" });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await act(async () => {
+        copy.click();
+      });
+      expect(writeText).toHaveBeenCalledWith("DeskNotes 0.1.0 · Ubuntu 24.04 LTS");
+      expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(1999));
+      expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(1));
+      expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    });
+
+    it("says so when the clipboard refuses", async () => {
+      stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+      await openAbout();
+      await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Could not copy.");
+      expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    });
+
+    it("opens each fixed link by its id, only when clicked", async () => {
+      await openAbout();
+      expect(commands.openExternalLink).not.toHaveBeenCalled();
+      const cases: [string, string][] = [
+        ["Source code on GitHub", "source"],
+        ["Report a problem or suggest an idea", "issues"],
+        ["More free open-source tools by Alex", "more_tools"],
+        ["Third-party notices", "notices"],
+        ["Licence text", "license"],
+      ];
+      for (const [name, id] of cases) {
+        await userEvent.click(screen.getByRole("button", { name }));
+        expect(commands.openExternalLink).toHaveBeenLastCalledWith(id);
+      }
+      expect(commands.openExternalLink).toHaveBeenCalledTimes(5);
+    });
+
+    it("still opens the data folder", async () => {
+      await openAbout();
+      expect(screen.getByText(settings.dataDir)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Open folder" }));
+      expect(commands.openDataFolder).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows a refused link as the page error", async () => {
+      vi.mocked(commands.openExternalLink).mockRejectedValueOnce(new Error("Could not open the link."));
+      await openAbout();
+      await userEvent.click(screen.getByRole("button", { name: "Source code on GitHub" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Could not open the link.");
+    });
   });
 
   describe("Appearance", () => {

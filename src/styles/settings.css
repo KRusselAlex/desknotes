@@ -152,6 +152,64 @@
 }
 .dn-about-name {
   font-weight: 650;
+  font-size: var(--dn-text-h);
+}
+.dn-about-head {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.dn-about-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--dn-radius);
+  flex: none;
+}
+.dn-about-version {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--dn-text-sm);
+}
+.dn-about-version .dn-btn-outline {
+  height: 24px;
+  padding: 0 10px;
+  font-size: var(--dn-text-xs);
+}
+.dn-about-text {
+  margin: 0;
+}
+.dn-about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dn-about-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.dn-about-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--dn-accent-ink);
+  text-decoration: underline;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.dn-about-link:focus-visible {
+  outline: none;
+  box-shadow: var(--dn-focus-ring);
+}
+.dn-about-hint {
+  font-size: var(--dn-text-xs);
+  white-space: nowrap;
+}
+.dn-about-foot {
+  font-size: var(--dn-text-sm);
 }
 .dn-muted {
   color: var(--dn-app-muted);
