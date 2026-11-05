@@ -795,7 +795,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
             onClick={() => void setEditLock(false)}
           >
             <Icon name="editlock" size={13} />
-            Read-only
+            <span className="dn-chip-text">Read-only</span>
           </button>
         )}
         {reminder && !narrow && (
@@ -812,7 +812,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
             }}
           >
             <Icon name="bell" size={13} />
-            {chipText(reminder.dueAt, new Date())}
+            <span className="dn-chip-text">{chipText(reminder.dueAt, new Date())}</span>
           </button>
         )}
         <div className="dn-note-controls">

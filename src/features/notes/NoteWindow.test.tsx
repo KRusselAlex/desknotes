@@ -980,6 +980,44 @@ describe("NoteWindow", () => {
       }
     });
 
+    // jsdom does no layout, so the header's fit at 300 px with a reminder (checked in the
+    // preview) is pinned by its stylesheet rules and the markup they rely on.
+    it("never lets the header overflow the window: the date gives way first, then the chips", async () => {
+      const css = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const block = (selector: string) => {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return [...css.matchAll(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[1]!).join("\n");
+      };
+      // The note clips instead of scrolling, so a click on a clipped control cannot shift it.
+      expect(block(".dn-note")).toMatch(/overflow:\s*clip;/);
+      expect(block(".dn-note")).not.toMatch(/overflow:\s*hidden;/);
+      // The controls keep their buttons' width (no min-width: 0), so they are never cut.
+      expect(block(".dn-note-controls")).not.toMatch(/min-width:\s*0/);
+      expect(block(".dn-grip")).toMatch(/flex:\s*none;/);
+      // The date takes only the room left (no width of its own) and drops out whole when it
+      // does not fit: it wraps below a zero-width first item and is clipped.
+      const date = block(".dn-note-controls > .dn-note-date");
+      expect(date).toMatch(/width:\s*0;/);
+      expect(date).toMatch(/flex:\s*1000 0 0;/);
+      expect(date).toMatch(/flex-wrap:\s*wrap;/);
+      expect(date).toMatch(/overflow:\s*clip;/);
+      expect(block(".dn-note-controls > .dn-note-date::before")).toMatch(/height:\s*var\(--dn-header-h\);/);
+      // Then the chips shrink, their text ending in an ellipsis.
+      const chips = block(":is(.dn-readonly-chip, .dn-reminder-chip)");
+      expect(chips).toMatch(/min-width:\s*0;/);
+      expect(chips).toMatch(/flex-shrink:\s*1;/);
+      expect(block(".dn-chip-text")).toMatch(/text-overflow:\s*ellipsis;/);
+      // …and no later rule of the same weight takes that back.
+      for (const chip of [".dn-readonly-chip", ".dn-reminder-chip"]) expect(block(chip), chip).not.toMatch(/flex(-shrink)?:\s*(none|0)/);
+
+      const r = view();
+      vi.mocked(commands.getReminder).mockResolvedValue(r);
+      await openNote({ editLocked: true });
+      const chip = await screen.findByRole("button", { name: /^Reminder / });
+      expect(chip.querySelector(".dn-chip-text")).toHaveTextContent(hhmm(r.dueAt));
+      expect(screen.getByRole("button", { name: /Read-only/ }).querySelector(".dn-chip-text")).toHaveTextContent("Read-only");
+    });
+
     it("hides the chip at narrow widths, with the date", async () => {
       window.innerWidth = 240;
       vi.mocked(commands.getReminder).mockResolvedValue(view());

@@ -7,7 +7,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  /* Clip, not hidden: a hidden box still scrolls when a clipped control takes focus. */
+  overflow: clip;
   background: var(--note-bg);
   color: var(--dn-ink);
   font-size: var(--dn-text-base);
@@ -52,6 +53,7 @@
   -webkit-user-select: none;
 }
 .dn-grip {
+  flex: none;
   width: 20px;
   height: 28px;
   display: grid;
@@ -59,9 +61,10 @@
   color: var(--dn-ink-muted);
   cursor: grab;
 }
+/* The header never overflows: the controls keep their buttons' width (no min-width: 0);
+   the date gives way first, then the chips shrink. */
 .dn-note-controls {
   flex: 1;
-  min-width: 0;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -75,6 +78,31 @@
   color: var(--dn-ink-muted);
   padding: 0 4px;
   white-space: nowrap;
+}
+/* In the header the date takes only the room left (no width of its own) and drops out whole
+   when it does not fit: its text wraps below a zero-width, full-height first item, and the
+   second line is clipped. */
+.dn-note-controls > .dn-note-date {
+  flex: 1000 0 0;
+  width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  overflow: clip;
+}
+.dn-note-controls > .dn-note-date::before {
+  content: "";
+  height: var(--dn-header-h);
+}
+:is(.dn-readonly-chip, .dn-reminder-chip) {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.dn-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Read-only chip (N16/N17): always visible, click to unlock. */
@@ -829,7 +857,6 @@ html.dn-see-through #root {
    danger-coloured when overdue (as R2's overdue chip). Hides with the date when narrow. */
 .dn-reminder-chip {
   height: 24px;
-  flex: none;
   padding: 0 9px 0 7px;
   margin-left: 2px;
   border: 0;
