@@ -101,7 +101,11 @@ shows:
 > Your notes were saved by a newer version of DeskNotes. Install that version (or newer) to
 > open them; nothing was changed.
 
-This is safe. DeskNotes refused to open the database and did not change a byte of it. Either
+Version 0.2.0 and older say it differently: "The notes database could not be opened: database
+schema version 7 is newer than this DeskNotes supports (3); it was left untouched" (the
+numbers vary).
+
+This is safe. DeskNotes refused to open the database and did not change your notes. Either
 install the newer version again, or roll back as described next.
 
 ## Rolling back to an older version

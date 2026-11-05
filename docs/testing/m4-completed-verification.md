@@ -27,6 +27,10 @@ Design: `docs/superpowers/specs/2026-11-05-completed-notes-design.md` (option A,
 | Reminder after Reopen | The overdue Groceries reminder fired once ("Groceries") |
 | Restart | Both notes opened again at their saved places |
 
+## Owner's check
+
+On 2026-11-05 the owner installed the .deb built from `main` (installed 18:21) and confirmed "is ok". Their database is at schema 7 and has one note marked done. Only metadata was read, read-only.
+
 ## Not checked in the real app
 
 | Item | Why |
