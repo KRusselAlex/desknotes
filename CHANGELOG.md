@@ -42,7 +42,15 @@ All notable changes are documented here. The format follows
   reminders (backup format 4).
 
 ### Changed
+- The note's ⋯ menu is shorter: a row of New, Duplicate, On top and Lock at the top (pressed
+  ones are shaded), then the rest of the list; "Private" opens its own short list in place.
+  It fits a default-size note.
 - Settings opens at a given section from other windows (for example Privacy).
+
+### Fixed
+- A note with a reminder chip at 300 px wide no longer has a header wider than the window
+  (which could shift the note sideways on a click); the date gives way first, then the
+  "Read-only" word, so the reminder time stays whole.
 
 ## [0.2.0] — 2026-11-02 — Milestone 2: desktop reliability
 

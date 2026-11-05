@@ -139,6 +139,18 @@ async function typeIntoNote(container: HTMLElement, text: string) {
   await act(async () => el.editor!.commands.insertContent(text));
 }
 
+/** Opens the ⋯ menu and its Private list (DES-38: the private actions are one level down). */
+async function openPrivateMenu() {
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: "Private" }));
+}
+
+/** Menu entries in order, by accessible name (the quick buttons show a shorter label). */
+const menuOrder = () =>
+  Array.from(screen.getByRole("menu").querySelectorAll('[role^="menuitem"]')).map(
+    (i) => i.getAttribute("aria-label") ?? i.textContent ?? "",
+  );
+
 describe("NoteWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -198,7 +210,7 @@ describe("NoteWindow", () => {
   it("locks editing from the more menu", async () => {
     await openNote();
     await userEvent.click(screen.getByRole("button", { name: "More" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "Lock editing" }));
+    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "Lock editing" }));
     expect(commands.setEditLocked).toHaveBeenCalledWith(ID, true);
   });
 
@@ -288,6 +300,153 @@ describe("NoteWindow", () => {
     await openNote({ window: { x: 0, y: 0, width: 300, height: 280, visible: true, alwaysOnTop: true, collapsed: false } });
     await userEvent.click(screen.getByRole("button", { name: "More" }));
     expect(screen.getByRole("menuitemcheckbox", { name: "Always on top" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  describe("note menu (DES-38, option B)", () => {
+    const quick = () => screen.getByRole("group", { name: "Quick actions" });
+
+    it("has the quick row, then Set reminder…, Note settings…, Private, Open manager, Archive and Move to trash", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      expect(Array.from(quick().querySelectorAll('[role^="menuitem"]')).map((b) => b.getAttribute("aria-label"))).toEqual([
+        "New note",
+        "Duplicate",
+        "Always on top",
+        "Lock editing",
+      ]);
+      expect(menuOrder()).toEqual([
+        "New note",
+        "Duplicate",
+        "Always on top",
+        "Lock editing",
+        "Set reminder…",
+        "Note settings…",
+        "Private",
+        "Open manager",
+        "Archive",
+        "Move to trash",
+      ]);
+      expect(screen.getByRole("menuitem", { name: "New note" })).toHaveFocus();
+      expect(screen.getByRole("menuitem", { name: "Move to trash" })).toHaveClass("is-danger");
+    });
+
+    it("New and Duplicate run their command and close the menu", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "New note" }));
+      expect(commands.createNote).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("menu")).toBeNull();
+
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
+      await waitFor(() => expect(commands.duplicateNote).toHaveBeenCalledWith(ID));
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("Always on top flips in place and keeps the menu open", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      const pin = screen.getByRole("menuitemcheckbox", { name: "Always on top" });
+      expect(pin).toHaveAttribute("aria-checked", "false");
+      await userEvent.click(pin);
+      expect(commands.setAlwaysOnTop).toHaveBeenCalledWith(ID, true);
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      expect(pin).toHaveAttribute("aria-checked", "true");
+      await userEvent.click(pin);
+      expect(commands.setAlwaysOnTop).toHaveBeenLastCalledWith(ID, false);
+      expect(pin).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("Lock editing flips in place, keeps the menu open and keeps focus on it, both ways", async () => {
+      const { container } = await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      const lock = screen.getByRole("menuitemcheckbox", { name: "Lock editing" });
+      expect(lock).toHaveAttribute("aria-checked", "false");
+      expect(lock).toHaveAttribute("title", "Lock editing");
+      await userEvent.click(lock);
+      expect(commands.setEditLocked).toHaveBeenCalledWith(ID, true);
+      await waitFor(() => expect(lock).toHaveAttribute("aria-checked", "true"));
+      // The tooltip does not contradict the name: the state is aria-checked and the shading.
+      expect(lock).toHaveAttribute("title", "Lock editing");
+      expect(lock).toHaveAccessibleName("Lock editing");
+      expect(container.querySelector(".tiptap")).toHaveAttribute("contenteditable", "false");
+
+      await userEvent.click(lock);
+      expect(commands.setEditLocked).toHaveBeenLastCalledWith(ID, false);
+      await waitFor(() => expect(lock).toHaveAttribute("aria-checked", "false"));
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      // Allowing editing from the menu does not pull focus into the editor under the open menu.
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(lock).toHaveFocus();
+    });
+
+    it("shows Lock editing on for a read-only note", async () => {
+      await openNote({ editLocked: true });
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      expect(screen.getByRole("menuitemcheckbox", { name: "Lock editing" })).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("↓ from the row goes to Set reminder…, ↑ from it back to the row, ←/→ along the row", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.keyboard("{ArrowRight}");
+      expect(screen.getByRole("menuitem", { name: "Duplicate" })).toHaveFocus();
+      await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+      expect(screen.getByRole("menuitemcheckbox", { name: "Lock editing" })).toHaveFocus();
+      await userEvent.keyboard("{ArrowDown}");
+      expect(screen.getByRole("menuitem", { name: "Set reminder…" })).toHaveFocus();
+      await userEvent.keyboard("{ArrowUp}");
+      expect(screen.getByRole("menuitemcheckbox", { name: "Lock editing" })).toHaveFocus();
+    });
+
+    it("Set reminder… picked by keyboard still leaves focus on the date", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.keyboard("{ArrowDown}{Enter}");
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(screen.getByLabelText("Date")).toHaveFocus();
+    });
+
+    it("Private opens Make private in place for a note that is not private, and Escape comes back", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+      const parent = screen.getByRole("menuitem", { name: "Private" });
+      expect(parent).toHaveFocus();
+      expect(parent.querySelectorAll("svg")).toHaveLength(2); // no check: not private
+      await userEvent.keyboard("{Enter}");
+      expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+        "Private",
+        "Make private",
+      ]);
+      expect(screen.getByRole("menuitem", { name: "Make private" })).toHaveFocus();
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("menuitem", { name: "Private" })).toHaveFocus();
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("Private offers Change private label… and Make not private for a private note, opening with → and back with ←", async () => {
+      await openNote({ private: true, privateLabel: "Bank" });
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      const parent = screen.getByRole("menuitem", { name: "Private" });
+      expect(parent.querySelectorAll("svg")).toHaveLength(3); // icon, check, chevron
+      parent.focus();
+      await userEvent.keyboard("{ArrowRight}");
+      expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+        "Private",
+        "Change private label…",
+        "Make not private",
+      ]);
+      expect(screen.getByRole("menuitem", { name: "Change private label…" })).toHaveFocus();
+      await userEvent.keyboard("{ArrowLeft}");
+      expect(screen.getByRole("menuitem", { name: "Private" })).toHaveFocus();
+    });
   });
 
   it("collapses to a strip with the title, after saving, and expands again", async () => {
@@ -460,7 +619,7 @@ describe("NoteWindow", () => {
     it("make_private_without_pin_opens_setup_first", async () => {
       vi.mocked(commands.privacyStatus).mockResolvedValue(status({ enabled: false }));
       await openNote();
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
       await waitFor(() => expect(commands.openSettings).toHaveBeenCalledWith("privacy"));
       expect(screen.queryByRole("dialog")).toBeNull();
@@ -470,7 +629,7 @@ describe("NoteWindow", () => {
     it("make_private_with_label", async () => {
       vi.mocked(commands.privacyStatus).mockResolvedValue(status());
       await openNote();
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
       const dialog = await screen.findByRole("dialog", { name: "Make this note private" });
       const field = screen.getByRole("textbox", { name: "Label (optional)" });
@@ -482,14 +641,14 @@ describe("NoteWindow", () => {
       expect(commands.setNotePrivate).toHaveBeenCalledWith(ID, true, "Bank");
       await waitFor(() => expect(dialog).not.toBeInTheDocument());
       expect(commands.openSettings).not.toHaveBeenCalled();
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       expect(screen.getByRole("menuitem", { name: "Make not private" })).toBeInTheDocument();
     });
 
     it("makes a note private without a label", async () => {
       vi.mocked(commands.privacyStatus).mockResolvedValue(status());
       await openNote();
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
       await userEvent.click(await screen.findByRole("button", { name: "Make private" }));
       expect(commands.setNotePrivate).toHaveBeenCalledWith(ID, true, "");
@@ -499,7 +658,7 @@ describe("NoteWindow", () => {
       vi.mocked(commands.privacyStatus).mockResolvedValue(status());
       vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new Error("The label cannot contain control characters."));
       await openNote();
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
       await userEvent.click(await screen.findByRole("button", { name: "Make private" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("The label cannot contain control characters.");
@@ -510,7 +669,7 @@ describe("NoteWindow", () => {
 
     it("changes the label and makes a note not private, keeping its label", async () => {
       await openNote({ private: true, privateLabel: "Bank" });
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Change private label…" }));
       const field = await screen.findByRole("textbox", { name: "Label (optional)" });
       expect(field).toHaveValue("Bank");
@@ -519,7 +678,7 @@ describe("NoteWindow", () => {
       expect(commands.setNotePrivate).toHaveBeenLastCalledWith(ID, true, "Bills");
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make not private" }));
       expect(commands.setNotePrivate).toHaveBeenLastCalledWith(ID, false, "Bills");
       expect(commands.privacyStatus).not.toHaveBeenCalled();
@@ -648,10 +807,10 @@ describe("NoteWindow", () => {
     it("says why Make not private was refused (R21)", async () => {
       vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
       await openNote({ private: true, privateLabel: "Bank" });
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make not private" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       expect(screen.getByRole("menuitem", { name: "Make not private" })).toBeInTheDocument();
       await userEvent.keyboard("{Escape}");
       await userEvent.click(screen.getByRole("button", { name: "OK" }));
@@ -661,7 +820,7 @@ describe("NoteWindow", () => {
     it("says why a label change was refused, in the dialog", async () => {
       vi.mocked(commands.setNotePrivate).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));
       await openNote({ private: true, privateLabel: "Bank" });
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Change private label…" }));
       await userEvent.type(await screen.findByRole("textbox", { name: "Label (optional)" }), "s{Enter}");
       expect(await screen.findByRole("alert")).toHaveTextContent("Unlock private notes first.");
@@ -671,7 +830,7 @@ describe("NoteWindow", () => {
     it("says why Make private could not start", async () => {
       vi.mocked(commands.privacyStatus).mockRejectedValueOnce(new Error("database is locked"));
       await openNote();
-      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await openPrivateMenu();
       await userEvent.click(screen.getByRole("menuitem", { name: "Make private" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
     });
@@ -699,13 +858,12 @@ describe("NoteWindow", () => {
       window.innerWidth = 1024;
     });
 
-    it("offers Set reminder… right after Always on top, with a bell, and opens the popover", async () => {
+    it("offers Set reminder… first in the list, right after the quick row, with a bell, and opens the popover", async () => {
       const { container } = await openNote();
       await userEvent.click(screen.getByRole("button", { name: "More" }));
-      const menu = screen.getByRole("menu");
-      const order = Array.from(menu.querySelectorAll('[role^="menuitem"]')).map((i) => i.textContent ?? "");
-      expect(order.findIndex((l) => l.includes("Set reminder…"))).toBe(order.findIndex((l) => l.includes("Always on top")) + 1);
-      expect(menu.querySelector('[role="menuitem"]:has(svg)')).not.toBeNull();
+      const order = menuOrder();
+      expect(order.indexOf("Set reminder…")).toBe(order.indexOf("Lock editing") + 1);
+      expect(within(screen.getByRole("menuitem", { name: "Set reminder…" })).getByText("Set reminder…").previousElementSibling?.tagName).toBe("svg");
       await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
       expect(screen.getByRole("dialog", { name: "Reminder" })).toBeInTheDocument();
       expect(screen.queryByRole("menu")).toBeNull();
@@ -822,6 +980,86 @@ describe("NoteWindow", () => {
       }
     });
 
+    // jsdom does no layout, so the header's fit at 300 px with a reminder (checked in the
+    // preview) is pinned by its stylesheet rules and the markup they rely on.
+    it("never lets the header overflow the window: the date gives way first, then the chips", async () => {
+      const css = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const block = (selector: string) => {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return [...css.matchAll(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`, "g"))].map((m) => m[1]!).join("\n");
+      };
+      // The note clips instead of scrolling, so a click on a clipped control cannot shift it.
+      expect(block(".dn-note")).toMatch(/overflow:\s*clip;/);
+      expect(block(".dn-note")).not.toMatch(/overflow:\s*hidden;/);
+      // The controls keep their buttons' width (no min-width: 0), so they are never cut.
+      expect(block(".dn-note-controls")).not.toMatch(/min-width:\s*0/);
+      expect(block(".dn-grip")).toMatch(/flex:\s*none;/);
+      // The date takes only the room left (no width of its own) and drops out whole when it
+      // does not fit: it wraps below a zero-width first item and is clipped.
+      const date = block(".dn-note-controls > .dn-note-date");
+      expect(date).toMatch(/width:\s*0;/);
+      expect(date).toMatch(/flex:\s*1000 0 0;/);
+      expect(date).toMatch(/flex-wrap:\s*wrap;/);
+      expect(date).toMatch(/overflow:\s*clip;/);
+      expect(block(".dn-note-controls > .dn-note-date::before")).toMatch(/height:\s*var\(--dn-header-h\);/);
+      // Next the Read-only chip drops its word, by fixed widths (a note is its own window, so
+      // the viewport is the note): below 360 px when locked with a reminder (the longest label,
+      // "24 Nov 2027", needs 347 px with the word), below 260 px (NARROW) for any locked note
+      // (240 px needed). It never shrinks itself; icon-only it is a 24 px circle whose word
+      // stays for screen readers. No measuring, so nothing can flip back and forth.
+      expect(block(".dn-readonly-chip")).toMatch(/flex:\s*none;/);
+      expect(css).not.toMatch(/is-icon-only/);
+      const media = (max: number, scope: string) => {
+        const at = css.indexOf(`@media (max-width: ${max}px) {\n  ${scope} .dn-readonly-chip`);
+        expect(at, `@media (max-width: ${max}px)`).toBeGreaterThan(-1);
+        return css.slice(at, css.indexOf("\n}\n", at));
+      };
+      for (const [max, scope] of [
+        [359, ".dn-note.has-readonly-reminder"],
+        [259, ".dn-note.is-readonly"],
+      ] as const) {
+        const rules = media(max, scope);
+        const chip = new RegExp(`${scope.replace(/\./g, "\\.")} \\.dn-readonly-chip\\s*\\{([^}]*)\\}`).exec(rules)?.[1];
+        expect(chip, `${max}: chip`).toMatch(/width:\s*24px;/);
+        expect(chip, `${max}: chip`).toMatch(/padding:\s*0;/);
+        const word = new RegExp(`${scope.replace(/\./g, "\\.")} \\.dn-readonly-chip \\.dn-chip-text\\s*\\{([^}]*)\\}`).exec(rules)?.[1];
+        expect(word, `${max}: word`).toMatch(/clip-path:\s*inset\(50%\);/);
+      }
+      // Only as a last resort the reminder chip shrinks (ellipsis); nothing takes that back.
+      expect(block(".dn-reminder-chip")).toMatch(/min-width:\s*0;/);
+      expect(block(".dn-reminder-chip")).toMatch(/flex-shrink:\s*1;/);
+      expect(block(".dn-reminder-chip")).not.toMatch(/flex(-shrink)?:\s*(none|0)/);
+      expect(block(".dn-chip-text")).toMatch(/text-overflow:\s*ellipsis;/);
+
+      const r = view();
+      vi.mocked(commands.getReminder).mockResolvedValue(r);
+      await openNote({ editLocked: true });
+      const chip = await screen.findByRole("button", { name: /^Reminder / });
+      expect(chip.querySelector(".dn-chip-text")).toHaveTextContent(hhmm(r.dueAt));
+      expect(screen.getByRole("button", { name: /Read-only/ }).querySelector(".dn-chip-text")).toHaveTextContent("Read-only");
+    });
+
+    it("marks the note has-readonly-reminder only while it is locked and has a reminder", async () => {
+      const root = (c: HTMLElement) => c.querySelector(".dn-note")!;
+      vi.mocked(commands.getReminder).mockResolvedValue(view());
+      const both = await openNote({ editLocked: true });
+      await screen.findByRole("button", { name: /^Reminder / });
+      expect(root(both.container)).toHaveClass("has-readonly-reminder");
+      // The word stays in the DOM, so the chip's name and tooltip stay "Read-only".
+      expect(screen.getByRole("button", { name: "Read-only" })).toHaveAttribute("title", "Read-only. Click to allow editing.");
+      both.unmount();
+
+      const reminderOnly = await openNote();
+      await screen.findByRole("button", { name: /^Reminder / });
+      expect(root(reminderOnly.container)).not.toHaveClass("has-readonly-reminder");
+      reminderOnly.unmount();
+
+      vi.mocked(commands.getReminder).mockResolvedValue(null);
+      const lockedOnly = await openNote({ editLocked: true });
+      await waitFor(() => expect(commands.getReminder).toHaveBeenCalled());
+      expect(root(lockedOnly.container)).not.toHaveClass("has-readonly-reminder");
+    });
+
     it("hides the chip at narrow widths, with the date", async () => {
       window.innerWidth = 240;
       vi.mocked(commands.getReminder).mockResolvedValue(view());
@@ -860,14 +1098,11 @@ describe("NoteWindow", () => {
   });
 
   describe("appearance", () => {
-    it("offers Note settings… after Always on top and opens it for this note", async () => {
+    it("offers Note settings… right after Set reminder… and opens it for this note", async () => {
       await openNote();
       await userEvent.click(screen.getByRole("button", { name: "More" }));
-      const menu = screen.getByRole("menu");
-      const order = Array.from(menu.querySelectorAll('[role^="menuitem"]')).map((i) => i.textContent ?? "");
-      const pin = order.findIndex((l) => l.includes("Always on top"));
-      const settings = order.findIndex((l) => l.includes("Note settings…"));
-      expect(settings).toBe(pin + 2); // after "Set reminder…"
+      const order = menuOrder();
+      expect(order.indexOf("Note settings…")).toBe(order.indexOf("Set reminder…") + 1);
       await userEvent.click(screen.getByRole("menuitem", { name: "Note settings…" }));
       expect(commands.openNoteSettings).toHaveBeenCalledWith(ID);
     });
@@ -1138,6 +1373,40 @@ describe("NoteWindow", () => {
       // No broad rule that puts an outline back on controls that draw their own ring.
       expect(noteCss).not.toMatch(/is-high-contrast[^{]*:is\(button/);
       expect(noteCss).not.toMatch(/is-high-contrast[^{]*\{[^}]*outline:\s*var\(--dn-hc-focus\)/);
+    });
+
+    it("draws the menu's quick toggles in high contrast: 3 px ring, inverted when on, both when focused and on (DES-38)", () => {
+      const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
+      const rule = (selector: string) => {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(noteCss)?.[1];
+      };
+      // Focused, off: the 3 px black ring on white, as menu items.
+      const ring = /\.dn-note\.is-high-contrast :is\(([^)]*)\):focus-visible\s*\{\s*box-shadow:\s*inset 0 0 0 var\(--dn-hc-focus\) var\(--dn-hc-ink\);/.exec(noteCss);
+      expect(ring?.[1]).toContain(".dn-menu-quick-btn");
+      expect(ring?.[1]).toContain(".dn-menu-item");
+      // On, unfocused: inverted, white on black.
+      const on = rule('.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"]');
+      expect(on).toMatch(/background:\s*var\(--dn-hc-ink\);/);
+      expect(on).toMatch(/color:\s*var\(--dn-hc-bg\);/);
+      // The label follows the button's colour when on (components.css), so it turns white too.
+      expect(readFileSync("src/styles/components.css", "utf8")).toMatch(
+        /\.dn-menu-quick-btn\[aria-checked="true"\] \.dn-menu-quick-label\s*\{\s*color:\s*inherit;/,
+      );
+      // Focused and on: still inverted, with a white ring inside, so it differs from both.
+      const both = rule('.dn-note.is-high-contrast .dn-menu-quick-btn[aria-checked="true"]:focus-visible');
+      expect(both).toMatch(/box-shadow:\s*inset 0 0 0 var\(--dn-hc-focus\) var\(--dn-hc-ink\),\s*inset 0 0 0 calc\(var\(--dn-hc-focus\) \+ var\(--dn-hc-rule\)\) var\(--dn-hc-bg\);/);
+      // It comes after the plain focus rule, which has a lower specificity anyway.
+      expect(noteCss.indexOf('.dn-menu-quick-btn[aria-checked="true"]:focus-visible')).toBeGreaterThan(ring!.index);
+    });
+
+    it("keeps the quick row labels whole: columns at least their label wide, no ellipsis (DES-38)", () => {
+      const css = readFileSync("src/styles/components.css", "utf8"); // vitest blanks imported CSS
+      const row = /\.dn-menu-quick\s*\{([^}]*)\}/.exec(css)?.[1];
+      expect(row).toMatch(/grid-template-columns:\s*repeat\(4, minmax\(min-content, 1fr\)\);/);
+      const label = /\.dn-menu-quick-label\s*\{([^}]*)\}/.exec(css)?.[1];
+      expect(label).toBeDefined();
+      expect(label).not.toMatch(/text-overflow|overflow:/);
     });
 
     it("keeps the light danger tokens inside notes under a dark system theme (R14)", () => {
