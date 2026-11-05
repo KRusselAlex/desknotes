@@ -39,6 +39,10 @@ impl Database {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        // Refuse before changing anything on disk: switching to WAL rewrites the
+        // file header, and a newer database must keep its exact bytes.
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        refuse_if_newer(version)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn, Some(backup_dir))
@@ -58,12 +62,7 @@ impl Database {
             kept_open: RefCell::new(HashSet::new()),
         };
         let version = db.schema_version()?;
-        if version > LATEST_VERSION {
-            return Err(CoreError::SchemaTooNew {
-                found: version,
-                supported: LATEST_VERSION,
-            });
-        }
+        refuse_if_newer(version)?;
         if version > 0
             && version < LATEST_VERSION
             && let Some(dir) = backup_dir
@@ -185,6 +184,17 @@ impl Database {
     }
 }
 
+/// A database written by a newer DeskNotes is never opened or changed.
+fn refuse_if_newer(version: i64) -> CoreResult<()> {
+    if version > LATEST_VERSION {
+        return Err(CoreError::SchemaTooNew {
+            found: version,
+            supported: LATEST_VERSION,
+        });
+    }
+    Ok(())
+}
+
 fn pre_migration_path(dir: &Path, from_version: i64) -> PathBuf {
     dir.join(format!(
         "pre-migration-v{from_version}-{}.db",
@@ -232,6 +242,31 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, LATEST_VERSION + 1);
+    }
+
+    #[test]
+    fn newer_database_message_and_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "user_version", LATEST_VERSION + 1)
+                .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+
+        let err = Database::open(&path, &backups).err().unwrap();
+        assert_eq!(err.code(), "schema_too_new");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "a database from a newer version must keep its exact bytes"
+        );
+        assert!(
+            !backups.exists(),
+            "no backup is written when the open is refused"
+        );
     }
 
     #[test]
