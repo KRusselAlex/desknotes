@@ -25,6 +25,10 @@ Design: `docs/superpowers/specs/2026-11-05-note-menu-design.md` (option B, chose
 | Clicking inside the menu: the On top and Lock toggles (shading, menu stays open), Duplicate, New, the Private sub-list, Note settings… | Simulated clicks inside the open menu did nothing in this session. Even "Note settings…" didn't open, though its code path is unchanged from main. At the same time, text the controller didn't type ("uù") appeared in the scratch note, so the owner was likely using the keyboard and mouse. The run was stopped so it wouldn't interfere. It isn't settled whether the clicks were lost or the menu doesn't respond under WebKitGTK. Unit tests (607) and the Chromium preview show every click and key working. |
 | Keyboard map, high contrast, dark theme, 180 px and the header at 300 px with a reminder | Checked in the Chromium preview and by unit and stylesheet tests only. |
 
+## Owner check (2026-11-05)
+
+The owner installed a .deb from this branch (built at 16:31, DeskNotes restarted at 16:35), clicked through the menu and reported "it is ok". Read-only database metadata agrees: one note was created after 16:35, from New or Duplicate. No note text was read. This covers the menu clicks listed above as not verified.
+
 ## Automated tests
 
 607 frontend tests, `npm run lint` and `npm run typecheck` all pass. The change was reviewed independently twice: once in full, and once scoped to the fixes.
