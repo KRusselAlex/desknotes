@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import { dateGroup, listDateLabel } from "../../app/time";
+import { dateGroup, doneDateLabel, listDateLabel } from "../../app/time";
 import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
@@ -353,7 +353,7 @@ export function ManagerWindow() {
 
 function rowMeta(n: NoteSummary, tab: NoteFilter): string {
   if (tab === "trash") return `Trashed ${listDateLabel(n.deletedAt ?? n.updatedAt)}`;
-  if (tab === "completed") return `Done ${listDateLabel(n.completedAt ?? n.updatedAt)}`;
+  if (tab === "completed") return doneDateLabel(n.completedAt ?? n.updatedAt);
   if (tab === "archived") return `Archived ${listDateLabel(n.archivedAt ?? n.updatedAt)}`;
   return `${listDateLabel(n.updatedAt)} · ${n.visible ? "On desktop" : "Hidden"}`;
 }
@@ -443,10 +443,17 @@ function NoteRow({ note: n, tab, query, compact, run, onAskPurge }: RowProps) {
         </>
       )}
       {tab === "completed" && (
-        <button type="button" className="dn-btn-outline" onClick={stop(() => void run(() => commands.setNoteCompleted(n.id, false)))}>
-          <Icon name="restore" size={14} />
-          Reopen
-        </button>
+        <>
+          <span className="dn-row-hover">
+            <button type="button" className="dn-app-icon-btn" aria-label="Move to trash" title="Move to trash" onClick={stop(() => void run(() => commands.trashNote(n.id)))}>
+              <Icon name="trash" />
+            </button>
+          </span>
+          <button type="button" className="dn-btn-outline" onClick={stop(() => void run(() => commands.setNoteCompleted(n.id, false)))}>
+            <Icon name="restore" size={14} />
+            Reopen
+          </button>
+        </>
       )}
       {tab === "archived" && (
         <>
@@ -523,7 +530,7 @@ function EmptyState({
         </span>
         <div className="dn-empty-title">{tab === "reminders" ? "No reminders match your search" : "No notes match your search"}</div>
         <div className="dn-empty-sub">
-          {tab === "active" ? "Archived and trashed notes are not included." : "Try another tab or other words."}
+          {tab === "active" ? "Completed, archived and trashed notes are not included." : "Try another tab or other words."}
         </div>
       </div>
     );

@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NoteSummary, PrivacyStatus } from "../../types/note";
 import type { ReminderListRow } from "../../types/reminder";
+import { doneDateLabel } from "../../app/time";
 
 const quitBlocked: { handler?: (count: number) => void } = {};
 const privacyChanged: { handler?: (e: { locked: boolean }) => void } = {};
@@ -134,9 +135,25 @@ describe("ManagerWindow", () => {
     expect(await screen.findByText("Nothing archived.")).toBeInTheDocument();
   });
 
+  it("says what an Active search leaves out, and nothing of the sort on other tabs", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    render(<ManagerWindow />);
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "zzz");
+    expect(await screen.findByText("Completed, archived and trashed notes are not included.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /Archived/ }));
+    expect(await screen.findByText("Try another tab or other words.")).toBeInTheDocument();
+  });
+
   describe("Completed tab", () => {
-    const DAY = 24 * 60 * 60 * 1000;
-    const done = (over: Partial<NoteSummary> = {}) => note({ id: "d1", title: "Book the dentist", completedAt: Date.now() - 1000, ...over });
+    // Wed 4 Nov 2026, 12:00 local. Only the clock is faked, so timers and user events run as usual.
+    const NOW = new Date(2026, 10, 4, 12, 0).getTime();
+    const at = (y: number, m: number, d: number, h = 9, min = 15) => new Date(y, m, d, h, min).getTime();
+    const done = (over: Partial<NoteSummary> = {}) => note({ id: "d1", title: "Book the dentist", completedAt: NOW - 1000, ...over });
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => vi.useRealTimers());
 
     it("sits between Active and Reminders with its own count", async () => {
       vi.mocked(commands.listNotes).mockResolvedValue([]);
@@ -147,24 +164,47 @@ describe("ManagerWindow", () => {
     });
 
     it("lists completed notes with a Done date and a Reopen button", async () => {
+      const dates = [
+        NOW - 1000, // today
+        at(2026, 10, 3), // yesterday
+        at(2026, 10, 1), // Sunday, within 6 days
+        at(2026, 9, 28), // exactly 7 days ago: a date, not a weekday
+        at(2025, 0, 2), // another year
+      ];
       vi.mocked(commands.listNotes).mockImplementation(async (f) =>
-        f === "completed"
-          ? [
-              done({ id: "d1", completedAt: Date.now() - 1000 }),
-              done({ id: "d2", title: "Call mum", completedAt: Date.now() - 3 * DAY }),
-              done({ id: "d3", title: "Old thing", completedAt: Date.now() - 400 * DAY }),
-            ]
-          : [],
+        f === "completed" ? dates.map((completedAt, i) => done({ id: `d${i}`, title: `Done note ${i}`, completedAt })) : [],
       );
       render(<ManagerWindow />);
       await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
       const rows = await screen.findAllByRole("listitem");
       expect(commands.listNotes).toHaveBeenCalledWith("completed", "");
-      expect(within(rows[0]!).getByText("Book the dentist")).toBeInTheDocument();
-      expect(within(rows[0]!).getByText(/^Done \d{1,2}:\d{2}/)).toBeInTheDocument();
-      expect(within(rows[1]!).getByText(/^Done [A-Z][a-z]{2}$/)).toBeInTheDocument();
-      expect(within(rows[2]!).getByText(/^Done .*20\d\d$/)).toBeInTheDocument();
+      expect(rows).toHaveLength(dates.length);
+      dates.forEach((ms, i) => {
+        expect(within(rows[i]!).getByText(doneDateLabel(ms, NOW))).toBeInTheDocument();
+      });
+      // The formatter's shape, pinned for English: time, "yesterday", weekday, date, date with year.
+      expect(dates.map((ms) => doneDateLabel(ms, NOW))).toEqual([
+        `Done ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(NOW - 1000)}`,
+        "Done yesterday",
+        `Done ${new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(dates[2])}`,
+        `Done ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(dates[3])}`,
+        `Done ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(dates[4])}`,
+      ]);
+      expect(within(rows[3]!).queryByText(/20\d\d/)).toBeNull();
       expect(within(rows[0]!).getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    });
+
+    it("Move to trash on a Completed row trashes the note; it keeps its done date for a restore", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done()]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const row = await screen.findByRole("listitem");
+      await userEvent.click(within(row).getByRole("button", { name: "Move to trash" }));
+      expect(commands.trashNote).toHaveBeenCalledWith("d1");
+      expect(commands.setArchived).not.toHaveBeenCalled();
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      // The row still offers Reopen next to it.
+      expect(within(row).getByRole("button", { name: "Reopen" })).toBeInTheDocument();
     });
 
     it("Reopen marks the note not done and refreshes", async () => {

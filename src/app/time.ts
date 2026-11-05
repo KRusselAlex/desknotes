@@ -45,6 +45,12 @@ export function listDateLabel(ms: number, now = Date.now()): string {
   return dateOnly(ms, now);
 }
 
+/** Completed rows: "Done 14:32", "Done yesterday" (lower case mid-sentence), "Done Thu", "Done 30 Oct". */
+export function doneDateLabel(ms: number, now = Date.now()): string {
+  if (daysAgo(ms, now) === 1) return "Done yesterday";
+  return `Done ${listDateLabel(ms, now)}`;
+}
+
 export type DateGroup = "Today" | "Yesterday" | "This week" | "This month" | "Older";
 
 /** Group heading for long lists. */
