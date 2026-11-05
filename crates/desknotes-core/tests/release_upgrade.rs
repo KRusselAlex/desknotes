@@ -31,8 +31,11 @@ fn manifest() -> Value {
     serde_json::from_str(&raw).expect("manifest is JSON")
 }
 
+/// Checks the fixture's schema version and its manifest. That the file was written by
+/// v0.2.0's own code is not proved here: it comes from `make-fixture.sh`, which builds
+/// the release at its tag.
 #[test]
-fn fixture_is_from_release_0_2_0() {
+fn fixture_has_release_0_2_0_schema() {
     let conn = Connection::open_with_flags(fixture_db(), OpenFlags::SQLITE_OPEN_READ_ONLY)
         .expect("open the fixture read-only");
     let version: i64 = conn
@@ -46,10 +49,34 @@ fn fixture_is_from_release_0_2_0() {
 
 #[test]
 fn upgrade_from_release_0_2_0_keeps_everything() {
+    assert_upgrade_keeps_everything(|_| {});
+}
+
+/// The same upgrade when the user's database is in WAL mode (an app that was killed,
+/// or a database set to WAL by another tool): opening it must keep everything too.
+#[test]
+fn upgrade_from_release_0_2_0_in_wal_mode_keeps_everything() {
+    assert_upgrade_keeps_everything(|db_path| {
+        let conn = Connection::open(db_path).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        conn.close().map_err(|(_, e)| e).unwrap();
+        // WAL is recorded in the file header (bytes 18 and 19 are 2), so it survives the close.
+        let header = fs::read(db_path).unwrap();
+        assert_eq!((header[18], header[19]), (2, 2), "the copy is in WAL mode");
+    });
+}
+
+/// Copies the v0.2.0 fixture, lets `prepare` change the copy, opens it with today's
+/// code and checks every note, setting and the single pre-migration copy.
+fn assert_upgrade_keeps_everything(prepare: impl FnOnce(&Path)) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("desknotes.db");
     let backups = dir.path().join("backups");
     fs::copy(fixture_db(), &db_path).unwrap();
+    prepare(&db_path);
 
     let db = Database::open(&db_path, &backups).expect("today's code opens the v0.2.0 database");
     assert_eq!(db.schema_version().unwrap(), LATEST_VERSION);

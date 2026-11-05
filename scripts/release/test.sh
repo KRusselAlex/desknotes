@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for the release safety scripts (check-tag.sh and changelog-section.sh).
+# Tests for the release safety scripts (check-tag.sh, changelog-section.sh and the
+# tag check of make-fixture.sh, which runs before any worktree or cargo work).
 #
 #   bash scripts/release/test.sh
 #
@@ -40,7 +41,28 @@ expect_fail() {
 }
 
 # --- sample inputs ------------------------------------------------------------------
-conf() { printf '{ "productName": "DeskNotes", "version": "%s" }\n' "$1" > "$TMP/conf.json"; echo "$TMP/conf.json"; }
+# conf CONF_VERSION [PACKAGE_JSON_VERSION [CARGO_TOML_VERSION]]
+# Writes a miniature checkout under $TMP/fx (src-tauri/tauri.conf.json, package.json and
+# Cargo.toml, as in the real repository) and prints the path of the conf file. The other
+# two versions default to the conf version, so only the file under test differs.
+conf() {
+  local v="$1" pkg="${2:-$1}" cargo="${3:-$1}"
+  mkdir -p "$TMP/fx/src-tauri"
+  printf '{ "productName": "DeskNotes", "version": "%s" }\n' "$v" > "$TMP/fx/src-tauri/tauri.conf.json"
+  printf '{ "name": "desknotes", "version": "%s" }\n' "$pkg" > "$TMP/fx/package.json"
+  cat > "$TMP/fx/Cargo.toml" <<TOML
+[workspace]
+members = ["crates/desknotes-core"]
+
+[workspace.package]
+version = "$cargo" # the number every crate uses
+edition = "2024"
+
+[workspace.dependencies]
+version = "9.9.9"
+TOML
+  echo "$TMP/fx/src-tauri/tauri.conf.json"
+}
 
 REPO="$TMP/repo"
 git init -q -b main "$REPO"
@@ -72,6 +94,18 @@ expect_fail "beta tag against the plain version is refused" "does not match" \
   in_repo bash "$CHECK_TAG" v0.3.0-beta.1 "$(conf 0.3.0)" main
 expect_fail "plain tag against a beta version is refused" "does not match" \
   in_repo bash "$CHECK_TAG" v0.3.0 "$(conf 0.3.0-beta.1)" main
+expect_fail "package.json with another version is refused, naming the file" "version 0.2.0 in $TMP/fx/src-tauri/../package.json" \
+  in_repo bash "$CHECK_TAG" v0.3.0 "$(conf 0.3.0 0.2.0 0.3.0)" main
+expect_fail "Cargo.toml with another version is refused, naming the file" "version 0.2.0 in $TMP/fx/src-tauri/../Cargo.toml" \
+  in_repo bash "$CHECK_TAG" v0.3.0 "$(conf 0.3.0 0.3.0 0.2.0)" main
+expect_fail "Cargo.toml beta mismatch is refused" "does not match" \
+  in_repo bash "$CHECK_TAG" v0.3.0-beta.1 "$(conf 0.3.0-beta.1 0.3.0-beta.1 0.3.0)" main
+CONF_PATH="$(conf 0.3.0)"; rm "$TMP/fx/package.json"
+expect_fail "missing package.json is refused" "cannot read" \
+  in_repo bash "$CHECK_TAG" v0.3.0 "$CONF_PATH" main
+CONF_PATH="$(conf 0.3.0)"; printf '[package]\nversion = "0.3.0"\n' > "$TMP/fx/Cargo.toml"
+expect_fail "Cargo.toml without a workspace version is refused" "[workspace.package]" \
+  in_repo bash "$CHECK_TAG" v0.3.0 "$CONF_PATH" main
 expect_fail "-rc tag form is refused" "not an accepted tag" \
   in_repo bash "$CHECK_TAG" v0.3.0-rc.1 "$(conf 0.3.0-rc.1)" main
 expect_fail "tag without the v is refused" "not an accepted tag" \
@@ -186,6 +220,18 @@ expect_fail "Database: must start a line" "Database:" bash "$SECTION" 1.0.0 "$TM
 # The real CHANGELOG: every released section carries a Database line.
 expect_ok   "real CHANGELOG, 0.2.0" "Database: migration 3" bash "$SECTION" 0.2.0 "$ROOT/CHANGELOG.md"
 expect_ok   "real CHANGELOG, 0.1.0" "Database: migrations 1–2" bash "$SECTION" 0.1.0 "$ROOT/CHANGELOG.md"
+
+# --- make-fixture.sh: refuses releases it does not know how to fill ------------------
+# The refusal happens before git or cargo is touched, so nothing is built here.
+FIXTURE_SCRIPT="$HERE/make-fixture.sh"
+expect_fail "make-fixture refuses an unknown release tag" "does not know how to fill v0.3.0" \
+  bash "$FIXTURE_SCRIPT" v0.3.0
+expect_fail "make-fixture refusal says to extend the example" "Extend the example" \
+  bash "$FIXTURE_SCRIPT" v0.3.0
+expect_fail "make-fixture refuses a beta tag too" "does not know how to fill v0.3.0-beta.1" \
+  bash "$FIXTURE_SCRIPT" v0.3.0-beta.1
+expect_fail "make-fixture still rejects a malformed tag" "not a release tag" \
+  bash "$FIXTURE_SCRIPT" 0.2.0
 
 echo
 echo "$pass passed, $fail failed"

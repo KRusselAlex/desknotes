@@ -8,7 +8,8 @@ The release workflow ([`.github/workflows/release.yml`](../.github/workflows/rel
 runs when a tag is pushed. It refuses the tag unless:
 
 - the tag is exactly `vX.Y.Z` or `vX.Y.Z-beta.N` (nothing else, no `-rc`);
-- the tag equals the version in `src-tauri/tauri.conf.json` with a `v` in front;
+- the tag equals the version in `src-tauri/tauri.conf.json`, in `package.json` and in
+  `Cargo.toml` (`[workspace.package]`), each with a `v` in front;
 - the tagged commit is on `main`;
 - `CHANGELOG.md` has a `## [X.Y.Z]` section with a line starting `Database:`. A beta uses
   the section of its base version (`v0.3.0-beta.2` reads `## [0.3.0]`).
@@ -55,10 +56,15 @@ The tag must equal the version in `tauri.conf.json`, so the beta needs its own b
 set `0.3.0-beta.1` (for example) before tagging the beta, merge it to `main`, and set
 `0.3.0` and merge again before tagging the release.
 
+The workflow also compares `package.json` and `Cargo.toml` with the tag, so all three files
+must carry the same number or the run is refused.
+
 ### 3. CHANGELOG section with its Database line
 
 In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD — title` and add a
-new empty `## [Unreleased]` above it. The section must have a `Database:` line that lists
+new empty `## [Unreleased]` above it. Do this before the first beta: a beta reads the
+section of its base version. Update the date in the heading at the final release, and put
+fixes made between betas in the `[X.Y.Z]` section. The section must have a `Database:` line that lists
 the migrations the release adds and the backup format, or `Database: No database change.`
 Check it the way the workflow does:
 
@@ -85,6 +91,16 @@ This writes `release-<version>.db` and `release-<version>.json` into
 `crates/desknotes-core/tests/release_upgrade.rs` (copy it, change the file names, the
 version and the schema number) and commit all three. Never regenerate a fixture that is
 already committed.
+
+**Each release needs its own fixture example.** `make-fixture.sh` writes sample data with a
+small example program, and today that program only knows what v0.2.0 stored (notes, window
+positions, collapsed state, the edit lock and three settings). The script refuses any other
+tag, and the example also stops if the tag's schema version is not the one it was written
+for. Before making the fixture of a new release, extend the example to write **every kind of
+data that release added**, extend the manifest it writes, add the tag to `SUPPORTED_TAGS`,
+and make the copied test compare all of it. For the fixture made at `v0.3.0` that means
+private notes and labels, appearance, reminders and completed notes. A fixture without them
+would let the test pass without guarding them.
 
 ### 5. Tag a beta, test it, then tag the release
 
@@ -113,6 +129,9 @@ release over a beta, or going back to an older release, shows "will be DOWNGRADE
 expected and changes no data; confirm with `Y`.
 
 ### 6. Publish the draft
+
+The previous release must already be published (not a draft) before a new release goes
+public, because users roll back to it. (v0.2.0 is still a draft: publish it first.)
 
 On the [releases page](https://github.com/KRusselAlex/desknotes/releases) open the draft,
 read the notes and the file list (`.deb`, `.AppImage`, `SHA256SUMS`), and click

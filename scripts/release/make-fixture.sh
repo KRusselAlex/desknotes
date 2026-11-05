@@ -18,6 +18,12 @@
 # release and commit the result (docs/releasing.md); the committed fixture is never
 # regenerated for an old release.
 #
+# The example program writes only the kinds of data that the supported releases know about,
+# so the script REFUSES any tag not listed in SUPPORTED_TAGS below, before it touches git or
+# cargo. For a new release, first extend the example (and the manifest, and the copied test
+# in crates/desknotes-core/tests/) to write every kind of data that release added, then add
+# its tag and schema version to the list and to the guard inside the example.
+#
 # Needs: git, cargo, python3. Cargo reads the dependencies named in the tag's Cargo.lock (the
 # local cargo cache, or crates.io on first use). The app itself is never involved.
 
@@ -31,6 +37,21 @@ fi
 
 if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
   echo "error: '$TAG' is not a release tag like v0.2.0 or v0.3.0-beta.1" >&2
+  exit 2
+fi
+
+# Releases the example program below knows how to fill. Keep this in step with
+# WRITTEN_FOR_TAG and WRITTEN_FOR_SCHEMA (the release's schema version) in the example.
+SUPPORTED_TAGS=(v0.2.0)
+
+supported=0
+for known in "${SUPPORTED_TAGS[@]}"; do
+  [[ "$TAG" == "$known" ]] && supported=1
+done
+if [[ "$supported" -ne 1 ]]; then
+  echo "error: make-fixture.sh does not know how to fill $TAG (supported: ${SUPPORTED_TAGS[*]})." >&2
+  echo "       The example program in this script writes only the data of the supported releases." >&2
+  echo "       Extend the example (and the copied test) to write every kind of data $TAG added, then add the tag to SUPPORTED_TAGS." >&2
   exit 2
 fi
 
@@ -63,6 +84,11 @@ use std::path::Path;
 use desknotes_core::db::LATEST_VERSION;
 use desknotes_core::{Database, Note};
 use serde_json::{Value, json};
+
+/// The release this example was written for. It writes only the data that release knows;
+/// a different tag or schema would make a fixture that silently lacks newer data.
+const WRITTEN_FOR_TAG: &str = "v0.2.0";
+const WRITTEN_FOR_SCHEMA: i64 = 3;
 
 fn text(t: &str) -> Value {
     json!({ "type": "text", "text": t })
@@ -125,6 +151,15 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out = Path::new(&args[1]);
     let tag = &args[2];
+    assert_eq!(
+        tag, WRITTEN_FOR_TAG,
+        "this example was written for {WRITTEN_FOR_TAG}; extend it before making a fixture for {tag}"
+    );
+    assert_eq!(
+        LATEST_VERSION, WRITTEN_FOR_SCHEMA,
+        "{tag} has schema version {LATEST_VERSION} but this example was written for {WRITTEN_FOR_SCHEMA}; \
+         extend it to write the data the newer migrations added"
+    );
     std::fs::create_dir_all(out).unwrap();
     let work = out.join("work");
     let db_path = work.join("desknotes.db");

@@ -69,8 +69,9 @@ chmod +x DeskNotes_<version>_amd64.AppImage
 ```
 
 It uses the same data folder as the `.deb`. A new version is a new file; delete the old
-file yourself when you no longer need it. On Ubuntu 22.04 and later AppImages need
-`sudo apt install libfuse2t64` once.
+file yourself when you no longer need it. AppImages need the FUSE 2 library, installed
+once: `sudo apt install libfuse2` on Ubuntu 22.04, `sudo apt install libfuse2t64` on
+Ubuntu 24.04 and later.
 
 ### Checking a download (optional)
 
@@ -130,6 +131,14 @@ are going back to. It is the last migration number on the `Database:` line of th
 The steps below use `v3` (going back to 0.2.0). Change the `3` if you go back to another
 version.
 
+If a version's CHANGELOG line says "No database change", it has no copy of its own: use
+the copy of the nearest earlier version that has a migration.
+
+If there is no copy with that number, the newest copy with a **lower** number also works:
+the older version upgrades it, and makes its own copy first. Notes you wrote after that
+older copy was made will not be in it, so use it only if you have no better choice. (Step 2
+shows how to list them.)
+
 ### 1. Quit DeskNotes
 
 Closing the windows is not enough: DeskNotes keeps running in the tray. Use the tray menu
@@ -144,23 +153,28 @@ If it prints a number, DeskNotes is still running. If it prints nothing, go on.
 ### 2. See which copy will be used
 
 ```bash
-ls ~/.local/share/io.github.krusselalex.desknotes/backups/pre-migration-v3-*.db
+ls -1 ~/.local/share/io.github.krusselalex.desknotes/backups/pre-migration-v3-*.db
 ```
 
-The last line, with the largest number, is the newest. If the command says "No such
-file", there is no copy for that version: stop here and do not continue.
+The last line, with the largest number, is the newest. If the command says "No such file
+or directory" (bash) or "no matches found" (zsh), there is no copy with that number. To see
+every copy, run `ls -1 ~/.local/share/io.github.krusselalex.desknotes/backups/`: if there
+is one with a lower number (for example `v2`), you can use that one as described above,
+changing the `3` in step 3. If there is none, stop here and do not continue.
 
 ### 3. Set the current database aside and put the copy in its place
 
-Paste the whole block. It stops at the first problem. It picks the newest `v3` copy, makes a
+Paste the whole block. It stops at the first problem; it refuses at once, and says why, if
+DeskNotes is still running. It picks the newest `v3` copy, makes a
 folder named `rolled-back-` plus the date and time, **moves** (does not delete)
 `desknotes.db` and its `desknotes.db-wal` and `desknotes.db-shm` files into it, and then
 **copies** the backup to `desknotes.db`. The `-wal` and `-shm` files must not stay behind,
 because SQLite would apply them to the restored file.
 
 ```bash
+{ ! pgrep -x desknotes >/dev/null || { echo "DeskNotes is still running: quit it first"; false; }; } &&
 cd ~/.local/share/io.github.krusselalex.desknotes &&
-copy="$(ls backups/pre-migration-v3-*.db | sort | tail -n1)" &&
+copy="$(ls -1 backups/pre-migration-v3-*.db | sort | tail -n1)" &&
 [ -f "$copy" ] &&
 dest="rolled-back-$(date +%Y-%m-%d-%H%M%S)" &&
 mkdir "$dest" &&
@@ -191,17 +205,24 @@ The database you moved aside is still there. To use it again, quit DeskNotes (st
 run this block. It sets the current database aside the same way and copies the old files
 back. Before you paste it, replace `rolled-back-<date>` with the folder name from step 3
 (`ls -d ~/.local/share/io.github.krusselalex.desknotes/rolled-back-*` lists them) and keep
-the quotes. If the folder name is wrong, nothing is moved.
+the quotes. If DeskNotes is still running, the block says so and does nothing. If the
+folder name is wrong, it prints nothing and nothing is moved. When it works, its last line
+says which folder was put back and where your previous database went.
 
 ```bash
+{ ! pgrep -x desknotes >/dev/null || { echo "DeskNotes is still running: quit it first"; false; }; } &&
 cd ~/.local/share/io.github.krusselalex.desknotes &&
 old="rolled-back-<date>" &&
 [ -f "$old/desknotes.db" ] &&
 dest="rolled-back-$(date +%Y-%m-%d-%H%M%S)" &&
 mkdir "$dest" &&
 mv desknotes.db* "$dest"/ &&
-cp "$old"/desknotes.db* .
+cp "$old"/desknotes.db* . &&
+echo "Put back $old. Your previous database is in $dest/"
 ```
+
+No output at all means nothing was done. If it stops after an error from `mv` or `cp`,
+your previous database is safe inside the new `rolled-back-…` folder; nothing is deleted.
 
 Then install the newer version again and start it. DeskNotes will make a new
 `pre-migration-…` copy if it has to upgrade the database again.
