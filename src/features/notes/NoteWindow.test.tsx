@@ -867,7 +867,14 @@ describe("NoteWindow", () => {
       const d = new Date(ms);
       return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     };
+    // A fixed noon keeps "due in 3 hours" on the same day; after 21:00 it would show a weekday.
+    // Only Date is faked, so findBy* waits still run on real timers.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 10, 5, 12, 0));
+    });
     afterEach(() => {
+      vi.useRealTimers();
       window.innerWidth = 1024;
     });
 
