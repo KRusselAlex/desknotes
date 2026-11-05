@@ -32,6 +32,7 @@ import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
 import { isSafeLink } from "./links";
 import { chipText } from "./reminderText";
+import { useReadOnlyWord } from "./readOnlyWord";
 import { ReminderPopover } from "./ReminderPopover";
 import { NoteNotice, SaveError, SaveIndicator } from "./SaveStatus";
 
@@ -315,6 +316,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   const [focused, setFocused] = useState(false);
   const [, setTick] = useState(0); // refreshes the relative date chip
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
+  const [headerEl, setHeaderEl] = useState<HTMLElement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const closing = useRef(false);
   /** Last content known to be saved (or loaded); avoids writes when nothing changed. */
@@ -671,6 +673,10 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     else await run();
   }
 
+  // Short on room, the header drops the date, then the Read-only word, before the reminder time.
+  const reminderLabel = reminder ? chipText(reminder.dueAt, new Date()) : "";
+  const readOnlyWord = useReadOnlyWord(headerEl, locked, `${reminderLabel}|${pinned}|${width}`);
+
   // DES-38 option B: the quick row, then the list. The toggles keep the menu open.
   const quickActions: QuickAction[] = [
     { id: "new", label: "New", name: "New note", icon: "plus", title: "New note (Ctrl+N)", onSelect: () => void commands.createNote() },
@@ -783,14 +789,14 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         if (!rootRef.current?.contains(e.relatedTarget as Node | null)) setFocused(false);
       }}
     >
-      <header className="dn-note-header" data-tauri-drag-region>
+      <header className="dn-note-header" data-tauri-drag-region ref={setHeaderEl}>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
         </span>
         {locked && (
           <button
             type="button"
-            className="dn-readonly-chip"
+            className={`dn-readonly-chip${readOnlyWord ? "" : " is-icon-only"}`}
             title="Read-only. Click to allow editing."
             onClick={() => void setEditLock(false)}
           >

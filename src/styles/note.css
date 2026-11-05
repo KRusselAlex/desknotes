@@ -95,7 +95,26 @@
   content: "";
   height: var(--dn-header-h);
 }
-:is(.dn-readonly-chip, .dn-reminder-chip) {
+/* Next the Read-only chip drops its word (measured: readOnlyWord.ts) and becomes a 24 px
+   circle, like the on pin; the word stays for screen readers. Only then, as a last resort,
+   the reminder chip shrinks. */
+.dn-readonly-chip {
+  flex: none;
+}
+.dn-readonly-chip.is-icon-only {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+.dn-readonly-chip.is-icon-only .dn-chip-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.dn-reminder-chip {
   min-width: 0;
   flex-shrink: 1;
 }

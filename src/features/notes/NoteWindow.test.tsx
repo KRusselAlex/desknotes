@@ -1002,13 +1002,18 @@ describe("NoteWindow", () => {
       expect(date).toMatch(/flex-wrap:\s*wrap;/);
       expect(date).toMatch(/overflow:\s*clip;/);
       expect(block(".dn-note-controls > .dn-note-date::before")).toMatch(/height:\s*var\(--dn-header-h\);/);
-      // Then the chips shrink, their text ending in an ellipsis.
-      const chips = block(":is(.dn-readonly-chip, .dn-reminder-chip)");
-      expect(chips).toMatch(/min-width:\s*0;/);
-      expect(chips).toMatch(/flex-shrink:\s*1;/);
+      // Next the Read-only chip drops its word (measured, see the test below): it never
+      // shrinks itself, and icon-only it is a 24 px circle whose word stays for screen readers.
+      expect(block(".dn-readonly-chip")).toMatch(/flex:\s*none;/);
+      const iconOnly = block(".dn-readonly-chip.is-icon-only");
+      expect(iconOnly).toMatch(/width:\s*24px;/);
+      expect(iconOnly).toMatch(/padding:\s*0;/);
+      expect(block(".dn-readonly-chip.is-icon-only .dn-chip-text")).toMatch(/clip-path:\s*inset\(50%\);/);
+      // Only as a last resort the reminder chip shrinks (ellipsis); nothing takes that back.
+      expect(block(".dn-reminder-chip")).toMatch(/min-width:\s*0;/);
+      expect(block(".dn-reminder-chip")).toMatch(/flex-shrink:\s*1;/);
+      expect(block(".dn-reminder-chip")).not.toMatch(/flex(-shrink)?:\s*(none|0)/);
       expect(block(".dn-chip-text")).toMatch(/text-overflow:\s*ellipsis;/);
-      // …and no later rule of the same weight takes that back.
-      for (const chip of [".dn-readonly-chip", ".dn-reminder-chip"]) expect(block(chip), chip).not.toMatch(/flex(-shrink)?:\s*(none|0)/);
 
       const r = view();
       vi.mocked(commands.getReminder).mockResolvedValue(r);
@@ -1016,6 +1021,37 @@ describe("NoteWindow", () => {
       const chip = await screen.findByRole("button", { name: /^Reminder / });
       expect(chip.querySelector(".dn-chip-text")).toHaveTextContent(hhmm(r.dueAt));
       expect(screen.getByRole("button", { name: /Read-only/ }).querySelector(".dn-chip-text")).toHaveTextContent("Read-only");
+    });
+
+    it("drops the Read-only word, not the reminder time, when the header is short (locked + reminder)", async () => {
+      const r = view();
+      vi.mocked(commands.getReminder).mockResolvedValue(r);
+      // jsdom does no layout: the header reports content 12 px wider than itself.
+      const header = (el: Element) => el.classList.contains("dn-note-header");
+      const sw = vi.spyOn(Element.prototype, "scrollWidth", "get").mockImplementation(function (this: Element) {
+        return header(this) ? 312 : 0;
+      });
+      const cw = vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
+        return header(this) ? 300 : 0;
+      });
+      try {
+        await openNote({ editLocked: true });
+        const reminderChip = await screen.findByRole("button", { name: /^Reminder / });
+        const readOnly = screen.getByRole("button", { name: "Read-only" });
+        await waitFor(() => expect(readOnly).toHaveClass("is-icon-only"));
+        expect(readOnly).toHaveAttribute("title", "Read-only. Click to allow editing.");
+        expect(reminderChip).toHaveTextContent(hhmm(r.dueAt));
+      } finally {
+        sw.mockRestore();
+        cw.mockRestore();
+      }
+    });
+
+    it("keeps the Read-only word when the header has room", async () => {
+      vi.mocked(commands.getReminder).mockResolvedValue(view());
+      await openNote({ editLocked: true });
+      await screen.findByRole("button", { name: /^Reminder / });
+      expect(screen.getByRole("button", { name: "Read-only" })).not.toHaveClass("is-icon-only");
     });
 
     it("hides the chip at narrow widths, with the date", async () => {
