@@ -29,7 +29,7 @@ Design: `docs/superpowers/specs/2026-11-05-completed-notes-design.md` (option A,
 
 ## Owner's check
 
-On 2026-11-05 the owner installed the .deb built from `main` (installed 18:21) and confirmed "is ok". Their database is at schema 7 and has one note marked done. Only metadata was read, read-only.
+On 2026-11-05 the owner installed the .deb built from `main` (built 18:21, installed 18:32 per `/var/log/dpkg.log`) and confirmed "is ok". Their database is at schema 7 and has one note marked done. Only metadata was read, read-only.
 
 ## Not checked in the real app
 
