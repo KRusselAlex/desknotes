@@ -57,6 +57,7 @@ const note = (over: Partial<NoteSummary> = {}): NoteSummary => ({
   updatedAt: Date.now(),
   archivedAt: null,
   deletedAt: null,
+  completedAt: null,
   visible: true,
   snippet: null,
   private: false,
@@ -80,7 +81,7 @@ describe("ManagerWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(commands.privacyStatus).mockResolvedValue(privacy());
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, archived: 0, trash: 1 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, completed: 0, archived: 0, trash: 1 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
     vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
     vi.mocked(commands.listReminders).mockResolvedValue([]);
@@ -185,7 +186,7 @@ describe("ManagerWindow", () => {
 describe("ManagerWindow with private notes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, archived: 0, trash: 0 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, completed: 0, archived: 0, trash: 0 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
     vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
     vi.mocked(commands.listReminders).mockResolvedValue([]);
@@ -316,7 +317,7 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 4, 22, 30));
     vi.mocked(commands.privacyStatus).mockResolvedValue(privacy());
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, archived: 0, trash: 0 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, completed: 0, archived: 0, trash: 0 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
     vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
     vi.mocked(commands.listNotes).mockResolvedValue([note()]);
@@ -402,7 +403,7 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: /Reminders/ })).toHaveTextContent("2"));
     vi.mocked(commands.listReminders).mockRejectedValue(new Error("database is locked"));
     vi.mocked(commands.listNotes).mockResolvedValue([note(), note({ id: "n2", title: "Bike repair" })]);
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, archived: 0, trash: 0 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, completed: 0, archived: 0, trash: 0 });
     await act(async () => remindersChanged.handler?.({ noteId: null }));
     await waitFor(() => expect(screen.getByText("Bike repair")).toBeInTheDocument());
     expect(screen.getByText("Weekend errands")).toBeInTheDocument();

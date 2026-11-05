@@ -88,7 +88,7 @@ pub fn show_hidden(app: &AppHandle) -> IpcResult<usize> {
         let Ok(note) = state.with_db(|db| db.get_note(id)) else {
             continue;
         };
-        if note.archived_at.is_some() || note.deleted_at.is_some() {
+        if window_refusal(note.archived_at, note.deleted_at, note.completed_at).is_some() {
             continue;
         }
         state.with_db(|db| db.set_visible(id, true))?;
@@ -206,6 +206,37 @@ pub async fn set_archived(
     Ok(())
 }
 
+/// Mark a note done (its window closes, as for archive) or reopen it (its window
+/// opens at the saved place). Touches only the done date; the text, colour,
+/// settings and reminder rule stay as they are. The note window calls it once
+/// its "Marked done" strip ends, so nothing is written during the undo seconds.
+#[tauri::command]
+pub async fn set_note_completed(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    done: bool,
+) -> IpcResult<()> {
+    let id = parse_note_id(&id)?;
+    let now = desknotes_core::now_ms();
+    state.with_db(|db| db.set_completed(&id, done, now))?;
+    if done {
+        // The Note settings window closes itself when its note is done (it
+        // listens to `notes-changed`, as for archive).
+        windows::close_note(&app, &id)?;
+        windows::after_note_hidden(&app, &id);
+    } else {
+        let note = state.with_db(|db| db.get_note(&id))?;
+        // A note that is also archived stays closed: it is listed as Archived.
+        if window_refusal(note.archived_at, note.deleted_at, note.completed_at).is_none() {
+            windows::open_note(&app, &note)?;
+        }
+    }
+    // "other" wakes the reminder scheduler, so `next_wake` is recomputed.
+    emit_changed(&app, Some(&id), "other");
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn trash_note(
     app: AppHandle,
@@ -252,16 +283,32 @@ pub async fn show_note(app: AppHandle, state: State<'_, AppState>, id: String) -
     show_note_window(&app, &state, &id)
 }
 
+/// Why a note must not get a window, or `None` when it may. Only an active note
+/// (not trashed, archived or done) has a window: "Show hidden notes", a manager
+/// row and a reminder click all go through this.
+fn window_refusal(
+    archived_at: Option<i64>,
+    deleted_at: Option<i64>,
+    completed_at: Option<i64>,
+) -> Option<&'static str> {
+    if deleted_at.is_some() {
+        Some("restore the note before showing it")
+    } else if archived_at.is_some() {
+        Some("unarchive the note before showing it")
+    } else if completed_at.is_some() {
+        Some("reopen the note before showing it")
+    } else {
+        None
+    }
+}
+
 /// Open (or focus) the note's window and remember it as visible. Refused for an
-/// archived or trashed note. Also used by a click on a reminder notification.
+/// archived, trashed or done note. Also used by a click on a reminder notification.
 pub fn show_note_window(app: &AppHandle, state: &AppState, id: &str) -> IpcResult<()> {
     let id = parse_note_id(id)?;
     let note = state.with_db(|db| db.get_note(&id))?;
-    if note.archived_at.is_some() || note.deleted_at.is_some() {
-        return Err(IpcError::new(
-            "not_allowed",
-            "restore or unarchive the note before showing it",
-        ));
+    if let Some(message) = window_refusal(note.archived_at, note.deleted_at, note.completed_at) {
+        return Err(IpcError::new("not_allowed", message));
     }
     state.with_db(|db| db.set_visible(&id, true))?;
     windows::open_note(app, &note)?;
@@ -346,4 +393,28 @@ pub fn set_edit_locked(
     state.with_db(|db| db.set_edit_locked(&id, locked))?;
     emit_changed(&app, Some(&id), "other");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_active_note_may_get_a_window() {
+        assert!(window_refusal(None, None, None).is_none());
+    }
+
+    #[test]
+    fn archived_trashed_and_done_notes_never_get_a_window() {
+        assert!(window_refusal(Some(1), None, None).is_some());
+        assert!(window_refusal(None, Some(1), None).is_some());
+        assert!(window_refusal(None, None, Some(1)).is_some());
+        assert!(window_refusal(Some(1), Some(2), Some(3)).is_some());
+    }
+
+    #[test]
+    fn a_done_note_is_told_to_reopen_first() {
+        let message = window_refusal(None, None, Some(1)).unwrap();
+        assert!(message.contains("reopen"), "{message}");
+    }
 }

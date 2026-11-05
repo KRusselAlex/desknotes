@@ -57,6 +57,7 @@ function note(over: Partial<Note> = {}): Note {
     updatedAt: 0,
     archivedAt: null,
     deletedAt: null,
+    completedAt: null,
     editLocked: false,
     private: false,
     privateLabel: "",
@@ -274,6 +275,7 @@ describe("NoteSettingsWindow", () => {
   it.each([
     ["archived", { archivedAt: 5 }],
     ["trashed", { deletedAt: 5 }],
+    ["marked done", { completedAt: 5 }],
     ["hidden", { window: { ...note().window, visible: false } }],
   ])("closes when its note is %s", async (_, change) => {
     await open();

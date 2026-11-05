@@ -83,6 +83,7 @@ const base = {
   createdAt: now,
   archivedAt: null,
   deletedAt: null,
+  completedAt: null,
   editLocked: false,
   private: false,
   privateLabel: "",
@@ -126,12 +127,20 @@ const notes: Note[] = [
   { ...base, id: "a4", title: "Ideas for the talk", content: doc("Ideas for the talk"), color: "#ffd8b1", updatedAt: now - 50 * H, window: { ...win, visible: false } },
   { ...base, id: "a5", title: "", content: doc(""), color: "#ffffff", updatedAt: now - 80 * H, window: win },
   { ...base, id: "r1", title: "Trip packing list", content: doc("Trip packing list"), color: "#cfe8ff", updatedAt: now - 400 * H, archivedAt: now - 300 * H, window: { ...win, visible: false } },
+  { ...base, id: "c1", title: "Book the dentist", content: doc("Book the dentist"), color: "#c8f7c5", updatedAt: now - 30 * H, completedAt: now - 5 * H, window: { ...win, visible: false } },
   { ...base, id: "t1", title: "Old Wi-Fi password", content: doc("Old Wi-Fi password"), color: "#ffd6e0", updatedAt: now - 500 * H, deletedAt: now - 90 * H, window: { ...win, visible: false } },
 ];
 
 const text = (n: Note) => JSON.stringify(n.content).replace(/"[a-zA-Z]+":/g, " ").toLowerCase();
+// A note is in exactly one list: trash > archived > completed > active.
 const inTab = (n: Note, f: NoteFilter) =>
-  f === "trash" ? n.deletedAt !== null : f === "archived" ? n.archivedAt !== null && n.deletedAt === null : n.archivedAt === null && n.deletedAt === null;
+  f === "trash"
+    ? n.deletedAt !== null
+    : f === "archived"
+      ? n.archivedAt !== null && n.deletedAt === null
+      : f === "completed"
+        ? n.completedAt !== null && n.archivedAt === null && n.deletedAt === null
+        : n.completedAt === null && n.archivedAt === null && n.deletedAt === null;
 const find = (id: unknown) => notes.find((n) => n.id === id)!;
 
 const params = new URLSearchParams(location.search);
@@ -305,12 +314,12 @@ mockIPC(
           .sort((x, y) => y.updatedAt - x.updatedAt)
           .map((n) => ({
             id: n.id, title: n.title, color: n.color, updatedAt: n.updatedAt, archivedAt: n.archivedAt,
-            deletedAt: n.deletedAt, visible: n.window.visible, snippet: q && !n.locked ? n.title : null,
+            deletedAt: n.deletedAt, completedAt: n.completedAt, visible: n.window.visible, snippet: q && !n.locked ? n.title : null,
             private: n.private, privateLabel: n.privateLabel, locked: n.locked,
           }));
       }
       case "note_counts":
-        return { active: notes.filter((n) => inTab(n, "active")).length, archived: notes.filter((n) => inTab(n, "archived")).length, trash: notes.filter((n) => inTab(n, "trash")).length };
+        return { active: notes.filter((n) => inTab(n, "active")).length, completed: notes.filter((n) => inTab(n, "completed")).length, archived: notes.filter((n) => inTab(n, "archived")).length, trash: notes.filter((n) => inTab(n, "trash")).length };
       case "startup_errors":
         return params.get("error") ? ["The notes database could not be opened. Notes already on screen are kept open."] : [];
       case "save_note_content": {
@@ -494,7 +503,7 @@ mockIPC(
         const rows: ReminderListRow[] = [];
         for (const [noteId, r] of reminders) {
           const n = notes.find((x) => x.id === noteId);
-          if (!n || n.deletedAt !== null) continue;
+          if (!n || n.deletedAt !== null || n.completedAt !== null) continue;
           const locked = isWithheld(n);
           const searched = locked ? n.privateLabel || PRIVATE_FALLBACK_LABEL : n.title;
           if (q && !searched.toLowerCase().includes(q)) continue;
@@ -510,6 +519,14 @@ mockIPC(
           });
         }
         return rows.sort((x, y) => x.dueAt - y.dueAt);
+      }
+      case "set_note_completed": {
+        const n = find(a.id);
+        if (n.deletedAt !== null) throw { code: "not_allowed", message: "restore the note first" };
+        // Like the core: done keeps an existing date; reopening clears it.
+        n.completedAt = a.done ? (n.completedAt ?? Date.now()) : null;
+        void emit("notes-changed", { id: a.id, kind: "other" });
+        return null;
       }
       case "duplicate_note":
         if (isWithheld(find(a.id))) throw notLocked();

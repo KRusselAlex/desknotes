@@ -91,6 +91,7 @@ const note = (over: Partial<Note> = {}): Note => ({
   updatedAt: Date.now(),
   archivedAt: null,
   deletedAt: null,
+  completedAt: null,
   editLocked: false,
   private: false,
   privateLabel: "",
