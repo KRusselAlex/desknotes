@@ -917,7 +917,10 @@ mod tests {
 
         db.set_completed(&id, false, 6_000).unwrap();
         let reopened = db.get_note(&id).unwrap();
-        assert!(reopened.window.visible, "the reopened note opens at restart");
+        assert!(
+            reopened.window.visible,
+            "the reopened note opens at restart"
+        );
         assert_eq!(
             crate::Note {
                 window: crate::NoteWindow {
