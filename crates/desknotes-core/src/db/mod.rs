@@ -6,6 +6,7 @@ mod notes;
 mod privacy;
 mod reminders;
 mod settings;
+mod welcome;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -18,6 +19,8 @@ use crate::error::{CoreError, CoreResult};
 pub use backup::{Export, LAST_BACKUP_AT};
 pub use migrations::LATEST_VERSION;
 pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};
+pub use settings::FIRST_RUN_DONE;
+pub use welcome::welcome_content;
 
 pub struct Database {
     conn: Connection,
@@ -27,6 +30,8 @@ pub struct Database {
     /// Private notes that stay readable and savable while locked, because their
     /// last save failed when the lock came on (plan Review Focus 1).
     kept_open: RefCell<HashSet<String>>,
+    /// The database file had schema version 0 when this connection was opened.
+    created_new: bool,
 }
 
 impl Database {
@@ -60,8 +65,10 @@ impl Database {
             conn,
             privacy_locked: Cell::new(false),
             kept_open: RefCell::new(HashSet::new()),
+            created_new: false,
         };
         let version = db.schema_version()?;
+        db.created_new = version == 0;
         refuse_if_newer(version)?;
         if version > 0
             && version < LATEST_VERSION

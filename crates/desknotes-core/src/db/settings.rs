@@ -22,6 +22,8 @@ pub const APPEARANCE_LAYOUT: &str = "appearance_layout";
 pub const APPEARANCE_DEFAULT_FONT: &str = "appearance_default_font";
 /// Default text size in px as a decimal string, `"10"`–`"32"`.
 pub const APPEARANCE_DEFAULT_SIZE: &str = "appearance_default_size";
+/// `"1"` once the welcome note has been created on a new database (DES-29).
+pub const FIRST_RUN_DONE: &str = "first_run_done";
 
 impl Database {
     pub fn get_setting(&self, key: &str) -> CoreResult<Option<String>> {

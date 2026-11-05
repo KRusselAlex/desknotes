@@ -295,3 +295,22 @@ fn dump(conn: &Connection) -> Vec<String> {
     }
     lines
 }
+
+/// A real older database whose user deleted every note is not a new database: it
+/// gets no welcome note, and nothing is written for one.
+#[test]
+fn existing_database_gets_no_welcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("desknotes.db");
+    fs::copy(fixture_db(), &db_path).unwrap();
+    {
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("DELETE FROM note_windows; DELETE FROM notes;")
+            .unwrap();
+    }
+    let db = Database::open(&db_path, &dir.path().join("backups")).unwrap();
+    assert!(!db.was_created_new());
+    assert!(db.create_welcome_note().unwrap().is_none());
+    assert_eq!(db.count_notes().unwrap().active, 0);
+    assert_eq!(db.get_setting("first_run_done").unwrap(), None);
+}
