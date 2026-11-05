@@ -296,6 +296,73 @@ describe("SettingsWindow", () => {
       expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
     });
 
+    it("restarts the 2 s window on a second click", async () => {
+      stubClipboard(vi.fn().mockResolvedValue(undefined));
+      await openAbout();
+      const copy = await screen.findByRole("button", { name: "Copy" });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await act(async () => copy.click());
+      act(() => void vi.advanceTimersByTime(1500));
+      await act(async () => screen.getByRole("button", { name: "Copied" }).click());
+      act(() => void vi.advanceTimersByTime(1999));
+      expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+      act(() => void vi.advanceTimersByTime(1));
+      expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    });
+
+    it("does not say Copied next to Could not copy.", async () => {
+      const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+      stubClipboard(writeText);
+      await openAbout();
+      const copy = await screen.findByRole("button", { name: "Copy" });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await act(async () => copy.click());
+      expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+      await act(async () => screen.getByRole("button", { name: "Copied" }).click());
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not copy.");
+      expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+      // The cleared timer must not fire later.
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("sets no state and arms no timer after unmount", async () => {
+      let resolve!: () => void;
+      stubClipboard(() => new Promise<void>((r) => (resolve = r)));
+      const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const { unmount } = render(<SettingsWindow />);
+        await userEvent.click(await screen.findByRole("button", { name: "About" }));
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        await act(async () => screen.getByRole("button", { name: "Copy" }).click());
+        unmount();
+        await act(async () => resolve());
+        expect(vi.getTimerCount()).toBe(0);
+        expect(errors).not.toHaveBeenCalled();
+      } finally {
+        errors.mockRestore();
+      }
+    });
+
+    it("clears a running Copied timer on unmount", async () => {
+      stubClipboard(vi.fn().mockResolvedValue(undefined));
+      const { unmount } = render(<SettingsWindow />);
+      await userEvent.click(await screen.findByRole("button", { name: "About" }));
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      await act(async () => screen.getByRole("button", { name: "Copy" }).click());
+      const running = vi.getTimerCount();
+      expect(running).toBeGreaterThan(0);
+      unmount();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("says Could not copy. when there is no clipboard (WebKitGTK)", async () => {
+      Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+      await openAbout();
+      await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Could not copy.");
+    });
+
     it("opens each fixed link by its id, only when clicked", async () => {
       await openAbout();
       expect(commands.openExternalLink).not.toHaveBeenCalled();

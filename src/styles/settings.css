@@ -198,7 +198,6 @@
   color: var(--dn-accent-ink);
   text-decoration: underline;
   cursor: pointer;
-  border-radius: 2px;
 }
 .dn-about-link:focus-visible {
   outline: none;

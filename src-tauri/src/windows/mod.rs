@@ -615,7 +615,9 @@ fn place_welcome_note(app: &AppHandle, state: &AppState) {
             let position = window_positioning_supported().then_some((x, y));
             if let Err(e) = state.with_db(|db| {
                 db.set_window_geometry(&note.id, position, note.window.width, note.window.height)
-            }) {
+            }) && e.code != crate::state::DATABASE_UNAVAILABLE
+            {
+                // DATABASE_UNAVAILABLE is already reported.
                 eprintln!("DeskNotes: could not place the welcome note: {}", e.message);
             }
         }

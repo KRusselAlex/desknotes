@@ -256,19 +256,32 @@ function AboutPane({
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  function stopTimer() {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }
 
   async function copyVersion() {
+    let failed = false;
     try {
       await navigator.clipboard.writeText(`DeskNotes ${settings.version} · ${settings.osName}`);
     } catch {
-      setCopyFailed(true);
-      return;
+      failed = true;
     }
-    setCopyFailed(false);
-    setCopied(true);
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), COPIED_FOR_MS);
+    if (!mounted.current) return;
+    stopTimer();
+    setCopyFailed(failed);
+    setCopied(!failed);
+    if (!failed) timer.current = setTimeout(() => setCopied(false), COPIED_FOR_MS);
   }
 
   return (
