@@ -15,7 +15,7 @@ use crate::validation::{
 
 const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at, n.updated_at,
      n.archived_at, n.deleted_at, w.x, w.y, w.width, w.height, w.visible, w.always_on_top,
-     n.edit_locked, w.collapsed, n.private, n.private_label, n.appearance";
+     n.edit_locked, w.collapsed, n.private, n.private_label, n.appearance, n.completed_at";
 
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
@@ -33,6 +33,7 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
             updated_at: row.get(5)?,
             archived_at: row.get(6)?,
             deleted_at: row.get(7)?,
+            completed_at: row.get(19)?,
             edit_locked: row.get(14)?,
             private: row.get(16)?,
             private_label: row.get(17)?,
@@ -186,13 +187,14 @@ impl Database {
         private && lock && !self.kept_open.borrow().contains(id)
     }
 
-    /// Notes whose windows should be open: visible, not archived, not in trash.
+    /// Notes whose windows should be open: visible, not archived, not done, not in trash.
     /// Returns the readable notes and the ids of notes whose stored content is
     /// unreadable, so one damaged note never stops the others from opening.
     pub fn notes_to_show(&self) -> CoreResult<(Vec<Note>, Vec<String>)> {
         let sql = format!(
             "SELECT {NOTE_COLUMNS} FROM notes n JOIN note_windows w ON w.note_id = n.id
              WHERE w.visible = 1 AND n.archived_at IS NULL AND n.deleted_at IS NULL
+               AND n.completed_at IS NULL
              ORDER BY n.created_at"
         );
         let lock = self.lock_active()?;
@@ -224,9 +226,20 @@ impl Database {
         query: Option<&str>,
     ) -> CoreResult<Vec<NoteSummary>> {
         let condition = match filter {
-            NoteFilter::Active => "n.archived_at IS NULL AND n.deleted_at IS NULL",
+            // A note is in exactly one list: Trash, else Archived, else Completed, else Active.
+            NoteFilter::Active => {
+                "n.archived_at IS NULL AND n.deleted_at IS NULL AND n.completed_at IS NULL"
+            }
+            NoteFilter::Completed => {
+                "n.completed_at IS NOT NULL AND n.archived_at IS NULL AND n.deleted_at IS NULL"
+            }
             NoteFilter::Archived => "n.archived_at IS NOT NULL AND n.deleted_at IS NULL",
             NoteFilter::Trash => "n.deleted_at IS NOT NULL",
+        };
+        // Completed is newest-done first; the other lists follow the last edit.
+        let order = match filter {
+            NoteFilter::Completed => "n.completed_at DESC, n.updated_at DESC",
+            _ => "n.updated_at DESC",
         };
         let needle = query.map(|q| q.trim().to_lowercase()).unwrap_or_default();
         let lock = self.lock_active()?;
@@ -236,11 +249,11 @@ impl Database {
             "SELECT n.id, n.title, n.color, n.updated_at, n.archived_at, n.deleted_at, w.visible,
                     n.private, n.private_label,
                     CASE WHEN ?1 = '' THEN NULL ELSE n.content_json END,
-                    ?1 <> '' AND instr(n.search_text, ?1) > 0
+                    ?1 <> '' AND instr(n.search_text, ?1) > 0, n.completed_at
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              WHERE {condition}
                AND (?1 = '' OR instr(n.search_text, ?1) > 0 OR (?2 AND n.private = 1))
-             ORDER BY n.updated_at DESC"
+             ORDER BY {order}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![needle, lock], |r| {
@@ -254,6 +267,7 @@ impl Database {
                     updated_at: r.get(3)?,
                     archived_at: r.get(4)?,
                     deleted_at: r.get(5)?,
+                    completed_at: r.get(11)?,
                     visible: r.get(6)?,
                     private: r.get(7)?,
                     private_label: r.get(8)?,
@@ -295,7 +309,8 @@ impl Database {
     pub fn count_notes(&self) -> CoreResult<NoteCounts> {
         Ok(self.conn.query_row(
             "SELECT
-                coalesce(sum(archived_at IS NULL AND deleted_at IS NULL), 0),
+                coalesce(sum(archived_at IS NULL AND deleted_at IS NULL AND completed_at IS NULL), 0),
+                coalesce(sum(completed_at IS NOT NULL AND archived_at IS NULL AND deleted_at IS NULL), 0),
                 coalesce(sum(archived_at IS NOT NULL AND deleted_at IS NULL), 0),
                 coalesce(sum(deleted_at IS NOT NULL), 0)
              FROM notes",
@@ -303,8 +318,9 @@ impl Database {
             |r| {
                 Ok(NoteCounts {
                     active: r.get(0)?,
-                    archived: r.get(1)?,
-                    trash: r.get(2)?,
+                    completed: r.get(1)?,
+                    archived: r.get(2)?,
+                    trash: r.get(3)?,
                 })
             },
         )?)
@@ -424,6 +440,39 @@ impl Database {
             &original.private_label,
             &original.appearance,
         )
+    }
+
+    /// Mark a note done, or reopen it. Only `completed_at` changes: the text, colour,
+    /// styling, window, reminder and `updated_at` are never touched. Marking an
+    /// already-done note done keeps its original date. Reopening also marks the window
+    /// visible (unless the note is archived). Refused for a note in the trash,
+    /// like archiving. The shell closes and opens the window.
+    pub fn set_completed(&self, id: &str, done: bool, now_ms: i64) -> CoreResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let changed = tx.execute(
+            "UPDATE notes SET completed_at = CASE WHEN ?2 THEN coalesce(completed_at, ?3) ELSE NULL END
+             WHERE id = ?1 AND deleted_at IS NULL",
+            params![id, done, now_ms],
+        )?;
+        if changed == 0 {
+            self.get_note(id)?; // NotFound if it does not exist at all
+            return Err(CoreError::NotAllowed(
+                "restore the note from the trash first".into(),
+            ));
+        }
+        if !done {
+            // A reopened note is a visible one again, as after unarchiving: a hide-all that
+            // ran while its "Marked done" strip ended may have cleared the flag. A note that
+            // is also archived stays hidden (it is listed as Archived).
+            tx.execute(
+                "UPDATE note_windows SET visible = 1
+                 WHERE note_id = ?1
+                   AND (SELECT archived_at FROM notes WHERE id = ?1) IS NULL",
+                [id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Archive hides the window; the note stays searchable under "Archived".
@@ -810,6 +859,303 @@ mod tests {
         db.restore_note(&id).unwrap();
         assert_eq!(db.list_notes(NoteFilter::Archived, None).unwrap().len(), 1);
         assert!(!db.get_note(&id).unwrap().window.visible);
+    }
+
+    fn counts(db: &Database) -> (i64, i64, i64, i64) {
+        let c = db.count_notes().unwrap();
+        (c.active, c.completed, c.archived, c.trash)
+    }
+
+    #[test]
+    fn completing_touches_only_completed_at() {
+        let db = db();
+        let id = db.create_note(Some("#c8f7c5")).unwrap().id;
+        db.save_content(&id, FIXTURE).unwrap();
+        db.set_appearance(&id, &Appearance::default()).unwrap();
+        db.set_window_geometry(&id, Some((40.0, 50.0)), 360.0, 300.0)
+            .unwrap();
+        db.set_always_on_top(&id, true).unwrap();
+        db.set_edit_locked(&id, true).unwrap();
+        let rule = crate::reminders::validate_rule("2030-01-01", "09:00", "daily").unwrap();
+        db.set_reminder(&id, rule, chrono::Utc::now(), &chrono::Utc)
+            .unwrap();
+        let before = db.get_note(&id).unwrap();
+        let reminder = db.reminder(&id).unwrap();
+        assert_eq!(before.completed_at, None);
+
+        db.set_completed(&id, true, 5_000).unwrap();
+        let done = db.get_note(&id).unwrap();
+        assert_eq!(done.completed_at, Some(5_000));
+        assert_eq!(
+            crate::Note {
+                completed_at: None,
+                ..done
+            },
+            before,
+            "content, colour, appearance, window, lock and updated_at are untouched"
+        );
+        assert_eq!(db.reminder(&id).unwrap(), reminder);
+
+        // Marking an already-done note done again keeps the original date.
+        db.set_completed(&id, true, 9_000).unwrap();
+        assert_eq!(db.get_note(&id).unwrap().completed_at, Some(5_000));
+
+        db.set_completed(&id, false, 9_500).unwrap();
+        assert_eq!(db.get_note(&id).unwrap(), before, "reopen restores it all");
+        assert_eq!(db.reminder(&id).unwrap(), reminder);
+    }
+
+    #[test]
+    fn reopening_makes_the_window_visible_again() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.save_content(&id, FIXTURE).unwrap();
+        db.set_completed(&id, true, 5_000).unwrap();
+        // Hide-all ran while the done strip was ending and hid the note.
+        db.set_visible(&id, false).unwrap();
+        let hidden = db.get_note(&id).unwrap();
+
+        db.set_completed(&id, false, 6_000).unwrap();
+        let reopened = db.get_note(&id).unwrap();
+        assert!(
+            reopened.window.visible,
+            "the reopened note opens at restart"
+        );
+        assert_eq!(
+            crate::Note {
+                window: crate::NoteWindow {
+                    visible: false,
+                    ..reopened.window.clone()
+                },
+                ..reopened
+            },
+            crate::Note {
+                completed_at: None,
+                ..hidden
+            },
+            "only the visible flag differs from before"
+        );
+    }
+
+    #[test]
+    fn reopening_a_note_that_is_also_archived_keeps_it_hidden() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_completed(&id, true, 5_000).unwrap();
+        db.set_archived(&id, true).unwrap();
+        db.set_completed(&id, false, 6_000).unwrap();
+        assert!(!db.get_note(&id).unwrap().window.visible);
+        assert_eq!(db.list_notes(NoteFilter::Archived, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_completed_list_is_newest_done_first() {
+        let db = db();
+        let old = db.create_note(None).unwrap().id;
+        let new = db.create_note(None).unwrap().id;
+        let mid = db.create_note(None).unwrap().id;
+        // Done order differs from edit order: `old` was edited last.
+        db.set_completed(&mid, true, 200).unwrap();
+        db.set_completed(&new, true, 300).unwrap();
+        db.set_completed(&old, true, 100).unwrap();
+        db.save_content(&old, FIXTURE).unwrap();
+        let ids: Vec<_> = db
+            .list_notes(NoteFilter::Completed, None)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(ids, vec![new, mid, old]);
+    }
+
+    #[test]
+    fn completing_refuses_trashed_and_unknown_notes_like_archiving() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.trash_note(&id).unwrap();
+        let err = db.set_completed(&id, true, 1).unwrap_err();
+        assert_eq!(err.code(), "not_allowed");
+        assert_eq!(
+            err.to_string(),
+            db.set_archived(&id, true).unwrap_err().to_string()
+        );
+        assert_eq!(db.get_note(&id).unwrap().completed_at, None);
+        assert_eq!(
+            db.set_completed("missing", true, 1).unwrap_err().code(),
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn lists_follow_precedence() {
+        let db = db();
+        // Every combination of deleted / archived / completed.
+        let mut expected: Vec<(String, NoteFilter)> = Vec::new();
+        for mask in 0..8u8 {
+            let (deleted, archived, completed) = (mask & 4 != 0, mask & 2 != 0, mask & 1 != 0);
+            let id = db.create_note(None).unwrap().id;
+            if completed {
+                db.set_completed(&id, true, 100).unwrap();
+            }
+            if archived {
+                db.set_archived(&id, true).unwrap();
+            }
+            if deleted {
+                db.trash_note(&id).unwrap();
+            }
+            let list = if deleted {
+                NoteFilter::Trash
+            } else if archived {
+                NoteFilter::Archived
+            } else if completed {
+                NoteFilter::Completed
+            } else {
+                NoteFilter::Active
+            };
+            expected.push((id, list));
+        }
+        for filter in [
+            NoteFilter::Active,
+            NoteFilter::Completed,
+            NoteFilter::Archived,
+            NoteFilter::Trash,
+        ] {
+            let mut got: Vec<_> = db
+                .list_notes(filter, None)
+                .unwrap()
+                .into_iter()
+                .map(|n| n.id)
+                .collect();
+            let mut want: Vec<_> = expected
+                .iter()
+                .filter(|(_, f)| *f == filter)
+                .map(|(id, _)| id.clone())
+                .collect();
+            got.sort();
+            want.sort();
+            assert_eq!(got, want, "{filter:?}");
+        }
+        // Each of the eight notes is counted once: 1 active, 1 done, 2 archived, 4 trashed.
+        assert_eq!(counts(&db), (1, 1, 2, 4));
+
+        // Done, then archive, then unarchive: back in Completed, date kept.
+        let id = db.create_note(None).unwrap().id;
+        db.set_completed(&id, true, 777).unwrap();
+        db.set_archived(&id, true).unwrap();
+        assert_eq!(db.get_note(&id).unwrap().completed_at, Some(777));
+        db.set_archived(&id, false).unwrap();
+        let rows = db.list_notes(NoteFilter::Completed, None).unwrap();
+        let row = rows.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(row.completed_at, Some(777));
+        // Done, then trash, then restore: back in Completed.
+        db.trash_note(&id).unwrap();
+        db.restore_note(&id).unwrap();
+        assert!(
+            db.list_notes(NoteFilter::Completed, None)
+                .unwrap()
+                .iter()
+                .any(|n| n.id == id)
+        );
+        // Reopen: back in Active.
+        db.set_completed(&id, false, 800).unwrap();
+        assert!(
+            db.list_notes(NoteFilter::Active, None)
+                .unwrap()
+                .iter()
+                .any(|n| n.id == id)
+        );
+    }
+
+    #[test]
+    fn search_works_on_the_completed_filter() {
+        let db = db();
+        let a = db.create_note(None).unwrap().id;
+        db.save_content(&a, &doc("buy milk")).unwrap();
+        db.set_completed(&a, true, 1).unwrap();
+        let b = db.create_note(None).unwrap().id;
+        db.save_content(&b, &doc("buy bread")).unwrap();
+        db.set_completed(&b, true, 1).unwrap();
+        let c = db.create_note(None).unwrap().id;
+        db.save_content(&c, &doc("buy milk later")).unwrap();
+        let hits = db.list_notes(NoteFilter::Completed, Some("milk")).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, a);
+        assert!(hits[0].snippet.is_some());
+    }
+
+    #[test]
+    fn startup_skips_done_notes() {
+        let db = db();
+        let shown = db.create_note(None).unwrap().id;
+        let done = db.create_note(None).unwrap().id;
+        db.set_completed(&done, true, 1).unwrap();
+        let (notes, unreadable) = db.notes_to_show().unwrap();
+        assert!(unreadable.is_empty());
+        assert_eq!(notes.iter().map(|n| &n.id).collect::<Vec<_>>(), [&shown]);
+        // Restoring a done note from the trash makes its window visible again, but
+        // it still does not open at start-up.
+        db.trash_note(&done).unwrap();
+        db.restore_note(&done).unwrap();
+        let (notes, _) = db.notes_to_show().unwrap();
+        assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_is_not_done() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_completed(&id, true, 42).unwrap();
+        let copy = db.duplicate_note(&id).unwrap();
+        assert_eq!(copy.completed_at, None);
+        assert_eq!(db.get_note(&id).unwrap().completed_at, Some(42));
+        assert_eq!(counts(&db), (1, 1, 0, 0));
+    }
+
+    #[test]
+    fn migration_7_adds_completed_at_and_keeps_every_note_and_reminder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        let content = r#"{"type":"doc","content":[{"type":"paragraph"}]}"#;
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply_until(&mut conn, 0, 6).unwrap();
+            for (id, title, archived) in [
+                ("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d", "v6 note", "NULL"),
+                ("3a2d9e1f-7b9c-4d62-8e5f-3c9a6b2b0d4e", "v6 archived", "9"),
+            ] {
+                conn.execute_batch(&format!(
+                    "INSERT INTO notes (id, title, content_json, color, created_at, updated_at, archived_at)
+                     VALUES ('{id}', '{title}', '{content}', '#fff4a3', 1, 7, {archived});
+                     INSERT INTO note_windows (note_id, width, height) VALUES ('{id}', 300, 280);"
+                ))
+                .unwrap();
+            }
+            conn.execute_batch(
+                "INSERT INTO reminders VALUES
+                 ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', '2026-11-04', '14:00', 'none',
+                  1793797200000, NULL, NULL);",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path, &backups).unwrap();
+        assert_eq!(db.schema_version().unwrap(), crate::db::LATEST_VERSION);
+        assert_eq!(db.count_all_notes().unwrap(), 2);
+        let note = db.get_note("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d").unwrap();
+        assert_eq!((note.title.as_str(), note.updated_at), ("v6 note", 7));
+        assert_eq!(note.completed_at, None, "every note stays not done");
+        assert_eq!(counts(&db), (1, 0, 1, 0));
+        let reminder = db
+            .reminder("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d")
+            .unwrap()
+            .unwrap();
+        assert_eq!(reminder.due_at, 1_793_797_200_000);
+        // The safety copy was taken before the upgrade.
+        let copies: Vec<_> = std::fs::read_dir(&backups).unwrap().collect();
+        assert_eq!(copies.len(), 1);
+        let name = copies[0].as_ref().unwrap().file_name();
+        assert!(name.to_string_lossy().starts_with("pre-migration-v6-"));
     }
 
     #[test]

@@ -26,6 +26,7 @@ import { isLockRefusal, refusalText } from "../privacy/refusal";
 import { UnlockDialog } from "../privacy/UnlockDialog";
 import { Autosave, type SaveState } from "./autosave";
 import { ColorPopover } from "./ColorPopover";
+import { DoneStrip } from "./DoneStrip";
 import { createExtensions, serializeDoc } from "./extensions";
 import { FormatBar } from "./FormatBar";
 import { LinkEditor } from "./LinkEditor";
@@ -42,6 +43,8 @@ const SHORT = 160;
 /** After a private note answers a save-all request it stays read-only this long,
  * waiting for a lock that may follow (ruling R14). */
 export const LOCK_HOLD_MS = 5_000;
+/** How long "Marked done" stays undoable before the note is really marked done (DES-39). */
+export const DONE_STRIP_MS = 5_000;
 
 type Popover = "none" | "color" | "menu" | "link";
 
@@ -152,6 +155,7 @@ function LockedNote({ note, onNote, app }: { note: Note; onNote: (n: Note) => vo
       if (action === "hide") hide();
       else if (action === "archive") void commands.setArchived(note.id, true).catch(() => undefined);
       else if (action === "trash") void commands.trashNote(note.id).catch(() => undefined);
+      else if (action === "complete") void commands.setNoteCompleted(note.id, true).catch(() => undefined);
       // Nothing to save while locked: the window can be recreated at once (opacity crossed 100 %).
       else if (action === "reopen") void commands.reopenNote(note.id).catch(() => undefined);
     });
@@ -317,6 +321,13 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const closing = useRef(false);
+  /** "Marked done" shows for DONE_STRIP_MS; nothing is written until it ends (ruling R1). */
+  const [stripShown, setStripShown] = useState(false);
+  /** Read by handlers registered once. */
+  const stripRef = useRef(false);
+  const stripTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The completion in flight (from the timer, a close or a save-all round); later callers share it. */
+  const completing = useRef<Promise<boolean> | null>(null);
   /** Last content known to be saved (or loaded); avoids writes when nothing changed. */
   const lastContent = useRef<string | null>(null);
   /** Set when stored content could not be loaded: never autosave over it. */
@@ -395,24 +406,96 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     [autosave],
   );
 
-  /** Save, then hide the window. Stays open if the save failed. */
+  const stopStrip = useCallback(() => {
+    if (stripTimer.current) clearTimeout(stripTimer.current);
+    stripTimer.current = null;
+    stripRef.current = false;
+    setStripShown(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (stripTimer.current) clearTimeout(stripTimer.current);
+    },
+    [],
+  );
+
+  /**
+   * The strip is over, or the window is closing or the app quitting during it: save any pending
+   * text, then mark the note done (the shell closes the window). Only Undo cancels. If the save
+   * fails the note stays open and active, with the "Not saved" message; if the command is
+   * refused, the reason is shown. Returns whether the note was marked done.
+   */
+  const completeStrip = useCallback((): Promise<boolean> => {
+    stopStrip();
+    if (completing.current) return completing.current;
+    const run = async (): Promise<boolean> => {
+      try {
+        const done = await saveThen(() => commands.setNoteCompleted(note.id, true));
+        if (done) autosave.dispose();
+        else editor?.commands.focus(); // still open: back to the text, with the "Not saved" message
+        return done;
+      } catch (e) {
+        setRefusal(refusalText(e));
+        editor?.commands.focus();
+        return false;
+      }
+    };
+    const p = run().finally(() => {
+      completing.current = null;
+    });
+    completing.current = p;
+    return p;
+  }, [autosave, editor, note.id, saveThen, stopStrip]);
+
+  /**
+   * "Mark as done": the strip shows, and the timer starts. Ignored while it already shows, the
+   * note is going away, or its content could not be loaded (that view has no strip to show, and a
+   * timer must never run unseen).
+   */
+  const startStrip = useCallback(() => {
+    if (contentBroken.current || stripRef.current || closing.current || completing.current) return;
+    stripRef.current = true;
+    setStripShown(true);
+    stripTimer.current = setTimeout(() => {
+      // A close is already under way (it hides the note): drop the strip rather than leave it up with no timer.
+      if (closing.current) {
+        stopStrip();
+        return;
+      }
+      void completeStrip();
+    }, DONE_STRIP_MS);
+  }, [completeStrip, stopStrip]);
+
+  /** Undo, or Ctrl+Z while the strip shows: the note stays as it was, and the editor has focus again. */
+  const undoStrip = useCallback(() => {
+    stopStrip();
+    editor?.commands.focus();
+  }, [editor, stopStrip]);
+
+  /** Save, then hide the window. Stays open if the save failed. During the strip, closing marks the note done. */
   const hide = useCallback(async () => {
     if (closing.current) return;
     closing.current = true;
     try {
+      if (stripRef.current || completing.current) {
+        await completeStrip();
+        return;
+      }
       const done = await saveThen(() => commands.hideNote(note.id));
       if (done) autosave.dispose();
     } finally {
       closing.current = false;
     }
-  }, [autosave, note.id, saveThen]);
+  }, [autosave, completeStrip, note.id, saveThen]);
 
-  // The manager asked to hide, archive or trash this note: save first, here.
+  // The manager asked to hide, archive, trash or complete this note: save first, here.
   useEffect(() => {
     const unlisten = onNoteAction((action) => {
       if (action === "hide") void hide();
       else if (action === "archive") void saveThen(() => commands.setArchived(note.id, true));
       else if (action === "trash") void saveThen(() => commands.trashNote(note.id));
+      else if (action === "complete") void saveThen(() => commands.setNoteCompleted(note.id, true));
       // The opacity crossed 100 %: the shell recreates this window. Only after the text is saved.
       // A failed reopen is reported by the native side (the manager's error list); nothing to add here.
       else if (action === "reopen") void saveThen(() => commands.reopenNote(note.id)).catch(() => undefined);
@@ -482,6 +565,13 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       if (privateNow) hold();
       void autosave
         .flush()
+        // Quitting (or exporting, or hiding all) during the strip ends it: the note is marked
+        // done once its text is saved, and only then is the round answered.
+        // A completion already in flight is awaited, not repeated: the round is answered after it.
+        .then(async () => {
+          if (completing.current) await completing.current;
+          else if (stripRef.current && autosave.currentState !== "error") await completeStrip();
+        })
         .then(() => commands.quitReady(autosave.currentState !== "error"))
         .catch(() => undefined)
         .then(() => {
@@ -497,7 +587,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       window.removeEventListener("blur", onBlur);
       void unlisten.then((f) => f());
     };
-  }, [autosave, hold, stopHold]);
+  }, [autosave, completeStrip, hold, stopHold]);
 
   // The privacy lock turned on (for every window, or for this kept-open note). When it
   // turns off, text the lock refused to save is saved now.
@@ -555,7 +645,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     return () => document.removeEventListener("pointerdown", onDown);
   }, [popover]);
 
-  /** The menu just opened the reminder dialog: its closing must not hand focus to the editor. */
+  /** The menu just opened the reminder dialog or the Undo strip: its closing must not hand focus to the editor. */
   const reminderFromMenu = useRef(false);
 
   const closePopover = useCallback(() => {
@@ -582,6 +672,28 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     setLocked(value);
     if (!value && focusEditor) editor?.commands.focus("end");
   }
+
+  // Ctrl+D (Mark as done) and Ctrl+Z (Undo while the strip shows), in the capture phase so the
+  // editor never sees them: Tiptap binds no Mod-d, but its undo must not run under the strip.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || collapsed) return;
+      const key = e.key.toLowerCase();
+      if (key === "d") {
+        // Not under a popover or dialog (menu, colour, text style, reminder, link, private label, unlock).
+        if (document.querySelector('.dn-popover, .dn-link-editor, .dn-modal, [role="dialog"], [role="menu"]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        startStrip();
+      } else if (key === "z" && stripRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        undoStrip();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [collapsed, startStrip, undoStrip]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -666,6 +778,12 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** Collapse only after the text is saved; expanding never needs a save. */
   async function setCollapsed(next: boolean) {
     setPopover("none");
+    // The rolled-up note shows no strip, so collapsing during it completes the note at once, as a
+    // close does: the strip must never run unseen.
+    if (next && (stripRef.current || completing.current)) {
+      await completeStrip();
+      return;
+    }
     const run = () => commands.setCollapsed(note.id, next).then(() => setCollapsedView(next));
     if (next) await saveThen(run);
     else await run();
@@ -702,6 +820,15 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       onSelect: () => {
         reminderFromMenu.current = true;
         setReminderOpen(true);
+      },
+    },
+    {
+      id: "done",
+      label: "Mark as done",
+      icon: "check",
+      onSelect: () => {
+        reminderFromMenu.current = true; // the Undo button takes focus; the menu's close must not move it
+        startStrip();
       },
     },
     { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
@@ -901,6 +1028,8 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
           }}
         />
       )}
+
+      {stripShown && <DoneStrip onUndo={undoStrip} />}
 
       <div className="dn-note-body" ref={setBodyEl}>
         <EditorContent editor={editor} />

@@ -136,6 +136,8 @@ pub struct Note {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub deleted_at: Option<i64>,
+    /// When the note was marked done (UTC ms); `None` while it is not done.
+    pub completed_at: Option<i64>,
     /// Read-only: content changes are refused until unlocked.
     pub edit_locked: bool,
     /// Hidden behind the privacy lock while the app is locked.
@@ -161,6 +163,8 @@ pub struct NoteSummary {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub deleted_at: Option<i64>,
+    /// When the note was marked done (UTC ms); `None` while it is not done.
+    pub completed_at: Option<i64>,
     pub visible: bool,
     pub private: bool,
     pub private_label: String,
@@ -174,6 +178,7 @@ pub struct NoteSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct NoteCounts {
     pub active: i64,
+    pub completed: i64,
     pub archived: i64,
     pub trash: i64,
 }
@@ -182,6 +187,7 @@ pub struct NoteCounts {
 #[serde(rename_all = "lowercase")]
 pub enum NoteFilter {
     Active,
+    Completed,
     Archived,
     Trash,
 }

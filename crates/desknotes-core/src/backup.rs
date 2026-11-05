@@ -2,10 +2,11 @@
 //!
 //! A backup is one UTF-8 JSON file holding every note, including archived and
 //! trashed ones, with its window state and privacy flag. It contains no
-//! settings and no PIN. Version 4 added `reminder` (a note's reminder); version 3
+//! settings and no PIN. Version 5 added `completedAt` (when a note was marked done); version 4
+//! added `reminder` (a note's reminder); version 3
 //! added `appearance` (per-note text and window styling); version 2 added
 //! `private` and `privateLabel`. Older files still restore, with every note not
-//! private, default appearance and no reminder.
+//! private, default appearance, no reminder and not done.
 //! Everything read from a backup file is validated before anything is changed.
 
 use std::collections::HashSet;
@@ -22,7 +23,7 @@ use crate::validation::{
 };
 
 pub const BACKUP_FORMAT: &str = "desknotes-backup";
-pub const BACKUP_VERSION: u32 = 4;
+pub const BACKUP_VERSION: u32 = 5;
 /// Refuse files larger than this before parsing them.
 pub const MAX_BACKUP_BYTES: usize = 200 * 1024 * 1024;
 pub const MAX_BACKUP_NOTES: usize = 100_000;
@@ -51,6 +52,9 @@ pub struct BackupNote {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
     pub deleted_at: Option<i64>,
+    /// When the note was marked done (version 5; absent or null = not done).
+    #[serde(default)]
+    pub completed_at: Option<i64>,
     #[serde(default)]
     pub edit_locked: bool,
     /// Hidden behind the privacy lock (version 2; absent in version 1 = false).
@@ -146,6 +150,7 @@ pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
             Some(note.updated_at),
             note.archived_at,
             note.deleted_at,
+            note.completed_at,
         ];
         if times.into_iter().flatten().any(|t| t < 0) {
             return Err(invalid(format!("note {n}: invalid date")));
@@ -335,6 +340,39 @@ mod tests {
                 assert!(text.contains("note 2"), "{r}: {text}");
             }
         }
+    }
+
+    fn file_v5(notes: Vec<serde_json::Value>) -> String {
+        json!({"format": BACKUP_FORMAT, "version": 5, "appVersion": "0.5.0", "exportedAt": 3, "notes": notes})
+            .to_string()
+    }
+
+    #[test]
+    fn version_5_keeps_the_done_date_and_older_files_have_none() {
+        let mut done = note(A);
+        done["completedAt"] = json!(1_700_000_000_000_i64);
+        let b = parse_backup(&file_v5(vec![done, note(B)])).unwrap();
+        assert_eq!(b.notes[0].completed_at, Some(1_700_000_000_000));
+        assert_eq!(b.notes[1].completed_at, None, "the field is optional");
+        let out = serde_json::to_value(&b).unwrap();
+        assert_eq!(out["notes"][0]["completedAt"], json!(1_700_000_000_000_i64));
+        assert_eq!(out["notes"][1]["completedAt"], json!(null));
+        for raw in [
+            file(vec![note(A)]),
+            file_v2(vec![note(A)]),
+            file_v3(vec![note(A)]),
+            file_v4(vec![note(A)]),
+        ] {
+            assert_eq!(parse_backup(&raw).unwrap().notes[0].completed_at, None);
+        }
+    }
+
+    #[test]
+    fn backup_refuses_a_negative_done_date_and_names_the_note() {
+        let mut bad = note(B);
+        bad["completedAt"] = json!(-1);
+        let err = parse_backup(&file_v5(vec![note(A), bad])).unwrap_err();
+        assert!(err.to_string().contains("note 2"), "{err}");
     }
 
     #[test]

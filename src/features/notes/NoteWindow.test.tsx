@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
 // @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
@@ -55,6 +55,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     setEditLocked: vi.fn().mockResolvedValue(undefined),
     hideNote: vi.fn().mockResolvedValue(undefined),
     setArchived: vi.fn().mockResolvedValue(undefined),
+    setNoteCompleted: vi.fn().mockResolvedValue(undefined),
     trashNote: vi.fn().mockResolvedValue(undefined),
     showManager: vi.fn().mockResolvedValue(undefined),
     createNote: vi.fn().mockResolvedValue({}),
@@ -91,6 +92,7 @@ const note = (over: Partial<Note> = {}): Note => ({
   updatedAt: Date.now(),
   archivedAt: null,
   deletedAt: null,
+  completedAt: null,
   editLocked: false,
   private: false,
   privateLabel: "",
@@ -264,6 +266,16 @@ describe("NoteWindow", () => {
     await waitFor(() => expect(commands.trashNote).toHaveBeenCalledWith(ID));
   });
 
+  it("saves, then marks itself done when the manager asks it to", async () => {
+    const { container } = await openNote();
+    await typeIntoNote(container, "last words ");
+    await act(async () => handlers.noteAction?.("complete"));
+    await waitFor(() => expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true));
+    expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+      vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("answers the quit handshake with whether its text is saved", async () => {
     vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("disk full"));
     const { container } = await openNote();
@@ -305,7 +317,7 @@ describe("NoteWindow", () => {
   describe("note menu (DES-38, option B)", () => {
     const quick = () => screen.getByRole("group", { name: "Quick actions" });
 
-    it("has the quick row, then Set reminder…, Note settings…, Private, Open manager, Archive and Move to trash", async () => {
+    it("has the quick row, then Set reminder…, Mark as done, Note settings…, Private, Open manager, Archive and Move to trash", async () => {
       await openNote();
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       expect(Array.from(quick().querySelectorAll('[role^="menuitem"]')).map((b) => b.getAttribute("aria-label"))).toEqual([
@@ -320,6 +332,7 @@ describe("NoteWindow", () => {
         "Always on top",
         "Lock editing",
         "Set reminder…",
+        "Mark as done",
         "Note settings…",
         "Private",
         "Open manager",
@@ -414,7 +427,7 @@ describe("NoteWindow", () => {
     it("Private opens Make private in place for a note that is not private, and Escape comes back", async () => {
       await openNote();
       await userEvent.click(screen.getByRole("button", { name: "More" }));
-      await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+      await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
       const parent = screen.getByRole("menuitem", { name: "Private" });
       expect(parent).toHaveFocus();
       expect(parent.querySelectorAll("svg")).toHaveLength(2); // no check: not private
@@ -1098,11 +1111,11 @@ describe("NoteWindow", () => {
   });
 
   describe("appearance", () => {
-    it("offers Note settings… right after Set reminder… and opens it for this note", async () => {
+    it("offers Note settings… right after Mark as done (which follows Set reminder…) and opens it for this note", async () => {
       await openNote();
       await userEvent.click(screen.getByRole("button", { name: "More" }));
       const order = menuOrder();
-      expect(order.indexOf("Note settings…")).toBe(order.indexOf("Set reminder…") + 1);
+      expect(order.indexOf("Note settings…")).toBe(order.indexOf("Mark as done") + 1);
       await userEvent.click(screen.getByRole("menuitem", { name: "Note settings…" }));
       expect(commands.openNoteSettings).toHaveBeenCalledWith(ID);
     });
@@ -1463,6 +1476,346 @@ describe("NoteWindow", () => {
       const compact = /\.dn-note\.is-compact:not\(\.is-collapsed\)\s*\{([^}]*)\}/.exec(noteCss);
       expect(compact![1]).toMatch(/--dn-header-h:\s*var\(--dn-compact-header\)/);
       expect(noteCss).toMatch(/\.dn-note\.is-compact \.dn-note-body\s*\{[^}]*var\(--dn-compact-pad\)/);
+    });
+  });
+  // Completed notes (DES-39): Mark as done / Ctrl+D, and the 5-second Undo strip.
+  describe("mark as done and the Undo strip", () => {
+    const STRIP_MS = 5_000;
+    const ctrl = (key: string, init: KeyboardEventInit = {}, target: Window | Element = window) =>
+      act(() => {
+        fireEvent.keyDown(target, { key, ctrlKey: true, bubbles: true, cancelable: true, ...init });
+      });
+    /** Fake timers only after the note has loaded, so React and the mocks keep running. */
+    const fakeTimers = () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+    afterEach(() => vi.useRealTimers());
+
+    it("puts Mark as done (check icon) right after Set reminder… and starts the strip, closing the menu", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      const order = menuOrder();
+      expect(order.indexOf("Mark as done")).toBe(order.indexOf("Set reminder…") + 1);
+      const item = screen.getByRole("menuitem", { name: "Mark as done" });
+      expect(within(item).getByText("Mark as done").previousElementSibling?.tagName).toBe("svg");
+      await userEvent.click(item);
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(screen.getByRole("status")).toHaveTextContent("Marked done");
+      expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("keeps focus on Undo when started from the menu (the editor's deferred focus must not take it back)", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Mark as done" }));
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
+      });
+      expect(screen.getByRole("button", { name: "Undo" })).toHaveFocus();
+    });
+
+    it("Ctrl+D opens the strip, from the editor and from elsewhere in the window", async () => {
+      const { container } = await openNote();
+      await ctrl("d", {}, container.querySelector(".tiptap")!);
+      expect(screen.getByRole("status")).toHaveTextContent("Marked done");
+      await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+      expect(screen.queryByRole("status")).toBeNull();
+      await ctrl("d", {}, screen.getByRole("button", { name: "More" }));
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+
+    it("Ctrl+D is taken from the editor: Tiptap never sees it", async () => {
+      const { container } = await openNote();
+      const seen = vi.fn();
+      container.querySelector(".tiptap")!.addEventListener("keydown", seen);
+      await ctrl("d", {}, container.querySelector(".tiptap")!);
+      expect(seen).not.toHaveBeenCalled();
+    });
+
+    it("ignores Ctrl+Shift+D, Alt+Ctrl+D and a plain d", async () => {
+      await openNote();
+      await ctrl("d", { shiftKey: true });
+      await ctrl("d", { altKey: true });
+      await act(async () => void fireEvent.keyDown(window, { key: "d" }));
+      expect(screen.queryByRole("status")).toBeNull();
+    });
+
+    it("Ctrl+D while the strip shows does nothing more (still one strip, one timer)", async () => {
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(3_000);
+      await ctrl("d");
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      await advance(2_100); // five seconds after the FIRST press
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("works on a read-only (edit-locked) note", async () => {
+      await openNote({ editLocked: true });
+      await ctrl("d");
+      expect(screen.getByRole("status")).toBeInTheDocument();
+    });
+
+    it("Undo cancels: nothing is saved or completed, and focus returns to the editor", async () => {
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await act(async () => void screen.getByRole("button", { name: "Undo" }).click());
+      expect(screen.queryByRole("status")).toBeNull();
+      await advance(STRIP_MS * 2);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      expect(commands.hideNote).not.toHaveBeenCalled();
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+      });
+      expect(editorBox()).toHaveFocus();
+    });
+
+    it("Ctrl+Z while the strip shows cancels it, and the editor does not also undo", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "kept ");
+      fakeTimers();
+      await ctrl("d");
+      const seen = vi.fn();
+      container.querySelector(".tiptap")!.addEventListener("keydown", seen);
+      await ctrl("z", {}, container.querySelector(".tiptap")!);
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(seen).not.toHaveBeenCalled();
+      await advance(STRIP_MS * 2);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      expect(container.querySelector(".tiptap")).toHaveTextContent("kept");
+    });
+
+    it("Ctrl+Z without a strip is left to the editor", async () => {
+      const { container } = await openNote();
+      const seen = vi.fn();
+      container.querySelector(".tiptap")!.addEventListener("keydown", seen);
+      await ctrl("z", {}, container.querySelector(".tiptap")!);
+      expect(seen).toHaveBeenCalled();
+    });
+
+    it("writes nothing during the five seconds, then marks done once they are over", async () => {
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS - 100);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      expect(commands.hideNote).not.toHaveBeenCalled();
+      await advance(200);
+      expect(commands.setNoteCompleted).toHaveBeenCalledExactlyOnceWith(ID, true);
+    });
+
+    // Review focus 4.
+    it("strip_saves_then_completes: a pending edit is saved before the note is marked done", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "typed just before ");
+      fakeTimers();
+      await ctrl("d");
+      // Typed text may autosave on its own; what waits for the end of the strip is the completion.
+      await advance(STRIP_MS + 500);
+      expect(commands.saveNoteContent).toHaveBeenCalled();
+      expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true);
+      expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("keeps the note open, with the error, when the save fails at the end of the strip", async () => {
+      vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("disk full"));
+      const { container } = await openNote();
+      await typeIntoNote(container, "precious ");
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 500);
+      vi.useRealTimers();
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      expect(await screen.findByText(/Not saved/)).toBeInTheDocument();
+      expect(screen.queryByRole("status")).toBeNull();
+    });
+
+    it("closing the window during the strip marks the note done, after saving its text", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "last ");
+      await ctrl("d");
+      await userEvent.click(screen.getByRole("button", { name: "Hide note" }));
+      await waitFor(() => expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true));
+      expect(commands.hideNote).not.toHaveBeenCalled();
+      expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("a hide asked by the manager during the strip marks the note done too", async () => {
+      await openNote();
+      await ctrl("d");
+      await act(async () => handlers.noteAction?.("hide"));
+      await waitFor(() => expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true));
+      expect(commands.hideNote).not.toHaveBeenCalled();
+    });
+
+    it("the timer does not fire a second time after the window was closed during the strip", async () => {
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await act(async () => handlers.noteAction?.("hide"));
+      await advance(STRIP_MS * 2);
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("quitting during the strip saves, marks the note done, then answers the handshake", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "before quit ");
+      await ctrl("d");
+      await act(async () => handlers.willQuit?.());
+      await waitFor(() => expect(commands.quitReady).toHaveBeenCalledWith(true));
+      expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true);
+      const order = (f: unknown) => (f as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0]!;
+      expect(order(commands.saveNoteContent)).toBeLessThan(order(commands.setNoteCompleted));
+      expect(order(commands.setNoteCompleted)).toBeLessThan(order(commands.quitReady));
+    });
+
+    it("a round that arrives while the timer's completion is in flight is answered only after setNoteCompleted resolves", async () => {
+      let finish: () => void = () => undefined;
+      vi.mocked(commands.setNoteCompleted).mockReturnValue(new Promise<undefined>((r) => (finish = () => r(undefined))));
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1); // in flight, unresolved
+      await act(async () => handlers.willQuit?.());
+      await advance(50);
+      expect(commands.quitReady).not.toHaveBeenCalled();
+      await act(async () => finish());
+      await advance(50);
+      expect(commands.quitReady).toHaveBeenCalledExactlyOnceWith(true);
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("a close asked while the timer's completion is in flight does not hide the note as well", async () => {
+      let finish: () => void = () => undefined;
+      vi.mocked(commands.setNoteCompleted).mockReturnValue(new Promise<undefined>((r) => (finish = () => r(undefined))));
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      await act(async () => handlers.noteAction?.("hide"));
+      await act(async () => finish());
+      await advance(50);
+      expect(commands.hideNote).not.toHaveBeenCalled();
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("Ctrl+D does nothing while a close is under way", async () => {
+      vi.mocked(commands.hideNote).mockReturnValue(new Promise(() => undefined));
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "Hide note" }));
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it.each([
+      ["the colour popover", "Colour"],
+      ["the menu", "More"],
+    ])("Ctrl+D does nothing while %s is open", async (_name, button) => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: button }));
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it("Ctrl+D does nothing while the reminder dialog is open", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it("after a refused completion the strip is gone and focus is back in the editor", async () => {
+      vi.mocked(commands.setNoteCompleted).mockRejectedValue(new Error("nope"));
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      vi.useRealTimers();
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+      });
+      expect(screen.queryByText("Marked done")).toBeNull();
+      expect(editorBox()).toHaveFocus();
+    });
+
+    it("quitting without a strip does not mark anything done", async () => {
+      await openNote();
+      await act(async () => handlers.willQuit?.());
+      await waitFor(() => expect(commands.quitReady).toHaveBeenCalledWith(true));
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("quitting during the strip with an unsaved edit does not mark it done and reports not saved", async () => {
+      vi.mocked(commands.saveNoteContent).mockRejectedValue(new Error("disk full"));
+      const { container } = await openNote();
+      await typeIntoNote(container, "x");
+      await ctrl("d");
+      await act(async () => handlers.willQuit?.());
+      await waitFor(() => expect(commands.quitReady).toHaveBeenCalledWith(false));
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("a locked private note has no menu and Ctrl+D does nothing", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
+      render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it("Ctrl+D is ignored on a note whose content could not be loaded: no invisible strip, nothing marked done", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(
+        note({
+          content: {
+            type: "doc",
+            content: [{ type: "paragraph", content: [{ type: "text", text: "secret", marks: [{ type: "unknownMark" }] }] }],
+          },
+        }),
+      );
+      render(<NoteWindow noteId={ID} />);
+      await screen.findByText("This note could not be opened.");
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("collapsing during the strip marks the note done at once, after saving, like a close", async () => {
+      const { container } = await openNote();
+      await typeIntoNote(container, "last ");
+      await ctrl("d");
+      await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+      await waitFor(() => expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true));
+      expect(commands.setCollapsed).not.toHaveBeenCalled();
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
+        vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+      );
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("collapsing without a strip still just collapses", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+      expect(commands.setCollapsed).toHaveBeenCalledWith(ID, true);
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("draws the strip with tokens only, black on white in high contrast", () => {
+      const css = (readFileSync("src/styles/note.css", "utf8") as string).replace(/\/\*[\s\S]*?\*\//g, "");
+      const rule = /\.dn-done-strip\s*\{([^}]*)\}/.exec(css);
+      expect(rule).not.toBeNull();
+      expect(rule![1]).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
+      expect(rule![1]).toMatch(/position:\s*absolute/);
+      expect(css).toMatch(/\.dn-note\.is-high-contrast \.dn-done-strip[^{]*\{[^}]*var\(--dn-hc-line\)/);
     });
   });
 });

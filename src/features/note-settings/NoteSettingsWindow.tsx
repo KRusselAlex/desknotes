@@ -53,16 +53,16 @@ function merged(current: Appearance, patch: Appearance, defaultSize: number): Ap
   return next as Appearance;
 }
 
-/** The settings window has nothing left to show: its note was hidden, archived or trashed. */
+/** The settings window has nothing left to show: its note was hidden, archived, done or trashed. */
 function isGone(n: Note): boolean {
-  return !n.window.visible || n.archivedAt !== null || n.deletedAt !== null;
+  return !n.window.visible || n.archivedAt !== null || n.deletedAt !== null || n.completedAt !== null;
 }
 
 /**
  * Note settings window (design "Note settings", B): text, background, size and
  * behaviour of one note, applied live. It never shows the note's text, only a
  * swatch of its colour. It closes itself when the note is hidden, archived,
- * trashed or gone, and switches note on `note-settings-note`.
+ * done, trashed or gone, and switches note on `note-settings-note`.
  */
 export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) {
   const [noteId, setNoteId] = useState(firstNoteId);

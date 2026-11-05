@@ -52,7 +52,8 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT n.id, n.content_json, n.color, n.created_at, n.updated_at, n.archived_at,
                     n.deleted_at, n.edit_locked, w.x, w.y, w.width, w.height, w.visible,
-                    w.always_on_top, w.collapsed, n.private, n.private_label, n.appearance
+                    w.always_on_top, w.collapsed, n.private, n.private_label, n.appearance,
+                    n.completed_at
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              ORDER BY n.created_at",
         )?;
@@ -68,6 +69,7 @@ impl Database {
                     updated_at: r.get(4)?,
                     archived_at: r.get(5)?,
                     deleted_at: r.get(6)?,
+                    completed_at: r.get(18)?,
                     edit_locked: r.get(7)?,
                     private: r.get(15)?,
                     private_label: r.get(16)?,
@@ -130,8 +132,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO notes (id, title, content_json, search_text, color, created_at,
                                     updated_at, archived_at, deleted_at, edit_locked, private,
-                                    private_label, appearance)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                    private_label, appearance, completed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     n.id,
                     derive_title(&n.content),
@@ -145,7 +147,8 @@ impl Database {
                     n.edit_locked,
                     n.private,
                     n.private_label,
-                    appearance_json(&n.appearance)?
+                    appearance_json(&n.appearance)?,
+                    n.completed_at
                 ],
             )?;
             let w = &n.window;
@@ -335,7 +338,7 @@ mod tests {
             .unwrap();
         src.trash_note(&c).unwrap();
         let export = src.export_backup("0.4.0").unwrap();
-        assert_eq!(export.backup.version, 4);
+        assert_eq!(export.backup.version, 5);
         let text = serde_json::to_string(&export.backup).unwrap();
         assert!(text.contains("\"reminder\":{\"localDate\""), "{text}");
 
@@ -379,6 +382,64 @@ mod tests {
         let export = db.export_backup("0.4.0").unwrap();
         assert_eq!(export.backup.notes.len(), 1);
         assert_eq!(export.backup.notes[0].reminder, None);
+    }
+
+    #[test]
+    fn version_5_round_trip_keeps_the_done_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = Database::open_in_memory().unwrap();
+        let (a, b, c) = sample(&src);
+        src.set_completed(&a, true, 1_234).unwrap();
+        // Archived and trashed done notes keep their date too.
+        src.set_completed(&b, true, 2_345).unwrap();
+        src.set_completed(&c, true, 3_456).unwrap_err(); // trashed: refused, stays not done
+        let export = src.export_backup("0.5.0").unwrap();
+        assert_eq!(export.backup.version, 5);
+        let text = serde_json::to_string(&export.backup).unwrap();
+        assert!(text.contains("\"completedAt\":1234"), "{text}");
+
+        let dst = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        dst.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        for id in [&a, &b, &c] {
+            assert_eq!(dst.get_note(id).unwrap(), src.get_note(id).unwrap());
+        }
+        assert_eq!(dst.get_note(&a).unwrap().completed_at, Some(1_234));
+        assert_eq!(dst.get_note(&b).unwrap().completed_at, Some(2_345));
+        assert_eq!(dst.get_note(&c).unwrap().completed_at, None);
+        let done = dst.list_notes(NoteFilter::Completed, None).unwrap();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].id, a);
+    }
+
+    #[test]
+    fn version_4_file_restores_every_note_as_not_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
+        let v4 = serde_json::json!({
+            "format": "desknotes-backup", "version": 4, "appVersion": "0.4.0", "exportedAt": 3,
+            "notes": [{
+                "id": id,
+                "content": {"type":"doc","content":[{"type":"paragraph"}]},
+                "color": "#fff4a3", "createdAt": 1, "updatedAt": 2,
+                "archivedAt": null, "deletedAt": null, "editLocked": false,
+                "private": false, "privateLabel": "", "appearance": {},
+                "reminder": null,
+                "window": {"x": 10.0, "y": 20.0, "width": 300.0, "height": 280.0,
+                           "visible": true, "alwaysOnTop": false, "collapsed": false}
+            }]
+        })
+        .to_string();
+        let db = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        db.restore_backup(&parse_backup(&v4).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        assert_eq!(db.get_note(id).unwrap().completed_at, None);
+        assert_eq!(db.list_notes(NoteFilter::Active, None).unwrap().len(), 1);
+        assert!(
+            db.list_notes(NoteFilter::Completed, None)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

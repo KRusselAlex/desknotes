@@ -80,6 +80,7 @@ pub fn run() {
             commands::notes::set_note_color,
             commands::notes::duplicate_note,
             commands::notes::set_archived,
+            commands::notes::set_note_completed,
             commands::notes::trash_note,
             commands::notes::restore_note,
             commands::notes::purge_note,

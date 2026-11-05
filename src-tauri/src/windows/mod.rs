@@ -23,7 +23,7 @@ pub const NOTES_CHANGED: &str = "notes-changed";
 pub const SAVE_ALL_NOTES: &str = "save-all-notes";
 /// Sent to the manager when quitting was cancelled because notes hold unsaved text.
 pub const QUIT_BLOCKED: &str = "quit-blocked";
-/// Sent to a note window: perform "hide", "archive" or "trash" after saving.
+/// Sent to a note window: perform "hide", "archive", "trash" or "complete" after saving.
 pub const NOTE_ACTION: &str = "note-action";
 /// Sent to every window when the app-wide note appearance changes; the payload
 /// is the saved `AppAppearance`.

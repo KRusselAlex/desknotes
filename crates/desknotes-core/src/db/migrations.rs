@@ -68,6 +68,10 @@ const MIGRATIONS: &[&str] = &[
         fired_at       INTEGER
     );
     "#,
+    // v7 — when a note was marked done (UTC ms); NULL = not done. No existing data changes.
+    r#"
+    ALTER TABLE notes ADD COLUMN completed_at INTEGER;
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;

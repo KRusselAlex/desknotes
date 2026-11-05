@@ -24,9 +24,9 @@ export function onSaveAllRequest(handler: () => void): Promise<UnlistenFn> {
 
 export const NOTE_ACTION = "note-action";
 export const QUIT_BLOCKED = "quit-blocked";
-export type NoteAction = "hide" | "archive" | "trash" | "reopen";
+export type NoteAction = "hide" | "archive" | "trash" | "complete" | "reopen";
 
-/** Rust asks this note window to save, then hide, archive, trash or reopen itself. */
+/** Rust asks this note window to save, then hide, archive, trash, complete or reopen itself. */
 export function onNoteAction(handler: (action: NoteAction) => void): Promise<UnlistenFn> {
   return listen<NoteAction>(NOTE_ACTION, (event) => handler(event.payload));
 }

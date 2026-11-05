@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NoteSummary, PrivacyStatus } from "../../types/note";
 import type { ReminderListRow } from "../../types/reminder";
+import { doneDateLabel } from "../../app/time";
 
 const quitBlocked: { handler?: (count: number) => void } = {};
 const privacyChanged: { handler?: (e: { locked: boolean }) => void } = {};
@@ -33,6 +34,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     showNote: vi.fn().mockResolvedValue(undefined),
     hideNote: vi.fn().mockResolvedValue(undefined),
     setArchived: vi.fn().mockResolvedValue(undefined),
+    setNoteCompleted: vi.fn().mockResolvedValue(undefined),
     restoreNote: vi.fn().mockResolvedValue(undefined),
     purgeNote: vi.fn().mockResolvedValue(undefined),
     trashNote: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +59,7 @@ const note = (over: Partial<NoteSummary> = {}): NoteSummary => ({
   updatedAt: Date.now(),
   archivedAt: null,
   deletedAt: null,
+  completedAt: null,
   visible: true,
   snippet: null,
   private: false,
@@ -80,7 +83,7 @@ describe("ManagerWindow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(commands.privacyStatus).mockResolvedValue(privacy());
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, archived: 0, trash: 1 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, completed: 0, archived: 0, trash: 1 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
     vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
     vi.mocked(commands.listReminders).mockResolvedValue([]);
@@ -130,6 +133,127 @@ describe("ManagerWindow", () => {
     expect(await screen.findByText("No notes yet. Press Ctrl+N to create one.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: /Archived/ }));
     expect(await screen.findByText("Nothing archived.")).toBeInTheDocument();
+  });
+
+  it("says what an Active search leaves out, and nothing of the sort on other tabs", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    render(<ManagerWindow />);
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "zzz");
+    expect(await screen.findByText("Completed, archived and trashed notes are not included.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: /Archived/ }));
+    expect(await screen.findByText("Try another tab or other words.")).toBeInTheDocument();
+  });
+
+  describe("Completed tab", () => {
+    // Wed 4 Nov 2026, 12:00 local. Only the clock is faked, so timers and user events run as usual.
+    const NOW = new Date(2026, 10, 4, 12, 0).getTime();
+    const at = (y: number, m: number, d: number, h = 9, min = 15) => new Date(y, m, d, h, min).getTime();
+    const done = (over: Partial<NoteSummary> = {}) => note({ id: "d1", title: "Book the dentist", completedAt: NOW - 1000, ...over });
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("sits between Active and Reminders with its own count", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([]);
+      vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, completed: 4, archived: 2, trash: 0 });
+      render(<ManagerWindow />);
+      await screen.findByText("No notes yet. Press Ctrl+N to create one.");
+      expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active1", "Completed4", "Reminders", "Archived2", "Trash"]);
+    });
+
+    it("lists completed notes with a Done date and a Reopen button", async () => {
+      const dates = [
+        NOW - 1000, // today
+        at(2026, 10, 3), // yesterday
+        at(2026, 10, 1), // Sunday, within 6 days
+        at(2026, 9, 28), // exactly 7 days ago: a date, not a weekday
+        at(2025, 0, 2), // another year
+      ];
+      vi.mocked(commands.listNotes).mockImplementation(async (f) =>
+        f === "completed" ? dates.map((completedAt, i) => done({ id: `d${i}`, title: `Done note ${i}`, completedAt })) : [],
+      );
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const rows = await screen.findAllByRole("listitem");
+      expect(commands.listNotes).toHaveBeenCalledWith("completed", "");
+      expect(rows).toHaveLength(dates.length);
+      dates.forEach((ms, i) => {
+        expect(within(rows[i]!).getByText(doneDateLabel(ms, NOW))).toBeInTheDocument();
+      });
+      // The formatter's shape, pinned for English: time, "yesterday", weekday, date, date with year.
+      expect(dates.map((ms) => doneDateLabel(ms, NOW))).toEqual([
+        `Done ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(NOW - 1000)}`,
+        "Done yesterday",
+        `Done ${new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(dates[2])}`,
+        `Done ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(dates[3])}`,
+        `Done ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(dates[4])}`,
+      ]);
+      expect(within(rows[3]!).queryByText(/20\d\d/)).toBeNull();
+      expect(within(rows[0]!).getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    });
+
+    it("Move to trash on a Completed row trashes the note; it keeps its done date for a restore", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done()]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const row = await screen.findByRole("listitem");
+      await userEvent.click(within(row).getByRole("button", { name: "Move to trash" }));
+      expect(commands.trashNote).toHaveBeenCalledWith("d1");
+      expect(commands.setArchived).not.toHaveBeenCalled();
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      // The row still offers Reopen next to it.
+      expect(within(row).getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    });
+
+    it("Reopen marks the note not done and refreshes", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done()]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const reopen = await screen.findByRole("button", { name: "Reopen" });
+      const countsBefore = vi.mocked(commands.noteCounts).mock.calls.length;
+      await userEvent.click(reopen);
+      expect(commands.setNoteCompleted).toHaveBeenCalledWith("d1", false);
+      await waitFor(() => expect(vi.mocked(commands.noteCounts).mock.calls.length).toBeGreaterThan(countsBefore));
+    });
+
+    it("clicking the row itself does nothing, like an Archived row", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done()]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      await userEvent.click(await screen.findByRole("listitem"));
+      expect(commands.showNote).not.toHaveBeenCalled();
+      expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+    });
+
+    it("searches within the tab", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([done({ snippet: "dentist at 5" })]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      await userEvent.type(screen.getByRole("searchbox", { name: "Search notes" }), "dentist");
+      await waitFor(() => expect(commands.listNotes).toHaveBeenLastCalledWith("completed", "dentist"));
+      expect(await screen.findByText("1 note in Completed")).toBeInTheDocument();
+    });
+
+    it("says so when nothing is completed", async () => {
+      vi.mocked(commands.listNotes).mockResolvedValue([]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      expect(await screen.findByText("Nothing completed yet.")).toBeInTheDocument();
+    });
+
+    it("locked_rows_show_private_note", async () => {
+      vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ enabled: true, locked: true }));
+      vi.mocked(commands.listNotes).mockResolvedValue([
+        done({ id: "p1", private: true, locked: true, privateLabel: "", title: "Doctor letter", snippet: "Doctor" }),
+      ]);
+      render(<ManagerWindow />);
+      await userEvent.click(screen.getByRole("tab", { name: /Completed/ }));
+      const row = await screen.findByRole("listitem");
+      expect(within(row).getByText("Private note")).toBeInTheDocument();
+      expect(row).not.toHaveTextContent("Doctor");
+    });
   });
 
   it("shows errors in a banner instead of failing silently", async () => {
@@ -185,7 +309,7 @@ describe("ManagerWindow", () => {
 describe("ManagerWindow with private notes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, archived: 0, trash: 0 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, completed: 0, archived: 0, trash: 0 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
     vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
     vi.mocked(commands.listReminders).mockResolvedValue([]);
@@ -316,7 +440,7 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 4, 22, 30));
     vi.mocked(commands.privacyStatus).mockResolvedValue(privacy());
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, archived: 0, trash: 0 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 1, completed: 0, archived: 0, trash: 0 });
     vi.mocked(commands.startupErrors).mockResolvedValue([]);
     vi.mocked(commands.hiddenNoteCount).mockResolvedValue(0);
     vi.mocked(commands.listNotes).mockResolvedValue([note()]);
@@ -329,11 +453,11 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     await userEvent.click(screen.getByRole("tab", { name: /Reminders/ }));
   };
 
-  it("puts the tab between Active and Archived, counting the reminders", async () => {
+  it("puts the tab between Completed and Archived, counting the reminders", async () => {
     vi.mocked(commands.listReminders).mockResolvedValue([reminder(), reminder({ noteId: "n2" }), reminder({ noteId: "n3" })]);
     render(<ManagerWindow />);
     await waitFor(() => expect(screen.getByRole("tab", { name: /Reminders/ })).toHaveTextContent("3"));
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active1", "Reminders3", "Archived", "Trash"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Active1", "Completed", "Reminders3", "Archived", "Trash"]);
     expect(commands.listReminders).toHaveBeenCalledWith("");
   });
 
@@ -402,7 +526,7 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     await waitFor(() => expect(screen.getByRole("tab", { name: /Reminders/ })).toHaveTextContent("2"));
     vi.mocked(commands.listReminders).mockRejectedValue(new Error("database is locked"));
     vi.mocked(commands.listNotes).mockResolvedValue([note(), note({ id: "n2", title: "Bike repair" })]);
-    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, archived: 0, trash: 0 });
+    vi.mocked(commands.noteCounts).mockResolvedValue({ active: 2, completed: 0, archived: 0, trash: 0 });
     await act(async () => remindersChanged.handler?.({ noteId: null }));
     await waitFor(() => expect(screen.getByText("Bike repair")).toBeInTheDocument());
     expect(screen.getByText("Weekend errands")).toBeInTheDocument();

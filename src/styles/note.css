@@ -373,6 +373,53 @@
   font-weight: 650;
 }
 
+/* "Marked done" strip (DES-39): overlays the top of the body under the header, so the text
+   does not move. The header's own shade, so it reads as part of the note's chrome. */
+.dn-done-strip {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--dn-header-h) + 6px);
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--dn-radius);
+  background: var(--note-hd);
+  color: var(--dn-ink);
+  box-shadow: var(--dn-shadow-sm), inset 0 0 0 1px var(--dn-ink-line);
+  font-size: var(--dn-text-sm);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.dn-done-strip > span {
+  flex: 1;
+  min-width: 0;
+}
+.dn-done-strip button {
+  flex: none;
+  height: var(--dn-btn);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--dn-radius-pill);
+  background: var(--dn-ink-fill);
+  color: var(--dn-ink);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.dn-done-strip button:hover {
+  background: var(--dn-ink-hover);
+}
+.dn-done-strip button:active {
+  background: var(--dn-ink-press);
+}
+.dn-done-strip button:focus-visible {
+  outline: none;
+  box-shadow: var(--dn-focus-ring);
+}
+
 .dn-resize-mark {
   position: absolute;
   right: 3px;
@@ -834,6 +881,17 @@ html.dn-see-through #root {
 }
 /* Without its tint, an error stands out by a rule. */
 .dn-note.is-high-contrast :is(.dn-save-error, .dn-pin-message) {
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-done-strip {
+  background: var(--dn-hc-bg);
+  color: var(--dn-hc-ink);
+  box-shadow: none;
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-done-strip button {
+  background: var(--dn-hc-bg);
+  color: var(--dn-hc-ink);
   border: var(--dn-hc-rule) solid var(--dn-hc-line);
 }
 .dn-note.is-high-contrast .dn-save-error button {

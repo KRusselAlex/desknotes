@@ -3,7 +3,7 @@
 
 import type { JSONContent } from "@tiptap/react";
 
-export type NoteFilter = "active" | "archived" | "trash";
+export type NoteFilter = "active" | "completed" | "archived" | "trash";
 
 export interface NoteWindowState {
   x: number | null;
@@ -43,6 +43,8 @@ export interface Note {
   updatedAt: number;
   archivedAt: number | null;
   deletedAt: number | null;
+  /** When the note was marked done (Unix ms); null while it is not done. */
+  completedAt: number | null;
   /** Read-only: the native layer refuses content saves while true. */
   editLocked: boolean;
   /** Marked private: hidden behind the PIN while the privacy lock is on. */
@@ -63,6 +65,7 @@ export interface NoteSummary {
   updatedAt: number;
   archivedAt: number | null;
   deletedAt: number | null;
+  completedAt: number | null;
   visible: boolean;
   /** Text around the first match, only when searching. */
   snippet: string | null;
@@ -74,6 +77,7 @@ export interface NoteSummary {
 
 export interface NoteCounts {
   active: number;
+  completed: number;
   archived: number;
   trash: number;
 }

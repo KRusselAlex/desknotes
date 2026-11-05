@@ -71,6 +71,8 @@ export const commands = {
   reopenNote: (id: string) => call<void>("reopen_note", { id }),
   duplicateNote: (id: string) => call<Note>("duplicate_note", { id }),
   setArchived: (id: string, archived: boolean) => call<void>("set_archived", { id, archived }),
+  /** Mark a note done (closes its window) or reopen it (opens its window). */
+  setNoteCompleted: (id: string, done: boolean) => call<void>("set_note_completed", { id, done }),
   trashNote: (id: string) => call<void>("trash_note", { id }),
   restoreNote: (id: string) => call<void>("restore_note", { id }),
   purgeNote: (id: string) => call<void>("purge_note", { id }),
