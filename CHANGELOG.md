@@ -6,6 +6,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+Database: migrations 4–7 (private notes, appearance, reminders, completed notes); backup format 5. A copy is made before upgrading.
+
 ### Added
 - Private notes with a privacy lock (Milestone 3): mark a note private from its ⋯ menu,
   with an optional label. A 6-digit PIN (Settings → Privacy) locks every private note; a
@@ -58,6 +60,8 @@ All notable changes are documented here. The format follows
 
 ## [0.2.0] — 2026-11-02 — Milestone 2: desktop reliability
 
+Database: migration 3 (collapsed notes); backup format 1.
+
 ### Added
 - Keyboard shortcut to show / hide all notes (Settings → General). Ubuntu 24.04 has no
   global-shortcut service for apps, so DeskNotes adds one GNOME custom shortcut, after you
@@ -89,6 +93,8 @@ All notable changes are documented here. The format follows
   open fully on a screen, keeping their size.
 
 ## [0.1.0] — 2026-11-01 — Milestone 1: first usable version
+
+Database: migrations 1–2 (first version).
 
 ### Added
 - Note window and manager rebuilt from the Milestone 1 design: header controls on
