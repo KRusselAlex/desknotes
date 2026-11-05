@@ -87,10 +87,11 @@ The AppImage is built only in CI (the **Packages** workflow), because its tool d
 helper programs. Pull requests that change packaging get both files as workflow
 artifacts for testing.
 
-To release: set the same version in `src-tauri/tauri.conf.json`, `Cargo.toml` and
-`package.json`, update `CHANGELOG.md`, merge, then push a tag `v<version>`. The
-`Packages` workflow tests, builds the `.deb` and AppImage with a `SHA256SUMS` file and creates a
-**draft** release; review it and publish it by hand.
+To release, follow [docs/releasing.md](docs/releasing.md): version bump, CHANGELOG section,
+a beta tag, then the release tag. The workflow checks the tag, runs the full tests, builds
+the `.deb` and AppImage with a `SHA256SUMS` file and a provenance attestation, and creates a
+**draft** release; review it and publish it by hand. Users upgrade and roll back as in
+[docs/upgrading.md](docs/upgrading.md).
 
 ### Design
 
