@@ -1612,7 +1612,7 @@ describe("NoteWindow", () => {
       await typeIntoNote(container, "typed just before ");
       fakeTimers();
       await ctrl("d");
-      expect(commands.saveNoteContent).not.toHaveBeenCalled(); // nothing is written during the strip... until it ends
+      // Typed text may autosave on its own; what waits for the end of the strip is the completion.
       await advance(STRIP_MS + 500);
       expect(commands.saveNoteContent).toHaveBeenCalled();
       expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true);
@@ -1673,6 +1673,77 @@ describe("NoteWindow", () => {
       const order = (f: unknown) => (f as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0]!;
       expect(order(commands.saveNoteContent)).toBeLessThan(order(commands.setNoteCompleted));
       expect(order(commands.setNoteCompleted)).toBeLessThan(order(commands.quitReady));
+    });
+
+    it("a round that arrives while the timer's completion is in flight is answered only after setNoteCompleted resolves", async () => {
+      let finish: () => void = () => undefined;
+      vi.mocked(commands.setNoteCompleted).mockReturnValue(new Promise<undefined>((r) => (finish = () => r(undefined))));
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1); // in flight, unresolved
+      await act(async () => handlers.willQuit?.());
+      await advance(50);
+      expect(commands.quitReady).not.toHaveBeenCalled();
+      await act(async () => finish());
+      await advance(50);
+      expect(commands.quitReady).toHaveBeenCalledExactlyOnceWith(true);
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("a close asked while the timer's completion is in flight does not hide the note as well", async () => {
+      let finish: () => void = () => undefined;
+      vi.mocked(commands.setNoteCompleted).mockReturnValue(new Promise<undefined>((r) => (finish = () => r(undefined))));
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      await act(async () => handlers.noteAction?.("hide"));
+      await act(async () => finish());
+      await advance(50);
+      expect(commands.hideNote).not.toHaveBeenCalled();
+      expect(commands.setNoteCompleted).toHaveBeenCalledTimes(1);
+    });
+
+    it("Ctrl+D does nothing while a close is under way", async () => {
+      vi.mocked(commands.hideNote).mockReturnValue(new Promise(() => undefined));
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "Hide note" }));
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it.each([
+      ["the colour popover", "Colour"],
+      ["the menu", "More"],
+    ])("Ctrl+D does nothing while %s is open", async (_name, button) => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: button }));
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it("Ctrl+D does nothing while the reminder dialog is open", async () => {
+      await openNote();
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
+      await userEvent.click(screen.getByRole("menuitem", { name: "Set reminder…" }));
+      await ctrl("d");
+      expect(screen.queryByText("Marked done")).toBeNull();
+    });
+
+    it("after a refused completion the strip is gone and focus is back in the editor", async () => {
+      vi.mocked(commands.setNoteCompleted).mockRejectedValue(new Error("nope"));
+      await openNote();
+      fakeTimers();
+      await ctrl("d");
+      await advance(STRIP_MS + 100);
+      vi.useRealTimers();
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+      });
+      expect(screen.queryByText("Marked done")).toBeNull();
+      expect(editorBox()).toHaveFocus();
     });
 
     it("quitting without a strip does not mark anything done", async () => {

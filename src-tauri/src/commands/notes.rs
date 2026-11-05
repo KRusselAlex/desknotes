@@ -249,6 +249,12 @@ fn complete_route(done: bool, caller_is_note: bool, note_window_open: bool) -> C
     }
 }
 
+/// A note window that is about to be destroyed after saving answers the save-all round
+/// for itself: "saved". No-op when no round is running or the window is not in it.
+fn answer_round_for_closing_note(quit: &crate::quit::QuitCoordinator, label: &str) {
+    quit.report(label, true);
+}
+
 /// Mark a note done (its window closes, as for archive) or reopen it (its window
 /// opens at the saved place). Touches only the done date; the text, colour,
 /// settings and reminder rule stay as they are. The note window calls it once
@@ -272,6 +278,11 @@ pub async fn set_note_completed(
     let now = desknotes_core::now_ms();
     state.with_db(|db| db.set_completed(&id, done, now))?;
     if done {
+        // The window is destroyed below, so it can no longer answer a save-all round (quit,
+        // export, restore, hide-all, lock). Its text was saved by the page before this call,
+        // so answer for it now; outside a round this does nothing. Without it the round waits
+        // out SAVE_TIMEOUT, and a private note would then be kept open past the lock.
+        answer_round_for_closing_note(&state.quit, &label);
         // The Note settings window closes itself when its note is done (it
         // listens to `notes-changed`, as for archive).
         windows::close_note(&app, &id)?;
@@ -454,6 +465,33 @@ pub fn set_edit_locked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_done_during_a_round_answers_it_before_its_window_goes() {
+        use std::collections::HashSet;
+        use std::time::Duration;
+        let quit = crate::quit::QuitCoordinator::default();
+        let labels: HashSet<String> = ["note-a", "note-b"].iter().map(|s| s.to_string()).collect();
+        quit.begin(labels);
+        answer_round_for_closing_note(&quit, "note-a");
+        quit.report("note-b", true);
+        // Neither "not saved" nor "silent": a private note finishing in a lock round is not
+        // kept open past the lock, and quit does not wait out the timeout.
+        let outcome = quit.wait(Duration::from_millis(50));
+        assert!(outcome.unsaved.is_empty());
+        assert!(outcome.silent.is_empty());
+    }
+
+    #[test]
+    fn answering_outside_a_round_does_nothing() {
+        use std::time::Duration;
+        let quit = crate::quit::QuitCoordinator::default();
+        answer_round_for_closing_note(&quit, "note-a");
+        assert_eq!(
+            quit.wait(Duration::from_millis(10)),
+            crate::quit::RoundOutcome::default()
+        );
+    }
 
     #[test]
     fn an_active_note_may_get_a_window() {

@@ -9,6 +9,11 @@ describe("DoneStrip", () => {
     expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
   });
 
+  it("describes Undo by the status text, so focusing it announces both", () => {
+    render(<DoneStrip onUndo={() => undefined} />);
+    expect(screen.getByRole("button", { name: "Undo" })).toHaveAccessibleDescription("Marked done");
+  });
+
   it("puts focus on Undo when it appears", () => {
     render(<DoneStrip onUndo={() => undefined} />);
     expect(screen.getByRole("button", { name: "Undo" })).toHaveFocus();

@@ -326,6 +326,8 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** Read by handlers registered once. */
   const stripRef = useRef(false);
   const stripTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The completion in flight (from the timer, a close or a save-all round); later callers share it. */
+  const completing = useRef<Promise<boolean> | null>(null);
   /** Last content known to be saved (or loaded); avoids writes when nothing changed. */
   const lastContent = useRef<string | null>(null);
   /** Set when stored content could not be loaded: never autosave over it. */
@@ -424,32 +426,42 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
    * fails the note stays open and active, with the "Not saved" message; if the command is
    * refused, the reason is shown. Returns whether the note was marked done.
    */
-  const completeStrip = useCallback(async (): Promise<boolean> => {
+  const completeStrip = useCallback((): Promise<boolean> => {
     stopStrip();
-    try {
-      const done = await saveThen(() => commands.setNoteCompleted(note.id, true));
-      if (done) autosave.dispose();
-      return done;
-    } catch (e) {
-      setRefusal(refusalText(e));
-      return false;
-    }
-  }, [autosave, note.id, saveThen, stopStrip]);
+    if (completing.current) return completing.current;
+    const run = async (): Promise<boolean> => {
+      try {
+        const done = await saveThen(() => commands.setNoteCompleted(note.id, true));
+        if (done) autosave.dispose();
+        else editor?.commands.focus(); // still open: back to the text, with the "Not saved" message
+        return done;
+      } catch (e) {
+        setRefusal(refusalText(e));
+        editor?.commands.focus();
+        return false;
+      }
+    };
+    const p = run().finally(() => {
+      completing.current = null;
+    });
+    completing.current = p;
+    return p;
+  }, [autosave, editor, note.id, saveThen, stopStrip]);
 
-  /** "Mark as done": the strip shows, and the timer starts. Ignored while it already shows. */
+  /** "Mark as done": the strip shows, and the timer starts. Ignored while it already shows or the note is going away. */
   const startStrip = useCallback(() => {
-    if (stripRef.current) return;
+    if (stripRef.current || closing.current || completing.current) return;
     stripRef.current = true;
     setStripShown(true);
     stripTimer.current = setTimeout(() => {
-      // Held like a close, so a close asked while this save is running does not also hide the note.
-      if (closing.current) return;
-      closing.current = true;
-      void completeStrip().finally(() => {
-        closing.current = false;
-      });
+      // A close is already under way (it hides the note): drop the strip rather than leave it up with no timer.
+      if (closing.current) {
+        stopStrip();
+        return;
+      }
+      void completeStrip();
     }, DONE_STRIP_MS);
-  }, [completeStrip]);
+  }, [completeStrip, stopStrip]);
 
   /** Undo, or Ctrl+Z while the strip shows: the note stays as it was, and the editor has focus again. */
   const undoStrip = useCallback(() => {
@@ -462,7 +474,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     if (closing.current) return;
     closing.current = true;
     try {
-      if (stripRef.current) {
+      if (stripRef.current || completing.current) {
         await completeStrip();
         return;
       }
@@ -551,8 +563,10 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         .flush()
         // Quitting (or exporting, or hiding all) during the strip ends it: the note is marked
         // done once its text is saved, and only then is the round answered.
+        // A completion already in flight is awaited, not repeated: the round is answered after it.
         .then(async () => {
-          if (stripRef.current && autosave.currentState !== "error") await completeStrip();
+          if (completing.current) await completing.current;
+          else if (stripRef.current && autosave.currentState !== "error") await completeStrip();
         })
         .then(() => commands.quitReady(autosave.currentState !== "error"))
         .catch(() => undefined)
@@ -662,6 +676,8 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || collapsed) return;
       const key = e.key.toLowerCase();
       if (key === "d") {
+        // Not under a popover or dialog (menu, colour, text style, reminder, link, private label, unlock).
+        if (document.querySelector('.dn-popover, .dn-link-editor, .dn-modal, [role="dialog"], [role="menu"]')) return;
         e.preventDefault();
         e.stopPropagation();
         startStrip();
