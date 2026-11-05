@@ -55,10 +55,18 @@ pub fn hide_all(app: &AppHandle) -> IpcResult<usize> {
         return Err(unsaved_error(unsaved.len()));
     }
     let state = app.state::<AppState>();
-    let ids: Vec<String> = windows::open_note_labels(app)
+    let open: Vec<String> = windows::open_note_labels(app)
         .iter()
         .filter_map(|l| l.strip_prefix(windows::NOTE_PREFIX).map(str::to_owned))
         .collect();
+    // A note marked done during the round has answered it but its window is still being
+    // destroyed: it is not hidden (it is Completed, not hidden) and must not be remembered.
+    let mut rows = Vec::with_capacity(open.len());
+    for id in open {
+        let note = state.with_db(|db| db.get_note(&id))?;
+        rows.push((id, note.archived_at, note.deleted_at, note.completed_at));
+    }
+    let ids = without_window_refusal(rows);
     for id in &ids {
         state.with_db(|db| db.set_visible(id, false))?;
         windows::close_note(app, id)?;
@@ -127,7 +135,17 @@ pub async fn show_hidden_notes(app: AppHandle) -> IpcResult<usize> {
 /// How many notes "Show hidden notes" would bring back.
 #[tauri::command]
 pub fn hidden_note_count(state: State<'_, AppState>) -> IpcResult<usize> {
-    Ok(state.with_db(|db| db.hidden_by_hide_all())?.len())
+    let remembered = state.with_db(|db| db.hidden_by_hide_all())?;
+    // Only notes "Show hidden notes" would really bring back: not those done, archived or
+    // trashed since.
+    let rows: Vec<_> = remembered
+        .into_iter()
+        .filter_map(|id| {
+            let note = state.with_db(|db| db.get_note(&id)).ok()?;
+            Some((id, note.archived_at, note.deleted_at, note.completed_at))
+        })
+        .collect();
+    Ok(without_window_refusal(rows).len())
 }
 
 #[tauri::command]
@@ -369,6 +387,19 @@ fn window_refusal(
     }
 }
 
+/// The ids of the notes that may have a window: `(id, archived_at, deleted_at, completed_at)`
+/// rows without a `window_refusal`.
+fn without_window_refusal(
+    rows: impl IntoIterator<Item = (String, Option<i64>, Option<i64>, Option<i64>)>,
+) -> Vec<String> {
+    rows.into_iter()
+        .filter(|(_, archived, deleted, completed)| {
+            window_refusal(*archived, *deleted, *completed).is_none()
+        })
+        .map(|(id, ..)| id)
+        .collect()
+}
+
 /// Open (or focus) the note's window and remember it as visible. Refused for an
 /// archived, trashed or done note. Also used by a click on a reminder notification.
 pub fn show_note_window(app: &AppHandle, state: &AppState, id: &str) -> IpcResult<()> {
@@ -491,6 +522,22 @@ mod tests {
             quit.wait(Duration::from_millis(10)),
             crate::quit::RoundOutcome::default()
         );
+    }
+
+    #[test]
+    fn hide_all_and_the_hidden_count_skip_notes_that_may_not_have_a_window() {
+        let rows = vec![
+            ("active".to_string(), None, None, None),
+            ("done".to_string(), None, None, Some(1)),
+            ("archived".to_string(), Some(1), None, None),
+            ("trashed".to_string(), None, Some(1), None),
+            ("active-too".to_string(), None, None, None),
+        ];
+        assert_eq!(
+            without_window_refusal(rows),
+            vec!["active".to_string(), "active-too".to_string()]
+        );
+        assert!(without_window_refusal(Vec::new()).is_empty());
     }
 
     #[test]

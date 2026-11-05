@@ -236,6 +236,11 @@ impl Database {
             NoteFilter::Archived => "n.archived_at IS NOT NULL AND n.deleted_at IS NULL",
             NoteFilter::Trash => "n.deleted_at IS NOT NULL",
         };
+        // Completed is newest-done first; the other lists follow the last edit.
+        let order = match filter {
+            NoteFilter::Completed => "n.completed_at DESC, n.updated_at DESC",
+            _ => "n.updated_at DESC",
+        };
         let needle = query.map(|q| q.trim().to_lowercase()).unwrap_or_default();
         let lock = self.lock_active()?;
         // Private notes are all fetched while locked; which of them match is
@@ -248,7 +253,7 @@ impl Database {
              FROM notes n JOIN note_windows w ON w.note_id = n.id
              WHERE {condition}
                AND (?1 = '' OR instr(n.search_text, ?1) > 0 OR (?2 AND n.private = 1))
-             ORDER BY n.updated_at DESC"
+             ORDER BY {order}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![needle, lock], |r| {
@@ -439,10 +444,12 @@ impl Database {
 
     /// Mark a note done, or reopen it. Only `completed_at` changes: the text, colour,
     /// styling, window, reminder and `updated_at` are never touched. Marking an
-    /// already-done note done keeps its original date. Refused for a note in the trash,
+    /// already-done note done keeps its original date. Reopening also marks the window
+    /// visible (unless the note is archived). Refused for a note in the trash,
     /// like archiving. The shell closes and opens the window.
     pub fn set_completed(&self, id: &str, done: bool, now_ms: i64) -> CoreResult<()> {
-        let changed = self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        let changed = tx.execute(
             "UPDATE notes SET completed_at = CASE WHEN ?2 THEN coalesce(completed_at, ?3) ELSE NULL END
              WHERE id = ?1 AND deleted_at IS NULL",
             params![id, done, now_ms],
@@ -453,6 +460,18 @@ impl Database {
                 "restore the note from the trash first".into(),
             ));
         }
+        if !done {
+            // A reopened note is a visible one again, as after unarchiving: a hide-all that
+            // ran while its "Marked done" strip ended may have cleared the flag. A note that
+            // is also archived stays hidden (it is listed as Archived).
+            tx.execute(
+                "UPDATE note_windows SET visible = 1
+                 WHERE note_id = ?1
+                   AND (SELECT archived_at FROM notes WHERE id = ?1) IS NULL",
+                [id],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -884,6 +903,66 @@ mod tests {
         db.set_completed(&id, false, 9_500).unwrap();
         assert_eq!(db.get_note(&id).unwrap(), before, "reopen restores it all");
         assert_eq!(db.reminder(&id).unwrap(), reminder);
+    }
+
+    #[test]
+    fn reopening_makes_the_window_visible_again() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.save_content(&id, FIXTURE).unwrap();
+        db.set_completed(&id, true, 5_000).unwrap();
+        // Hide-all ran while the done strip was ending and hid the note.
+        db.set_visible(&id, false).unwrap();
+        let hidden = db.get_note(&id).unwrap();
+
+        db.set_completed(&id, false, 6_000).unwrap();
+        let reopened = db.get_note(&id).unwrap();
+        assert!(reopened.window.visible, "the reopened note opens at restart");
+        assert_eq!(
+            crate::Note {
+                window: crate::NoteWindow {
+                    visible: false,
+                    ..reopened.window.clone()
+                },
+                ..reopened
+            },
+            crate::Note {
+                completed_at: None,
+                ..hidden
+            },
+            "only the visible flag differs from before"
+        );
+    }
+
+    #[test]
+    fn reopening_a_note_that_is_also_archived_keeps_it_hidden() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        db.set_completed(&id, true, 5_000).unwrap();
+        db.set_archived(&id, true).unwrap();
+        db.set_completed(&id, false, 6_000).unwrap();
+        assert!(!db.get_note(&id).unwrap().window.visible);
+        assert_eq!(db.list_notes(NoteFilter::Archived, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_completed_list_is_newest_done_first() {
+        let db = db();
+        let old = db.create_note(None).unwrap().id;
+        let new = db.create_note(None).unwrap().id;
+        let mid = db.create_note(None).unwrap().id;
+        // Done order differs from edit order: `old` was edited last.
+        db.set_completed(&mid, true, 200).unwrap();
+        db.set_completed(&new, true, 300).unwrap();
+        db.set_completed(&old, true, 100).unwrap();
+        db.save_content(&old, FIXTURE).unwrap();
+        let ids: Vec<_> = db
+            .list_notes(NoteFilter::Completed, None)
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(ids, vec![new, mid, old]);
     }
 
     #[test]
