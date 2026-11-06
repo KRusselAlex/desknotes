@@ -1,12 +1,20 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import fixture from "../../../tests/fixtures/rich-doc.json";
+import fullFixture from "../../../tests/fixtures/rich-doc.json";
 // @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
 import { readFileSync } from "node:fs";
 import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Note, type PrivacyStatus } from "../../types/note";
 import type { RemindersChanged, ReminderView } from "../../types/reminder";
 import { appearanceStyle } from "../appearance/appearance";
+
+// TODO(images Task 5): the shared fixture now holds an image node the editor cannot
+// load yet, and an unknown node would open every note empty. Until the editor has
+// the node, tests use the fixture without it; Task 5 deletes this filter.
+const fixture = {
+  ...fullFixture,
+  content: fullFixture.content.filter((node) => node.type !== "image"),
+};
 
 const handlers: {
   appAppearance?: (a: AppAppearance) => void;

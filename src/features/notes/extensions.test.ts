@@ -1,6 +1,14 @@
 import { Editor, type JSONContent } from "@tiptap/core";
-import fixture from "../../../tests/fixtures/rich-doc.json";
+import fullFixture from "../../../tests/fixtures/rich-doc.json";
 import { createExtensions, sanitizeDoc, serializeDoc } from "./extensions";
+
+// TODO(images Task 5): the shared fixture now holds an image node the editor cannot
+// load yet, and an unknown node would open every note empty. Until the editor has
+// the node, tests use the fixture without it; Task 5 deletes this filter.
+const fixture = {
+  ...fullFixture,
+  content: fullFixture.content.filter((node) => node.type !== "image"),
+};
 
 function editorWith(content: object) {
   return new Editor({ extensions: createExtensions(), content });
@@ -12,6 +20,9 @@ describe("editor document format", () => {
     expect(editor.getJSON()).toEqual(fixture);
     editor.destroy();
   });
+
+  // TODO(images Task 5): restore by deleting the filter above and this todo.
+  it.todo("round-trips the image node of the shared fixture (Task 5 adds the editor node)");
 
   it("keeps formatting through serialize and reload", () => {
     const first = editorWith(fixture);

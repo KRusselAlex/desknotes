@@ -46,7 +46,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import fixture from "../../tests/fixtures/rich-doc.json";
+import fullFixture from "../../tests/fixtures/rich-doc.json";
 import { App } from "../app/App";
 import { followSystemTheme } from "../app/theme";
 import {
@@ -69,6 +69,12 @@ import "../styles/settings.css";
 import "../styles/privacy.css";
 import "../styles/note-settings.css";
 
+// TODO(images Task 5): the editor cannot load the fixture's image node yet (an unknown
+// node would open the note empty). Task 5 deletes this filter.
+const fixture = {
+  ...fullFixture,
+  content: fullFixture.content.filter((node) => node.type !== "image"),
+};
 const now = Date.now();
 const H = 3_600_000;
 const doc = (title: string, ...lines: string[]) => ({

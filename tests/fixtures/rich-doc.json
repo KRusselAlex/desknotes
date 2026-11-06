@@ -87,6 +87,10 @@
           "content": [{ "type": "paragraph", "attrs": { "textAlign": null }, "content": [{ "type": "text", "text": "eggs" }] }]
         }
       ]
+    },
+    {
+      "type": "image",
+      "attrs": { "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "width": 50 }
     }
   ]
 }

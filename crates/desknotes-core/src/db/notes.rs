@@ -4,6 +4,7 @@ use rusqlite::{OptionalExtension, Row, params};
 use uuid::Uuid;
 
 use super::Database;
+use super::images::sync_note_images_in;
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::enforce_min_size;
 use crate::model::*;
@@ -184,6 +185,7 @@ impl Database {
                 window.collapsed
             ],
         )?;
+        sync_note_images_in(tx, &id, content)?;
         Ok(id)
     }
 
@@ -352,11 +354,25 @@ impl Database {
     /// Validate and store new content. `raw` is the editor's JSON document.
     /// Refused while the note is edit-locked, or private and withheld by the lock.
     pub fn save_content(&self, id: &str, raw: &str) -> CoreResult<SaveResult> {
+        let tx = self.conn.unchecked_transaction()?;
+        let saved = self.save_content_in(&tx, id, raw)?;
+        tx.commit()?;
+        Ok(saved)
+    }
+
+    /// [`Database::save_content`] inside a transaction the caller owns and commits,
+    /// so the content and the images it uses are stored together or not at all.
+    pub(super) fn save_content_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        id: &str,
+        raw: &str,
+    ) -> CoreResult<SaveResult> {
         self.refuse_if_note_locked(id)?;
         let doc = parse_content(raw)?;
         let title = derive_title(&doc);
         let now = now_ms();
-        let changed = self.conn.execute(
+        let changed = tx.execute(
             "UPDATE notes SET content_json = ?2, title = ?3, search_text = ?4, updated_at = ?5
              WHERE id = ?1 AND edit_locked = 0",
             params![id, doc.to_string(), title, derive_search_text(&doc), now],
@@ -369,6 +385,7 @@ impl Database {
             }
             return Err(CoreError::NotFound(id.to_string()));
         }
+        sync_note_images_in(tx, id, &doc)?;
         Ok(SaveResult {
             title,
             updated_at: now,
