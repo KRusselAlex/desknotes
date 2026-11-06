@@ -65,8 +65,10 @@ impl Database {
 
     /// The MIME type and bytes of a stored image, for the shell to serve. `None` for
     /// a malformed or unknown id, and, while the privacy lock is in effect, for an
-    /// image that no readable note uses (one used only by locked private notes, or
-    /// by no note yet). Checked here so no caller can get around the lock.
+    /// image that is used by notes none of which is readable (only locked private
+    /// notes). An image no note uses is served: a freshly pasted image is not used
+    /// until the note saves, and undo can bring back a removed one; nothing private
+    /// uses it, so nothing is exposed. Checked here so no caller can get around the lock.
     pub fn image_for_display(&self, id: &str) -> CoreResult<Option<(String, Vec<u8>)>> {
         if !is_image_id(id) {
             return Ok(None);
@@ -80,26 +82,26 @@ impl Database {
         else {
             return Ok(None);
         };
-        if self.lock_active()? && !self.any_readable_note_uses(id)? {
+        if self.lock_active()? && self.used_only_by_withheld_notes(id)? {
             return Ok(None);
         }
         Ok(Some(found))
     }
 
-    /// Whether at least one note that uses this image is readable right now.
-    fn any_readable_note_uses(&self, image_id: &str) -> CoreResult<bool> {
+    /// Whether notes use this image and none of them is readable right now.
+    fn used_only_by_withheld_notes(&self, image_id: &str) -> CoreResult<bool> {
         let mut stmt = self
             .conn
             .prepare("SELECT note_id FROM note_images WHERE image_id = ?1")?;
         let note_ids = stmt
             .query_map([image_id], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        for note_id in note_ids {
-            if self.refuse_if_note_locked(&note_id).is_ok() {
-                return Ok(true);
-            }
+        if note_ids.is_empty() {
+            return Ok(false);
         }
-        Ok(false)
+        Ok(!note_ids
+            .iter()
+            .any(|note_id| self.refuse_if_note_locked(note_id).is_ok()))
     }
 
     /// Delete images no note uses (trashed and archived notes still use theirs) and
@@ -353,6 +355,25 @@ mod tests {
                 .is_none()
         );
         assert!(db.image_for_display(&"c".repeat(64)).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_unreferenced_image_is_served_while_locked() {
+        let db = Database::open_in_memory().unwrap();
+        let plain = db.create_note(None).unwrap();
+        let private = db.create_note(None).unwrap();
+        // Pasted but not saved yet, or removed from the note (undo can bring it back).
+        let fresh = db.add_image(&plain.id, &png(100)).unwrap();
+        // Used only by a private note.
+        let secret = db.add_image(&private.id, &png(101)).unwrap();
+        db.save_content(&private.id, &image_doc(&[&secret.id]))
+            .unwrap();
+        db.set_private(&private.id, true, "").unwrap();
+        db.set_new_pin(PIN).unwrap();
+
+        db.set_privacy_locked(true, &[]);
+        assert!(db.image_for_display(&fresh.id).unwrap().is_some());
+        assert!(db.image_for_display(&secret.id).unwrap().is_none());
     }
 
     #[test]

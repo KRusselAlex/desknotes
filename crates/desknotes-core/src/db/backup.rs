@@ -5,6 +5,7 @@ use std::path::Path;
 use rusqlite::params;
 
 use super::Database;
+use super::images::sync_note_images_in;
 use super::notes::appearance_json;
 use crate::backup::{BACKUP_FORMAT, BACKUP_VERSION, Backup, BackupNote, BackupReminder};
 use crate::error::CoreResult;
@@ -151,6 +152,7 @@ impl Database {
                     n.completed_at
                 ],
             )?;
+            sync_note_images_in(&tx, &n.id, &n.content)?;
             let w = &n.window;
             tx.execute(
                 "INSERT INTO note_windows (note_id, x, y, width, height, visible, always_on_top, collapsed)
@@ -230,6 +232,40 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn restore_keeps_image_references() {
+        use image::codecs::png::PngEncoder;
+        use image::{ExtendedColorType, ImageEncoder, RgbaImage};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let note = db.create_note(None).unwrap();
+        let img = RgbaImage::from_pixel(6, 4, image::Rgba([200, 30, 30, 255]));
+        let mut png = Vec::new();
+        PngEncoder::new(&mut png)
+            .write_image(img.as_raw(), 6, 4, ExtendedColorType::Rgba8)
+            .unwrap();
+        let info = db.add_image(&note.id, &png).unwrap();
+        let content = serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"with a picture"}]},
+            {"type":"image","attrs":{"id":info.id,"width":null}}]});
+        db.save_content(&note.id, &content.to_string()).unwrap();
+
+        let export = db.export_backup("0.1.0").unwrap();
+        let parsed = parse_backup(&serde_json::to_string(&export.backup).unwrap()).unwrap();
+        db.restore_backup(&parsed, &dir.path().join("safety"))
+            .unwrap();
+
+        assert_eq!(
+            db.remove_unused_images().unwrap(),
+            0,
+            "the restored note still uses its image"
+        );
+        db.set_new_pin("482913").unwrap();
+        db.set_privacy_locked(true, &[]);
+        assert!(db.image_for_display(&info.id).unwrap().is_some());
     }
 
     #[test]
