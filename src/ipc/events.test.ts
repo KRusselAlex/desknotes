@@ -2,8 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listen = vi.fn();
 vi.mock("@tauri-apps/api/event", () => ({ listen: (...args: unknown[]) => listen(...args) }));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({ label: "note-abc" }) }));
 
-import { APP_APPEARANCE_CHANGED, REMINDERS_CHANGED, onAppAppearanceChanged, onRemindersChanged } from "./events";
+import {
+  APP_APPEARANCE_CHANGED,
+  IMAGES_DROPPED,
+  REMINDERS_CHANGED,
+  onAppAppearanceChanged,
+  onImagesDropped,
+  onRemindersChanged,
+} from "./events";
 import { APP_APPEARANCE_DEFAULTS, type AppAppearance } from "../types/note";
 
 describe("onAppAppearanceChanged", () => {
@@ -57,5 +65,25 @@ describe("onRemindersChanged", () => {
     callback({ payload: { noteId: "a2" } });
     callback({ payload: { noteId: null } });
     expect(handler.mock.calls).toEqual([[{ noteId: "a2" }], [{ noteId: null }]]);
+  });
+});
+
+describe("onImagesDropped", () => {
+  beforeEach(() => {
+    listen.mockReset();
+    listen.mockResolvedValue(() => {});
+  });
+
+  it("listens for this window only, so a drop on one note never reaches another", async () => {
+    expect(IMAGES_DROPPED).toBe("images-dropped");
+    const handler = vi.fn();
+    await onImagesDropped(handler);
+    expect(listen).toHaveBeenCalledTimes(1);
+    const [name, callback, options] = listen.mock.calls[0] as [string, (e: { payload: unknown }) => void, unknown];
+    expect(name).toBe("images-dropped");
+    expect(options).toEqual({ target: { kind: "WebviewWindow", label: "note-abc" } });
+    const payload = { noteId: "n", images: [], texts: [], problem: null, x: 1, y: 2 };
+    callback({ payload });
+    expect(handler).toHaveBeenCalledWith(payload);
   });
 });

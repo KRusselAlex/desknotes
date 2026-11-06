@@ -39,7 +39,7 @@ import { FormatBar } from "./FormatBar";
 import {
   addImageFiles,
   imageFilesIn,
-  insertDroppedImages,
+  insertDropped,
   pasteFromClipboard,
   pastePoint,
   pasteSource,
@@ -445,14 +445,16 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     editorRef.current = editor;
   }, [editor]);
 
-  // Files dropped on the window, read and stored by Rust.
+  // Files and links dropped on the window, read (and the images stored) by Rust. Only a
+  // drop meant for this note is taken.
   useEffect(() => {
-    const unlisten = onImagesDropped(({ images, problem, x, y }) => {
-      if (editorRef.current) insertDroppedImages(editorRef.current, images, x, y);
+    const unlisten = onImagesDropped(({ noteId, images, texts, problem, x, y }) => {
+      if (noteId !== note.id) return;
+      if (editorRef.current) insertDropped(editorRef.current, images, texts, x, y);
       if (problem) showImageProblem(problemOf({ code: problem }));
     });
     return () => void unlisten.then((f) => f());
-  }, [showImageProblem]);
+  }, [note.id, showImageProblem]);
 
   /** Save, then hide the window. Stays open if the save failed. */
   /** Save first; run `action` only if everything is saved. Returns false otherwise. */

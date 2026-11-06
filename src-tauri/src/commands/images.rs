@@ -169,16 +169,35 @@ pub async fn paste_image(
     Ok(PastedImage::Image { image })
 }
 
-/// Sent to one note window after files were dropped on it: the images stored for the
-/// note in drop order, the first refusal's code, and the drop point in CSS pixels.
+/// Sent to one note window after something was dropped on it: the note it is for, the
+/// images stored for it in drop order, dropped links as text, the first refusal's code,
+/// and the drop point in CSS pixels.
 pub const IMAGES_DROPPED: &str = "images-dropped";
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImagesDropped {
+    pub note_id: String,
     pub images: Vec<ImageInfo>,
+    pub texts: Vec<String>,
     pub problem: Option<String>,
     pub x: f64,
     pub y: f64,
+}
+
+/// What a drop gave: the images stored, the links (anything that is not a local file
+/// path) as text, and the first refusal's code.
+#[derive(Debug, Default, PartialEq)]
+pub struct Dropped {
+    pub images: Vec<ImageInfo>,
+    pub texts: Vec<String>,
+    pub problem: Option<String>,
+}
+
+/// Whether a dropped "path" names a local file. With Tauri's drop handler on, a link
+/// dragged from a browser arrives as a path too (`https://…`, from its `text/uri-list`).
+fn is_local_path(path: &Path) -> bool {
+    path.is_absolute() && !path.to_string_lossy().contains("://")
 }
 
 fn read_error(e: std::io::Error) -> IpcError {
@@ -207,20 +226,35 @@ pub fn read_at_most(path: &Path, max: u64) -> IpcResult<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Adds dropped files in order: folders and other non-files are skipped, a file over
-/// `max` is refused from its length without being read, the rest are read and given to
-/// `add` (check the note, prepare, store). Returns what was stored and the first
-/// refusal's code; one bad file never stops the others.
+/// Adds dropped files in order. Links come back as text. When there is any file, the
+/// note is checked once (`check_note`) before anything is read; a refusal stops there.
+/// Folders and other non-files are skipped, a file over `max` is refused from its
+/// length without being read, the rest are read and given to `add` (check the note,
+/// prepare, store). Only the first refusal's code is kept; one bad file never stops
+/// the others.
 pub fn dropped_images(
     paths: &[PathBuf],
     max: u64,
+    check_note: impl FnOnce() -> IpcResult<()>,
     mut file_len: impl FnMut(&Path) -> IpcResult<Option<u64>>,
     mut read: impl FnMut(&Path) -> IpcResult<Vec<u8>>,
     mut add: impl FnMut(Vec<u8>) -> IpcResult<ImageInfo>,
-) -> (Vec<ImageInfo>, Option<String>) {
-    let mut images = Vec::new();
-    let mut problem = None;
-    for path in paths {
+) -> Dropped {
+    let mut result = Dropped::default();
+    let (files, links): (Vec<&PathBuf>, Vec<&PathBuf>) =
+        paths.iter().partition(|p| is_local_path(p));
+    result.texts = links
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    if files.is_empty() {
+        return result;
+    }
+    if let Err(e) = check_note() {
+        result.problem = Some(e.code);
+        return result;
+    }
+    for path in files {
         let mut one = || -> IpcResult<Option<ImageInfo>> {
             let Some(len) = file_len(path)? else {
                 return Ok(None);
@@ -231,14 +265,14 @@ pub fn dropped_images(
             add(read(path)?).map(Some)
         };
         match one() {
-            Ok(Some(image)) => images.push(image),
+            Ok(Some(image)) => result.images.push(image),
             Ok(None) => {}
             Err(e) => {
-                problem.get_or_insert(e.code);
+                result.problem.get_or_insert(e.code);
             }
         }
     }
-    (images, problem)
+    result
 }
 
 /// Adds one dropped file's bytes to a note, as `add_image` does: the note checks, then
@@ -418,56 +452,70 @@ mod tests {
     }
 
     /// Runs `dropped_images` over fake files: `files` maps a path to its length
-    /// (`None` for a directory) and its bytes. Returns the result and the paths read.
+    /// (`None` for a directory) and its bytes; the note accepts images. Returns the
+    /// result and every path that was looked at or read.
     fn drop_fake(
         files: &[(&str, Option<u64>, &[u8])],
         max: u64,
         mut add: impl FnMut(Vec<u8>) -> IpcResult<ImageInfo>,
-    ) -> ((Vec<ImageInfo>, Option<String>), Vec<String>) {
+    ) -> (Dropped, Vec<String>, Vec<String>) {
         let paths: Vec<PathBuf> = files.iter().map(|(p, _, _)| PathBuf::from(p)).collect();
         let find = |p: &Path| files.iter().find(|(n, _, _)| Path::new(n) == p).unwrap();
+        let mut looked = Vec::new();
         let mut read = Vec::new();
         let result = dropped_images(
             &paths,
             max,
-            |p| Ok(find(p).1),
+            || Ok(()),
+            |p| {
+                looked.push(p.display().to_string());
+                Ok(find(p).1)
+            },
             |p| {
                 read.push(p.display().to_string());
                 Ok(find(p).2.to_vec())
             },
             &mut add,
         );
-        (result, read)
+        (result, looked, read)
+    }
+
+    fn by_bytes(b: Vec<u8>) -> IpcResult<ImageInfo> {
+        Ok(info(&String::from_utf8(b).unwrap()))
+    }
+
+    fn dropped(images: Vec<ImageInfo>, texts: &[&str], problem: Option<&str>) -> Dropped {
+        Dropped {
+            images,
+            texts: texts.iter().map(|t| (*t).to_owned()).collect(),
+            problem: problem.map(str::to_owned),
+        }
     }
 
     #[test]
     fn a_dropped_directory_is_skipped_without_a_problem() {
-        let ((images, problem), read) = drop_fake(
+        let (result, _, read) = drop_fake(
             &[("/photos", None, b""), ("/a.png", Some(1), b"a")],
             10,
-            |b| Ok(info(&String::from_utf8(b).unwrap())),
+            by_bytes,
         );
-        assert_eq!(images, vec![info("a")]);
-        assert_eq!(problem, None);
+        assert_eq!(result, dropped(vec![info("a")], &[], None));
         assert_eq!(read, vec!["/a.png"]);
     }
 
     #[test]
     fn a_dropped_file_over_the_limit_is_refused_without_reading_it() {
         let mut added = 0;
-        let ((images, problem), read) = drop_fake(&[("/big.png", Some(11), b"x")], 10, |_| {
+        let (result, _, read) = drop_fake(&[("/big.png", Some(11), b"x")], 10, |_| {
             added += 1;
             Ok(info("x"))
         });
-        assert!(images.is_empty());
-        assert_eq!(problem.as_deref(), Some("image_too_large"));
+        assert_eq!(result, dropped(vec![], &[], Some("image_too_large")));
         assert!(read.is_empty(), "never read");
         assert_eq!(added, 0);
         // Exactly the limit is fine.
-        let ((images, problem), _) = drop_fake(&[("/ok.png", Some(10), b"ok")], 10, |b| {
-            Ok(info(&String::from_utf8(b).unwrap()))
-        });
-        assert_eq!((images, problem), (vec![info("ok")], None));
+        let (result, _, _) = drop_fake(&[("/ok.png", Some(10), b"ok")], 10, by_bytes);
+        assert_eq!(result, dropped(vec![info("ok")], &[], None));
     }
 
     #[test]
@@ -479,23 +527,30 @@ mod tests {
             ("/huge.png", Some(99), b""),
             ("/3.png", Some(1), b"3"),
         ];
-        let ((images, problem), _) = drop_fake(files, 10, |b| {
+        let (result, _, _) = drop_fake(files, 10, |b| {
             if b == b"pdf" {
                 Err(CoreError::Image(ImageError::Unsupported).into())
             } else {
-                Ok(info(&String::from_utf8(b).unwrap()))
+                by_bytes(b)
             }
         });
-        assert_eq!(images, vec![info("1"), info("2"), info("3")]);
-        assert_eq!(problem.as_deref(), Some("image_unsupported"));
+        assert_eq!(
+            result,
+            dropped(
+                vec![info("1"), info("2"), info("3")],
+                &[],
+                Some("image_unsupported")
+            )
+        );
     }
 
     #[test]
     fn a_file_that_cannot_be_read_is_a_problem_and_the_rest_still_go_in() {
         let paths = vec![PathBuf::from("/gone.png"), PathBuf::from("/a.png")];
-        let (images, problem) = dropped_images(
+        let result = dropped_images(
             &paths,
             10,
+            || Ok(()),
             |p| {
                 if p == Path::new("/gone.png") {
                     Err(IpcError::new("io", "missing"))
@@ -506,8 +561,73 @@ mod tests {
             |_| Ok(b"a".to_vec()),
             |_| Ok(info("a")),
         );
-        assert_eq!(images, vec![info("a")]);
-        assert_eq!(problem.as_deref(), Some("io"));
+        assert_eq!(result, dropped(vec![info("a")], &[], Some("io")));
+    }
+
+    #[test]
+    fn a_dropped_link_is_text_and_is_never_looked_at_as_a_file() {
+        let (result, looked, read) = drop_fake(
+            &[
+                ("https://x/a.png", Some(1), b"web"),
+                ("/a.png", Some(1), b"a"),
+                ("relative/b.png", Some(1), b"b"),
+            ],
+            10,
+            by_bytes,
+        );
+        assert_eq!(
+            result,
+            dropped(
+                vec![info("a")],
+                &["https://x/a.png", "relative/b.png"],
+                None
+            )
+        );
+        assert_eq!(looked, vec!["/a.png"]);
+        assert_eq!(read, vec!["/a.png"]);
+    }
+
+    #[test]
+    fn a_note_that_refuses_images_is_checked_once_before_any_file_is_read() {
+        let paths = vec![PathBuf::from("/a.png"), PathBuf::from("/b.png")];
+        let mut checks = 0;
+        let touched = std::cell::Cell::new(0);
+        let result = dropped_images(
+            &paths,
+            10,
+            || {
+                checks += 1;
+                Err(IpcError::new("private_locked", "locked"))
+            },
+            |_| {
+                touched.set(touched.get() + 1);
+                Ok(Some(1))
+            },
+            |_| {
+                touched.set(touched.get() + 1);
+                Ok(b"a".to_vec())
+            },
+            |_| {
+                touched.set(touched.get() + 1);
+                Ok(info("a"))
+            },
+        );
+        assert_eq!(result, dropped(vec![], &[], Some("private_locked")));
+        assert_eq!((checks, touched.get()), (1, 0));
+    }
+
+    #[test]
+    fn a_drop_of_links_only_does_not_check_the_note() {
+        let paths = vec![PathBuf::from("https://example.com/")];
+        let result = dropped_images(
+            &paths,
+            10,
+            || Err(IpcError::new("private_locked", "locked")),
+            |_| unreachable!(),
+            |_| unreachable!(),
+            |_| unreachable!(),
+        );
+        assert_eq!(result, dropped(vec![], &["https://example.com/"], None));
     }
 
     /// A fresh folder under the system temp folder, removed when dropped.
@@ -571,9 +691,11 @@ mod tests {
     }
 
     #[test]
-    fn the_dropped_payload_names_images_problem_and_point() {
+    fn the_dropped_payload_names_note_images_texts_problem_and_point() {
         let payload = ImagesDropped {
+            note_id: "0f8fad5b-d9cb-469f-a165-70867728950e".into(),
             images: vec![info("a")],
+            texts: vec!["https://example.com/".into()],
             problem: Some("image_too_large".into()),
             x: 1.5,
             y: 2.0,
@@ -581,7 +703,9 @@ mod tests {
         assert_eq!(
             serde_json::to_value(payload).unwrap(),
             json!({
+                "noteId": "0f8fad5b-d9cb-469f-a165-70867728950e",
                 "images": [{"id": "a", "width": 1, "height": 1}],
+                "texts": ["https://example.com/"],
                 "problem": "image_too_large",
                 "x": 1.5,
                 "y": 2.0

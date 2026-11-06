@@ -30,7 +30,7 @@ export function resizedWidth(px: number, columnPx: number): number {
  * of DeskNotes' own image addresses. Any other image (a web page's) has none and is dropped,
  * so nothing is ever loaded from elsewhere.
  */
-function pastedImageId(el: HTMLElement): string | null {
+export function pastedImageId(el: HTMLElement): string | null {
   const data = el.getAttribute("data-image-id");
   if (data !== null) return isImageId(data) ? data : null;
   return imageIdFromUrl(el.getAttribute("src") ?? "");

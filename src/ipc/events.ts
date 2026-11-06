@@ -1,4 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { AppAppearance, ImageInfo } from "../types/note";
 import type { RemindersChanged } from "../types/reminder";
 
@@ -98,10 +99,16 @@ export function onRemindersChanged(handler: (e: RemindersChanged) => void): Prom
 
 export const IMAGES_DROPPED = "images-dropped";
 
-/** Files dropped on this note window, read and stored by Rust (sent to that window only). */
+/**
+ * Something dropped on a note window, read and stored by Rust. Rust sends it to that window
+ * only; `noteId` names the note it is for.
+ */
 export interface ImagesDropped {
+  noteId: string;
   /** Stored for the note, in drop order. */
   images: ImageInfo[];
+  /** Dropped links (anything that was not a local file), to insert as plain text. */
+  texts: string[];
   /** The first refusal's error code, if any. */
   problem: string | null;
   /** The drop point in CSS pixels inside the window. */
@@ -109,6 +116,13 @@ export interface ImagesDropped {
   y: number;
 }
 
+/**
+ * Listens in this window only: a plain `listen()` targets any window, so an event Rust sends
+ * to one note window would reach every open note.
+ */
 export function onImagesDropped(handler: (e: ImagesDropped) => void): Promise<UnlistenFn> {
-  return listen<ImagesDropped>(IMAGES_DROPPED, (event) => handler(event.payload));
+  const label = getCurrentWebviewWindow().label;
+  return listen<ImagesDropped>(IMAGES_DROPPED, (event) => handler(event.payload), {
+    target: { kind: "WebviewWindow", label },
+  });
 }

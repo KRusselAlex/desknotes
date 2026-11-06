@@ -8,7 +8,7 @@ use desknotes_core::image_prep::PrepLimits;
 use tauri::{Emitter, Manager, PhysicalPosition, Window};
 
 use crate::commands::images::{
-    IMAGES_DROPPED, ImagesDropped, add_dropped_bytes, dropped_images, read_at_most,
+    Dropped, IMAGES_DROPPED, ImagesDropped, add_dropped_bytes, dropped_images, read_at_most,
     regular_file_len,
 };
 use crate::state::AppState;
@@ -30,10 +30,10 @@ pub fn css_point(x: f64, y: f64, scale_factor: f64, physical: bool) -> (f64, f64
     (x / scale, y / scale)
 }
 
-/// Files dropped on the note `note_id`'s window: each is checked, read, prepared and
-/// stored on a blocking thread (the event loop never waits), then the window gets
-/// `images-dropped` with what was added and the first problem. A drop of folders only
-/// says nothing.
+/// Something dropped on the note `note_id`'s window: on a blocking thread (the event
+/// loop never waits) the note is checked once, then each file is read, prepared and
+/// stored; links are kept as text. The window then gets `images-dropped` with what was
+/// added and the first problem. A drop of folders only says nothing.
 pub fn on_drop(window: &Window, note_id: &str, paths: &[PathBuf], position: PhysicalPosition<f64>) {
     let (x, y) = css_point(
         position.x,
@@ -50,19 +50,22 @@ pub fn on_drop(window: &Window, note_id: &str, paths: &[PathBuf], position: Phys
             return;
         };
         let max = PrepLimits::DEFAULT.max_input as u64;
-        let (images, problem) = dropped_images(
+        let dropped = dropped_images(
             &paths,
             max,
+            || state.with_db(|db| db.check_note_accepts_images(&note_id)),
             regular_file_len,
             |path| read_at_most(path, max),
             |bytes| add_dropped_bytes(&state, &note_id, bytes),
         );
-        if images.is_empty() && problem.is_none() {
+        if dropped == Dropped::default() {
             return;
         }
         let payload = ImagesDropped {
-            images,
-            problem,
+            note_id,
+            images: dropped.images,
+            texts: dropped.texts,
+            problem: dropped.problem,
             x,
             y,
         };

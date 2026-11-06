@@ -2005,6 +2005,8 @@ describe("NoteWindow", () => {
         const at = vi.spyOn(ed.view, "posAtCoords").mockReturnValue({ pos: 30, inside: -1 });
         await act(async () =>
           handlers.imagesDropped!({
+            noteId: ID,
+            texts: [],
             images: [
               { id: IMG, width: 800, height: 450 },
               { id: IMG2, width: 10, height: 10 },
@@ -2019,11 +2021,56 @@ describe("NoteWindow", () => {
         expect(screen.queryByRole("alert")).toBeNull();
       });
 
+      it("a drop meant for another note inserts nothing", async () => {
+        const { ed } = await openTwoLines();
+        vi.spyOn(ed.view, "posAtCoords").mockReturnValue({ pos: 30, inside: -1 });
+        await act(async () =>
+          handlers.imagesDropped!({
+            noteId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+            images: [{ id: IMG, width: 800, height: 450 }],
+            texts: ["https://example.com/"],
+            problem: "image_too_large",
+            x: 1,
+            y: 1,
+          }),
+        );
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha beta"]);
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+
+      it("a dropped link goes in as plain text where it was dropped, with no message", async () => {
+        const { ed } = await openTwoLines();
+        vi.spyOn(ed.view, "posAtCoords").mockReturnValue({ pos: 30, inside: -1 });
+        await act(async () =>
+          handlers.imagesDropped!({ noteId: ID, images: [], texts: ["https://example.com/<b>"], problem: null, x: 1, y: 1 }),
+        );
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alphahttps://example.com/<b> beta"]);
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+
+      it("an image copied from another note pastes as that image, without reading the clipboard", async () => {
+        const { container, ed } = await openTwoLines();
+        await act(async () => ed.commands.setTextSelection(30));
+        const html = `<meta charset="utf-8"><img src="desknotes-image://localhost/${IMG}" data-image-id="${IMG}">`;
+        fireEvent.paste(editorEl(container), {
+          clipboardData: { files: [], types: ["text/html"], getData: (t: string) => (t === "text/html" ? html : "") },
+        });
+        await waitFor(() => expect(blocks(ed)).toContain(`image:${IMG}`));
+        expect(commands.pasteImage).not.toHaveBeenCalled();
+      });
+
       it("a drop outside the text adds the images at the end, and its problem is shown", async () => {
         const { ed } = await openTwoLines();
         vi.spyOn(ed.view, "posAtCoords").mockReturnValue(null);
         await act(async () =>
-          handlers.imagesDropped!({ images: [{ id: IMG, width: 800, height: 450 }], problem: "image_unsupported", x: 0, y: 0 }),
+          handlers.imagesDropped!({
+            noteId: ID,
+            images: [{ id: IMG, width: 800, height: 450 }],
+            texts: [],
+            problem: "image_unsupported",
+            x: 0,
+            y: 0,
+          }),
         );
         expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha beta", `image:${IMG}`, ""]);
         expect(await screen.findByRole("alert")).toHaveTextContent("DeskNotes can add PNG, JPEG, GIF or WebP images.");

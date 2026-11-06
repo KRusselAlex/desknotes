@@ -162,6 +162,15 @@ describe("pasteSource", () => {
     expect(pasteSource(["text/plain", "text/html"], IMG, [])).toBe("default");
   });
 
+  it("an image copied from another note (its own address or data-image-id) is the editor's", () => {
+    const id = "a".repeat(64);
+    expect(pasteSource(["text/html"], `<img src="desknotes-image://localhost/${id}">`, [])).toBe("default");
+    expect(pasteSource(["text/html"], `<meta charset="utf-8"><img data-image-id="${id}" src="x">`, [])).toBe("default");
+    expect(pasteSource(["text/html"], `<img src="https://desknotes-image.localhost/${id}">`, [])).toBe("default");
+    // A malformed id is not one of ours.
+    expect(pasteSource(["text/html"], `<img data-image-id="nope" src="https://x/a.png">`, [])).toBe("native");
+  });
+
   it("an office paste (HTML with text and a picture) stays text", () => {
     expect(pasteSource(["Files", "text/html"], "<p>Hello</p>", [pngFile()])).toBe("default");
   });

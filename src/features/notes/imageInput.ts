@@ -5,6 +5,7 @@ import { insertPoint } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 import { commands } from "../../ipc/commands";
 import type { ImageInfo, PastedImage } from "../../types/note";
+import { pastedImageId } from "./imageNode";
 
 /** Why an image was not added; each has one message (design §2.5). */
 export type ImageProblem = "too_large" | "unsupported" | "failed";
@@ -94,18 +95,21 @@ export function shouldPasteFiles(html: string, files: readonly File[]): boolean 
  * - "native": nothing usable, no plain text, and HTML that is empty or holds nothing but
  *   images. WebKitGTK shows a screenshot or an image with text as an empty clipboard, and a
  *   browser's "Copy Image" as a lone `<img>`, so Rust reads the system clipboard instead;
- * - "default": the editor pastes it, so text and office HTML stay text.
+ * - "default": the editor pastes it, so text, office HTML and images copied from a note (their
+ *   own address or `data-image-id`) stay the editor's.
  */
 export function pasteSource(
   types: readonly string[],
   html: string,
   files: readonly File[],
 ): "files" | "native" | "default" {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  // An image copied from a note: the editor's own HTML paste keeps it (design §5).
+  if (Array.from(template.content.querySelectorAll("img")).some((img) => pastedImageId(img) !== null)) return "default";
   const images = imageFilesIn(files);
   if (images.length > 0) return shouldPasteFiles(html, images) ? "files" : "default";
   if (types.includes("text/plain")) return "default";
-  const template = document.createElement("template");
-  template.innerHTML = html;
   return onlyImages(template.content) ? "native" : "default";
 }
 
@@ -248,10 +252,11 @@ export async function addImageFiles(
 /**
  * Inserts clipboard text at `at` as plain text, never as HTML: one line joins the text there,
  * more lines become paragraphs, as the editor's own plain-text paste does. The cursor moves
- * after it when it was at `at`. Does nothing while the note is read-only.
+ * after it when it was at `at`. Does nothing while the note is read-only. Returns the
+ * transaction, or null when nothing was inserted.
  */
-function insertPlainText(editor: Editor, text: string, at: number) {
-  if (editor.isDestroyed || !editor.isEditable || text === "") return;
+function insertPlainText(editor: Editor, text: string, at: number): Transaction | null {
+  if (editor.isDestroyed || !editor.isEditable || text === "") return null;
   const { state } = editor;
   const { schema } = state;
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
@@ -261,6 +266,7 @@ function insertPlainText(editor: Editor, text: string, at: number) {
   const tr = state.tr.replaceRange(pos, pos, new Slice(Fragment.from(paragraphs), 1, 1));
   if (moveCursor) tr.setSelection(Selection.near(tr.doc.resolve(tr.mapping.map(pos)))).scrollIntoView();
   editor.view.dispatch(tr);
+  return tr;
 }
 
 /**
@@ -294,12 +300,18 @@ export async function pasteFromClipboard(
 }
 
 /**
- * Images Rust stored from files dropped on the note: inserted in order where they were
- * dropped (`x`/`y` in CSS pixels), or at the end of the note when that point is not in the
- * text.
+ * What Rust took from a drop on the note: dropped links go in as plain text where they were
+ * dropped (`x`/`y` in CSS pixels), then the stored images in order after them; at the end of
+ * the note when that point is not in the text.
  */
-export function insertDroppedImages(editor: Editor, images: readonly ImageInfo[], x: number, y: number) {
-  if (editor.isDestroyed || images.length === 0) return;
+export function insertDropped(
+  editor: Editor,
+  images: readonly ImageInfo[],
+  texts: readonly string[],
+  x: number,
+  y: number,
+) {
+  if (editor.isDestroyed || (images.length === 0 && texts.length === 0)) return;
   let at: number | undefined;
   try {
     at = editor.view.posAtCoords({ left: x, top: y })?.pos;
@@ -307,6 +319,10 @@ export function insertDroppedImages(editor: Editor, images: readonly ImageInfo[]
     at = undefined; // no layout to measure (a hidden window)
   }
   let target = at ?? editor.state.doc.content.size;
+  if (texts.length > 0) {
+    const tr = insertPlainText(editor, texts.join("\n"), target);
+    if (tr) target = tr.mapping.map(target);
+  }
   for (const image of images) {
     const after = insertImage(editor, image, target);
     if (after === null) return;

@@ -118,16 +118,22 @@ own decision).
     bytes or file paths cross the webview *(revised during the build: WebKitGTK gives the
     page no clipboard images or dropped files)*:
     - **Paste:** when the page sees no usable image file, no plain text, and HTML that is
-      empty or holds nothing but `<img>`, the editor calls `paste_image(note_id)`. Rust
-      reads the system clipboard on the GTK main thread (`image/png`, else any image GTK
-      can read, converted to PNG off the main thread), and without an image returns the
-      clipboard's text, which the editor inserts as plain text, so an image-plus-text
-      clipboard never loses the text. Text and office HTML stay the editor's own paste.
+      empty or holds nothing but foreign `<img>`, the editor calls `paste_image(note_id)`.
+      Rust asks the clipboard for its types on the GTK main thread and fetches `image/png`,
+      else another image type (JPEG, GIF, WebP, then BMP, TIFF…), refusing over 40 MiB
+      before copying; nothing is decoded on the main thread. Bytes the core cannot read
+      as they are (BMP, TIFF) are converted to PNG on a blocking thread. Without an image
+      it returns the clipboard's text, which the editor inserts as plain text, so an
+      image-plus-text clipboard never loses the text. Text, office HTML and images copied
+      from a note (DeskNotes' own `<img>`) stay the editor's own paste.
     - **Drop:** Tauri's own drag-drop handler is on for note windows, so the webview never
-      receives (or opens) a dropped file. Rust reads each dropped regular file (folders are
-      skipped; over 40 MiB is refused from its size, then reading is bounded) on a blocking
-      thread and sends the note window `images-dropped` with the stored images in order,
-      the first problem, and the drop point in CSS pixels.
+      receives (or opens) a dropped file. On a blocking thread Rust checks the note once,
+      then reads each dropped regular file (folders are skipped; over 40 MiB is refused
+      from its size, then reading is bounded). A dropped link arrives as a "path" too
+      (`https://…`) and is kept as text. Rust sends that note window only
+      `images-dropped` with the note id, the stored images in order, the links, the first
+      problem, and the drop point in CSS pixels; the editor inserts the links as plain
+      text there and the images after them.
   - Both then follow the `add_image` path: the note checks, validate and re-encode off
     the database lock, store, and return `{ id, width, height }`. `add_image(note_id,
     bytes)` (raw binary IPC, not base64, **my call**) stays for webviews that give the
