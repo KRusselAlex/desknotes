@@ -48,6 +48,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import fullFixture from "../../tests/fixtures/rich-doc.json";
 import { App } from "../app/App";
+import { setImageUrlResolver } from "../ipc/images";
 import { followSystemTheme } from "../app/theme";
 import {
   APP_APPEARANCE_DEFAULTS,
@@ -304,6 +305,13 @@ Object.assign(window, {
   },
 });
 
+// Images: the native `desknotes-image` scheme does not exist in a browser, so every image
+// shows a small fixed PNG (a 16x9 grey-blue rectangle) and add_image / pick_image return it.
+const PREVIEW_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAIAAAC0SDtlAAAAFElEQVR4nGOYs+UCSYhhVMOg0AAAhOIyEEFvP38AAAAASUVORK5CYII=";
+setImageUrlResolver(() => PREVIEW_PNG);
+const PREVIEW_IMAGE = { id: "0".repeat(64), width: 800, height: 450 };
+
 mockIPC(
   (cmd, args) => {
     const a = (args ?? {}) as Record<string, unknown>;
@@ -553,6 +561,9 @@ mockIPC(
         n.privateLabel = label;
         return null;
       }
+      case "add_image":
+      case "pick_image":
+        return { ...PREVIEW_IMAGE };
       case "report_activity":
         return null;
       case "open_settings":

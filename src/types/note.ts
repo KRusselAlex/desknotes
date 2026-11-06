@@ -138,6 +138,14 @@ export interface SettingsView {
   lastBackupAt: number | null;
 }
 
+/** A stored image, as the editor needs it to place the image. */
+export interface ImageInfo {
+  /** 64 lowercase hex characters (SHA-256 of the stored bytes). */
+  id: string;
+  width: number;
+  height: number;
+}
+
 export interface ExportResult {
   path: string;
   count: number;

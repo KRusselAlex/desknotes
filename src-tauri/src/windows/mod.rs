@@ -413,7 +413,9 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
                 // removing its decorations, so Mutter first frames it with a 37 px
                 // title bar and the note keeps that extra height, growing on every
                 // restart. Mapping only after it is undecorated avoids this.
-                .visible(false);
+                .visible(false)
+                // The webview gets HTML5 file drops (images), not Tauri's own handler.
+                .disable_drag_drop_handler();
         if transparent {
             builder = builder.transparent(true);
         }

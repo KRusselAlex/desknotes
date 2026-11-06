@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod backup;
+pub mod images;
 pub mod note_settings;
 pub mod notes;
 pub mod privacy;

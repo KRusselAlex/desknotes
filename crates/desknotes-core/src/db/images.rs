@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::Database;
 use crate::error::{CoreError, CoreResult};
-use crate::image_prep::prepare_image;
+use crate::image_prep::{PreparedImage, prepare_image};
 use crate::now_ms;
 use crate::validation::{image_ids, is_image_id};
 
@@ -28,6 +28,14 @@ impl Database {
     /// note locked for editing. This does not touch `note_images`: the reference
     /// appears when the note is saved with the image in it.
     pub fn add_image(&self, note_id: &str, input: &[u8]) -> CoreResult<ImageInfo> {
+        self.check_note_accepts_images(note_id)?;
+        let image = prepare_image(input)?;
+        self.store_prepared_image(note_id, &image)
+    }
+
+    /// Refuse, like [`Database::add_image`], when an image cannot be added to this
+    /// note. The shell calls it before preparing a large image, so a refusal is quick.
+    pub fn check_note_accepts_images(&self, note_id: &str) -> CoreResult<()> {
         self.refuse_if_note_locked(note_id)?;
         let edit_locked: bool = self
             .conn
@@ -43,7 +51,18 @@ impl Database {
                 "this note is locked for editing".into(),
             ));
         }
-        let image = prepare_image(input)?;
+        Ok(())
+    }
+
+    /// Store an image already made by `prepare_image`, with the same checks of the
+    /// note as `add_image` (made again: the note may have changed while the image was
+    /// prepared). Lets the shell prepare the image without holding the database.
+    pub fn store_prepared_image(
+        &self,
+        note_id: &str,
+        image: &PreparedImage,
+    ) -> CoreResult<ImageInfo> {
+        self.check_note_accepts_images(note_id)?;
         self.conn.execute(
             "INSERT OR IGNORE INTO images (id, mime, width, height, bytes, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -57,7 +76,7 @@ impl Database {
             ],
         )?;
         Ok(ImageInfo {
-            id: image.id,
+            id: image.id.clone(),
             width: image.width,
             height: image.height,
         })
@@ -225,6 +244,32 @@ mod tests {
             "not_found"
         );
         assert_eq!(count(&db, "SELECT COUNT(*) FROM images"), 0);
+    }
+
+    #[test]
+    fn store_prepared_image_checks_the_note_again() {
+        let db = Database::open_in_memory().unwrap();
+        let note = db.create_note(None).unwrap();
+        let prepared = crate::image_prep::prepare_image(&png(5)).unwrap();
+        db.set_edit_locked(&note.id, true).unwrap();
+        assert_eq!(
+            db.store_prepared_image(&note.id, &prepared)
+                .unwrap_err()
+                .code(),
+            "not_allowed"
+        );
+        let missing = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
+        assert_eq!(
+            db.store_prepared_image(missing, &prepared)
+                .unwrap_err()
+                .code(),
+            "not_found"
+        );
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM images"), 0);
+        db.set_edit_locked(&note.id, false).unwrap();
+        let info = db.store_prepared_image(&note.id, &prepared).unwrap();
+        assert_eq!(info.id, prepared.id);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM images"), 1);
     }
 
     #[test]

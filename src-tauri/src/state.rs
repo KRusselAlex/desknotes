@@ -58,7 +58,16 @@ impl AppState {
         let mut errors = Vec::new();
         let db = match app.path().app_data_dir() {
             Ok(dir) => match Database::open(&dir.join(DB_FILE), &dir.join(BACKUP_DIR)) {
-                Ok(db) => Some(db),
+                Ok(db) => {
+                    // Start-up only, never during a session: undo and a fresh paste
+                    // may still need an image no note uses yet.
+                    match db.remove_unused_images() {
+                        Ok(0) => {}
+                        Ok(n) => eprintln!("DeskNotes: removed {n} unused image(s)"),
+                        Err(e) => eprintln!("DeskNotes: could not remove unused images: {e}"),
+                    }
+                    Some(db)
+                }
                 Err(e) => {
                     errors.push(startup_message(&e));
                     None
