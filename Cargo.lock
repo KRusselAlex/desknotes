@@ -821,6 +821,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
+ "gif",
  "image",
  "rusqlite",
  "serde",

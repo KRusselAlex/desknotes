@@ -3,15 +3,16 @@
 //! Every image is decoded and re-encoded here, so nothing the user picked is stored
 //! as-is: EXIF, GPS, comments and colour profiles are never copied. No SQL, no files.
 
-use std::io::Cursor;
+use std::borrow::Cow;
+use std::io::{Cursor, Read};
+use std::num::NonZeroU64;
 
-use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::metadata::Orientation;
 use image::{
-    AnimationDecoder, DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat,
-    ImageReader, Limits,
+    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Limits,
+    Rgba, RgbaImage,
 };
 use sha2::{Digest, Sha256};
 
@@ -31,6 +32,9 @@ pub struct PrepLimits {
     pub max_side: u32,
     /// Most pixels a decoder may be asked to produce.
     pub max_pixels: u64,
+    /// Most pixels an animated GIF may hold, summed over every frame's own rectangle,
+    /// so a small file with thousands of frames cannot keep the decoder busy for ever.
+    pub max_animation_pixels: u64,
 }
 
 impl PrepLimits {
@@ -39,6 +43,7 @@ impl PrepLimits {
         max_output: 5 * 1024 * 1024,
         max_side: 2000,
         max_pixels: 100_000_000,
+        max_animation_pixels: 1_000_000_000,
     };
 }
 
@@ -65,7 +70,16 @@ pub fn prepare_image_with(input: &[u8], limits: &PrepLimits) -> CoreResult<Prepa
     let format = match mime {
         "image/png" => ImageFormat::Png,
         "image/jpeg" => ImageFormat::Jpeg,
-        "image/gif" => ImageFormat::Gif,
+        "image/gif" => {
+            return match read_gif(input, limits)? {
+                Gif::Animated {
+                    bytes,
+                    width,
+                    height,
+                } => finish(bytes, "image/gif", width, height, limits),
+                Gif::Still(img) => still(img, mime, limits),
+            };
+        }
         _ => ImageFormat::WebP,
     };
 
@@ -75,13 +89,13 @@ pub fn prepare_image_with(input: &[u8], limits: &PrepLimits) -> CoreResult<Prepa
         return Err(ImageError::TooLarge.into());
     }
 
-    if format == ImageFormat::Gif
-        && let Some(animated) = animated_gif(input, width, height, limits)?
-    {
-        return finish(animated, "image/gif", width, height, limits);
-    }
-
     let img = decode(input, format, limits)?;
+    still(img, mime, limits)
+}
+
+/// Scales a decoded still image and encodes it: JPEG stays JPEG, everything else
+/// becomes PNG, or JPEG when an opaque PNG would be over the size cap.
+fn still(img: DynamicImage, mime: &str, limits: &PrepLimits) -> CoreResult<PreparedImage> {
     let img = shrink(img, limits.max_side);
     let (width, height) = (img.width(), img.height());
 
@@ -224,47 +238,148 @@ fn encode_jpeg(img: &DynamicImage) -> CoreResult<Vec<u8>> {
     Ok(out)
 }
 
-/// Re-encodes a GIF with two or more frames, frame by frame and unscaled.
-/// Returns `None` for a still GIF. The frames of all decoded pixels together are held
-/// to `max_pixels`, so a small file with thousands of big frames cannot exhaust memory.
-fn animated_gif(
-    input: &[u8],
-    width: u32,
-    height: u32,
-    limits: &PrepLimits,
-) -> CoreResult<Option<Vec<u8>>> {
-    let decoder = GifDecoder::new(Cursor::new(input)).map_err(map_err)?;
-    let per_frame = u64::from(width) * u64::from(height);
-    let mut frames = Vec::new();
-    for frame in decoder.into_frames() {
-        frames.push(frame.map_err(map_err)?);
-        if per_frame.saturating_mul(frames.len() as u64) > limits.max_pixels {
+/// A GIF after reading: a re-encoded animation, or the only frame of a still one.
+enum Gif {
+    Animated {
+        bytes: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    Still(DynamicImage),
+}
+
+/// Maps a `gif` decoder error: running into the memory limit means "too large".
+fn gif_err(e: gif::DecodingError) -> CoreError {
+    match e {
+        gif::DecodingError::MemoryLimit | gif::DecodingError::OutOfMemory => {
+            ImageError::TooLarge.into()
+        }
+        _ => ImageError::Unreadable.into(),
+    }
+}
+
+fn gif_encode_err(_: gif::EncodingError) -> CoreError {
+    ImageError::Unreadable.into()
+}
+
+/// Reads a GIF in indexed form, in one pass. Two or more frames are copied losslessly,
+/// frame by frame and unscaled: each frame keeps its own rectangle, local palette,
+/// transparent index, delay and disposal, with the global palette, screen size and loop
+/// count. Nothing else is written, so comments, XMP and other application extensions
+/// are dropped. A GIF with one frame comes back as pixels for the still-image path.
+fn read_gif(input: &[u8], limits: &PrepLimits) -> CoreResult<Gif> {
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::Indexed);
+    // Indexed frames take one byte per pixel.
+    let per_frame = NonZeroU64::new(limits.max_pixels).ok_or(ImageError::TooLarge)?;
+    options.set_memory_limit(gif::MemoryLimit::Bytes(per_frame));
+    let mut decoder = options.read_info(Cursor::new(input)).map_err(gif_err)?;
+
+    // The logical screen comes from the header alone, before any frame is read.
+    let (width, height) = (decoder.width(), decoder.height());
+    if width == 0 || height == 0 {
+        return Err(ImageError::Unreadable.into());
+    }
+    if u64::from(width) * u64::from(height) > limits.max_pixels {
+        return Err(ImageError::TooLarge.into());
+    }
+    let global = decoder.global_palette().unwrap_or_default().to_vec();
+    let mut budget = limits.max_animation_pixels;
+
+    let first = next_gif_frame(&mut decoder, limits, &mut budget)?.ok_or(ImageError::Unreadable)?;
+    let Some(second) = next_gif_frame(&mut decoder, limits, &mut budget)? else {
+        return Ok(Gif::Still(gif_still(&first, &global, width, height)));
+    };
+
+    // The loop extension sits before the first frame, so it has been read by now.
+    let repeat = decoder.repeat();
+    let mut encoder =
+        gif::Encoder::new(Vec::new(), width, height, &global).map_err(gif_encode_err)?;
+    encoder.set_repeat(repeat).map_err(gif_encode_err)?;
+    encoder.write_frame(&first).map_err(gif_encode_err)?;
+    drop(first);
+    encoder.write_frame(&second).map_err(gif_encode_err)?;
+    drop(second);
+    while let Some(frame) = next_gif_frame(&mut decoder, limits, &mut budget)? {
+        encoder.write_frame(&frame).map_err(gif_encode_err)?;
+        // Stop as soon as the result cannot fit, instead of finishing a doomed file.
+        if encoder.get_ref().len() > limits.max_output {
             return Err(ImageError::TooLarge.into());
         }
     }
-    if frames.len() < 2 {
+    let bytes = encoder.into_inner().map_err(gif_encode_err)?;
+    Ok(Gif::Animated {
+        bytes,
+        width: u32::from(width),
+        height: u32::from(height),
+    })
+}
+
+/// The next frame with its indexed pixels, or `None` after the last one. Each frame's
+/// area is counted against `budget` before its pixels are decoded.
+fn next_gif_frame<R: Read>(
+    decoder: &mut gif::Decoder<R>,
+    limits: &PrepLimits,
+    budget: &mut u64,
+) -> CoreResult<Option<gif::Frame<'static>>> {
+    let Some(info) = decoder.next_frame_info().map_err(gif_err)? else {
         return Ok(None);
+    };
+    let area = u64::from(info.width) * u64::from(info.height);
+    if area > limits.max_pixels {
+        return Err(ImageError::TooLarge.into());
     }
-    let mut out = Vec::new();
-    {
-        let mut encoder = GifEncoder::new(&mut out);
-        encoder
-            .set_repeat(Repeat::Infinite)
-            .map_err(|_| CoreError::from(ImageError::Unreadable))?;
-        encoder
-            .encode_frames(frames)
-            .map_err(|_| CoreError::from(ImageError::Unreadable))?;
+    *budget = budget.checked_sub(area).ok_or(ImageError::TooLarge)?;
+    let mut frame = gif::Frame {
+        buffer: Cow::Borrowed(&[]),
+        palette: info.palette.clone(),
+        // The decoder hands back de-interlaced rows, so they are written as such.
+        interlaced: false,
+        ..*info
+    };
+    let len = usize::try_from(area).map_err(|_| ImageError::TooLarge)?;
+    let mut pixels = vec![0u8; len];
+    decoder.read_into_buffer(&mut pixels).map_err(gif_err)?;
+    frame.buffer = Cow::Owned(pixels);
+    Ok(Some(frame))
+}
+
+/// The only frame of a still GIF placed on its transparent screen, the way browsers
+/// show it. Parts of the frame outside the screen are cut off.
+fn gif_still(frame: &gif::Frame<'_>, global: &[u8], width: u16, height: u16) -> DynamicImage {
+    let palette = frame.palette.as_deref().unwrap_or(global);
+    let mut canvas = RgbaImage::new(u32::from(width), u32::from(height));
+    let frame_width = usize::from(frame.width);
+    for (row, line) in frame.buffer.chunks_exact(frame_width.max(1)).enumerate() {
+        let y = u32::from(frame.top) + row as u32;
+        if y >= u32::from(height) {
+            break;
+        }
+        for (col, &index) in line.iter().enumerate() {
+            let x = u32::from(frame.left) + col as u32;
+            if x >= u32::from(width) {
+                break;
+            }
+            if frame.transparent == Some(index) {
+                continue;
+            }
+            let at = usize::from(index) * 3;
+            if let Some(rgb) = palette.get(at..at + 3) {
+                canvas.put_pixel(x, y, Rgba([rgb[0], rgb[1], rgb[2], 255]));
+            }
+        }
     }
-    Ok(Some(out))
+    DynamicImage::ImageRgba8(canvas)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::CoreError;
+    use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
     use image::codecs::png::PngEncoder;
     use image::codecs::webp::WebPEncoder;
-    use image::{Delay, Frame, Rgb, RgbImage, Rgba, RgbaImage};
+    use image::{AnimationDecoder, Delay, Frame, Rgb, RgbImage};
 
     fn png_of(img: &RgbaImage) -> Vec<u8> {
         let mut out = Vec::new();
@@ -433,6 +548,210 @@ mod tests {
         let out = prepare_image(&gif_with_frames(1)).unwrap();
         assert_eq!(out.mime, "image/png");
         assert_eq!((out.width, out.height), (40, 40));
+    }
+
+    /// One frame for the `gif` crate's encoder: a solid rectangle of palette index `idx`.
+    fn rect_frame(
+        left: u16,
+        top: u16,
+        width: u16,
+        height: u16,
+        idx: u8,
+        delay: u16,
+    ) -> gif::Frame<'static> {
+        gif::Frame {
+            left,
+            top,
+            width,
+            height,
+            delay,
+            buffer: std::borrow::Cow::Owned(vec![idx; usize::from(width) * usize::from(height)]),
+            ..gif::Frame::default()
+        }
+    }
+
+    /// Every frame of a GIF as the `gif` crate reads it (indexed), plus the loop count.
+    fn read_gif_frames(bytes: &[u8]) -> (Vec<gif::Frame<'static>>, gif::Repeat) {
+        let mut opts = gif::DecodeOptions::new();
+        opts.set_color_output(gif::ColorOutput::Indexed);
+        let mut dec = opts.read_info(Cursor::new(bytes)).unwrap();
+        let mut frames = Vec::new();
+        while let Some(f) = dec.read_next_frame().unwrap() {
+            frames.push(f.clone());
+        }
+        (frames, dec.repeat())
+    }
+
+    const GLOBAL: [u8; 12] = [0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 255, 0];
+
+    #[test]
+    fn animated_gif_keeps_frame_rectangles_palettes_delays_and_loop() {
+        let mut input = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut input, 60, 40, &GLOBAL).unwrap();
+            enc.set_repeat(gif::Repeat::Finite(3)).unwrap();
+            enc.write_frame(&rect_frame(0, 0, 60, 40, 1, 10)).unwrap();
+            let mut second = rect_frame(5, 6, 10, 8, 2, 20);
+            second.palette = Some(vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 1, 2, 3]);
+            second.transparent = Some(3);
+            second.dispose = gif::DisposalMethod::Background;
+            enc.write_frame(&second).unwrap();
+            enc.write_frame(&rect_frame(30, 20, 7, 3, 3, 30)).unwrap();
+        }
+        let out = prepare_image(&input).unwrap();
+        assert_eq!(out.mime, "image/gif");
+        assert_eq!((out.width, out.height), (60, 40));
+
+        let (before, _) = read_gif_frames(&input);
+        let (after, repeat) = read_gif_frames(&out.bytes);
+        assert_eq!(repeat, gif::Repeat::Finite(3));
+        assert_eq!(after.len(), 3);
+        for (a, b) in before.iter().zip(&after) {
+            assert_eq!(
+                (a.left, a.top, a.width, a.height),
+                (b.left, b.top, b.width, b.height)
+            );
+            assert_eq!(a.delay, b.delay);
+            assert_eq!(a.transparent, b.transparent);
+            assert_eq!(a.dispose, b.dispose);
+            assert_eq!(a.palette, b.palette);
+            assert_eq!(a.buffer, b.buffer, "indexed pixels are copied losslessly");
+        }
+        assert_eq!(after[1].palette.as_deref().map(<[u8]>::len), Some(12));
+    }
+
+    #[test]
+    fn still_gif_frame_is_placed_on_a_transparent_screen() {
+        let mut input = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut input, 20, 20, &GLOBAL).unwrap();
+            let mut frame = rect_frame(5, 5, 10, 10, 2, 0);
+            frame.buffer.to_mut()[0] = 3; // one transparent pixel at (5, 5)
+            frame.transparent = Some(3);
+            enc.write_frame(&frame).unwrap();
+        }
+        let out = prepare_image(&input).unwrap();
+        assert_eq!(out.mime, "image/png");
+        assert_eq!((out.width, out.height), (20, 20));
+        let img = image::load_from_memory(&out.bytes).unwrap().to_rgba8();
+        assert_eq!(
+            img.get_pixel(0, 0).0[3],
+            0,
+            "outside the frame is transparent"
+        );
+        assert_eq!(
+            img.get_pixel(5, 5).0[3],
+            0,
+            "the transparent index stays clear"
+        );
+        assert_eq!(img.get_pixel(6, 6).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn gif_comment_and_xmp_are_dropped() {
+        let mut input = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut input, 20, 20, &GLOBAL).unwrap();
+            enc.set_repeat(gif::Repeat::Infinite).unwrap();
+            enc.write_raw_extension(gif::AnyExtension(0xFE), &[b"secret comment"])
+                .unwrap();
+            enc.write_raw_extension(
+                gif::AnyExtension(0xFF),
+                &[b"XMP DataXMP", b"<x:xmpmeta>GPSLatitude 48.85</x:xmpmeta>"],
+            )
+            .unwrap();
+            enc.write_frame(&rect_frame(0, 0, 20, 20, 1, 5)).unwrap();
+            enc.write_frame(&rect_frame(2, 2, 4, 4, 2, 5)).unwrap();
+        }
+        assert!(contains(&input, b"XMP DataXMP") && contains(&input, &[0x21, 0xFE]));
+
+        let out = prepare_image(&input).unwrap();
+        assert_eq!(out.mime, "image/gif");
+        assert!(!contains(&out.bytes, b"XMP DataXMP"));
+        assert!(!contains(&out.bytes, b"GPSLatitude"));
+        assert!(!contains(&out.bytes, b"secret comment"));
+        assert!(!contains(&out.bytes, &[0x21, 0xFE]));
+        let (_, repeat) = read_gif_frames(&out.bytes);
+        assert_eq!(repeat, gif::Repeat::Infinite);
+    }
+
+    #[test]
+    fn long_animation_is_copied_quickly_and_stays_small() {
+        let mut input = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut input, 400, 200, &GLOBAL).unwrap();
+            enc.set_repeat(gif::Repeat::Infinite).unwrap();
+            enc.write_frame(&rect_frame(0, 0, 400, 200, 0, 4)).unwrap();
+            for i in 1..300u16 {
+                let (x, y) = ((i * 13) % 380, (i * 7) % 180);
+                enc.write_frame(&rect_frame(x, y, 20, 20, (i % 3 + 1) as u8, 4))
+                    .unwrap();
+            }
+        }
+        let start = std::time::Instant::now();
+        let out = prepare_image(&input).unwrap();
+        let took = start.elapsed();
+        eprintln!(
+            "300-frame 400x200 GIF: {} -> {} bytes in {took:?}",
+            input.len(),
+            out.bytes.len()
+        );
+        assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+        assert_eq!(out.mime, "image/gif");
+        assert!(out.bytes.len() < 5 * 1024 * 1024);
+        assert_eq!(read_gif_frames(&out.bytes).0.len(), 300);
+    }
+
+    #[test]
+    fn gif_over_the_frame_budget_is_too_large() {
+        let mut input = Vec::new();
+        {
+            let mut enc = gif::Encoder::new(&mut input, 40, 40, &GLOBAL).unwrap();
+            for i in 0..10u8 {
+                enc.write_frame(&rect_frame(0, 0, 40, 40, i % 4, 5))
+                    .unwrap();
+            }
+        }
+        // 10 frames of 40 x 40 = 16 000 pixels, over a 10 000 budget.
+        let limits = PrepLimits {
+            max_animation_pixels: 10_000,
+            ..PrepLimits::DEFAULT
+        };
+        assert_eq!(
+            error_of(prepare_image_with(&input, &limits)),
+            ImageError::TooLarge
+        );
+        assert!(prepare_image(&input).is_ok());
+    }
+
+    #[test]
+    fn opaque_png_too_big_as_png_is_stored_as_jpeg() {
+        let img = DynamicImage::ImageRgba8(DynamicImage::ImageRgb8(noise(200, 200)).to_rgba8());
+        let png = png_of(&img.to_rgba8());
+        let as_png = encode_png(&img).unwrap().len();
+        let as_jpeg = encode_jpeg(&img).unwrap().len();
+        assert!(as_jpeg < as_png);
+        let limits = PrepLimits {
+            max_output: as_jpeg,
+            ..PrepLimits::DEFAULT
+        };
+        let out = prepare_image_with(&png, &limits).unwrap();
+        assert_eq!(out.mime, "image/jpeg");
+        assert_eq!((out.width, out.height), (200, 200));
+    }
+
+    #[test]
+    fn transparent_png_too_big_as_png_is_too_large() {
+        let mut rgba = DynamicImage::ImageRgb8(noise(200, 200)).to_rgba8();
+        rgba.get_pixel_mut(3, 3).0[3] = 0;
+        let limits = PrepLimits {
+            max_output: 10 * 1024,
+            ..PrepLimits::DEFAULT
+        };
+        assert_eq!(
+            error_of(prepare_image_with(&png_of(&rgba), &limits)),
+            ImageError::TooLarge
+        );
     }
 
     #[test]
