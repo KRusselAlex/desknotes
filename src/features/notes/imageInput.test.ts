@@ -16,6 +16,7 @@ import {
   imageProblemText,
   insertImage,
   MAX_IMAGE_INPUT_BYTES,
+  pasteSource,
   pickImage,
   problemOf,
   shouldPasteFiles,
@@ -131,6 +132,38 @@ describe("shouldPasteFiles", () => {
 
   it("no files: never", () => {
     expect(shouldPasteFiles("", [])).toBe(false);
+  });
+});
+
+describe("pasteSource", () => {
+  const IMG = '<meta charset="utf-8"><img src="https://x/a.png">';
+
+  it("an empty clipboard as WebKitGTK shows a screenshot is read natively", () => {
+    expect(pasteSource([], "", [])).toBe("native");
+  });
+
+  it("plain text is the editor's", () => {
+    expect(pasteSource(["text/plain"], "", [])).toBe("default");
+  });
+
+  it("a browser's Copy Image (HTML holding a lone <img>) is read natively", () => {
+    expect(pasteSource(["text/html"], IMG, [])).toBe("native");
+  });
+
+  it("HTML with text is the editor's", () => {
+    expect(pasteSource(["text/html"], "<p>text</p>", [])).toBe("default");
+  });
+
+  it("an image file the page can see is added from the file", () => {
+    expect(pasteSource(["Files"], "", [pngFile()])).toBe("files");
+  });
+
+  it("plain text next to image-only HTML is the editor's", () => {
+    expect(pasteSource(["text/plain", "text/html"], IMG, [])).toBe("default");
+  });
+
+  it("an office paste (HTML with text and a picture) stays text", () => {
+    expect(pasteSource(["Files", "text/html"], "<p>Hello</p>", [pngFile()])).toBe("default");
   });
 });
 

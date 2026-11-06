@@ -114,15 +114,27 @@ own decision).
 
 ## 6. Getting bytes in and out
 - **In.**
-  - Paste and drop send the file's bytes to one Rust command (for example
-    `add_image(note_id, bytes)`) that validates, re-encodes, stores and returns
-    `{ id, width, height }`. Raw binary IPC, not base64 **(my call)**.
+  - Paste and drop are read natively in Rust, like Insert image, so on Linux no image
+    bytes or file paths cross the webview *(revised during the build: WebKitGTK gives the
+    page no clipboard images or dropped files)*:
+    - **Paste:** when the page sees no usable image file, no plain text, and HTML that is
+      empty or holds nothing but `<img>`, the editor calls `paste_image(note_id)`. Rust
+      reads the system clipboard on the GTK main thread (`image/png`, else any image GTK
+      can read, converted to PNG off the main thread), and without an image returns the
+      clipboard's text, which the editor inserts as plain text, so an image-plus-text
+      clipboard never loses the text. Text and office HTML stay the editor's own paste.
+    - **Drop:** Tauri's own drag-drop handler is on for note windows, so the webview never
+      receives (or opens) a dropped file. Rust reads each dropped regular file (folders are
+      skipped; over 40 MiB is refused from its size, then reading is bounded) on a blocking
+      thread and sends the note window `images-dropped` with the stored images in order,
+      the first problem, and the drop point in CSS pixels.
+  - Both then follow the `add_image` path: the note checks, validate and re-encode off
+    the database lock, store, and return `{ id, width, height }`. `add_image(note_id,
+    bytes)` (raw binary IPC, not base64, **my call**) stays for webviews that give the
+    page image files.
   - The Insert button calls a command that opens the file picker in Rust (as
     backup export/restore already do with the dialog plugin) and then follows the same
     path, so no file path or bytes cross the webview.
-  - Drop: Tauri may intercept file drops on the window; the builder checks whether the
-    webview's drop event or Tauri's drag-drop event (file paths, read in Rust) works in our
-    window setup, and uses the one that does.
   - Adding is refused for a locked note and for an edit-locked note (as typing is).
 - **Out.** A custom URI scheme registered in the shell, `desknotes-image://…/<id>` **(my
   call for the name)**, answers with the stored bytes and their MIME type.

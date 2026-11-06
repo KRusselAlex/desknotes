@@ -1,9 +1,10 @@
 import type { Editor } from "@tiptap/core";
+import { Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { insertPoint } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 import { commands } from "../../ipc/commands";
-import type { ImageInfo } from "../../types/note";
+import type { ImageInfo, PastedImage } from "../../types/note";
 
 /** Why an image was not added; each has one message (design §2.5). */
 export type ImageProblem = "too_large" | "unsupported" | "failed";
@@ -85,6 +86,27 @@ export function shouldPasteFiles(html: string, files: readonly File[]): boolean 
   const template = document.createElement("template");
   template.innerHTML = html;
   return onlyImages(template.content);
+}
+
+/**
+ * Where a paste's content comes from:
+ * - "files": image files the page can see (WebView2 gives them; WebKitGTK never does);
+ * - "native": nothing usable, no plain text, and HTML that is empty or holds nothing but
+ *   images. WebKitGTK shows a screenshot or an image with text as an empty clipboard, and a
+ *   browser's "Copy Image" as a lone `<img>`, so Rust reads the system clipboard instead;
+ * - "default": the editor pastes it, so text and office HTML stay text.
+ */
+export function pasteSource(
+  types: readonly string[],
+  html: string,
+  files: readonly File[],
+): "files" | "native" | "default" {
+  const images = imageFilesIn(files);
+  if (images.length > 0) return shouldPasteFiles(html, images) ? "files" : "default";
+  if (types.includes("text/plain")) return "default";
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  return onlyImages(template.content) ? "native" : "default";
 }
 
 /**
@@ -220,6 +242,75 @@ export async function addImageFiles(
     }
   } finally {
     editor.off("transaction", follow);
+  }
+}
+
+/**
+ * Inserts clipboard text at `at` as plain text, never as HTML: one line joins the text there,
+ * more lines become paragraphs, as the editor's own plain-text paste does. The cursor moves
+ * after it when it was at `at`. Does nothing while the note is read-only.
+ */
+function insertPlainText(editor: Editor, text: string, at: number) {
+  if (editor.isDestroyed || !editor.isEditable || text === "") return;
+  const { state } = editor;
+  const { schema } = state;
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const paragraphs = lines.map((line) => schema.nodes.paragraph!.create(null, line ? schema.text(line) : null));
+  const pos = Math.max(0, Math.min(at, state.doc.content.size));
+  const moveCursor = state.selection.empty && state.selection.from === pos;
+  const tr = state.tr.replaceRange(pos, pos, new Slice(Fragment.from(paragraphs), 1, 1));
+  if (moveCursor) tr.setSelection(Selection.near(tr.doc.resolve(tr.mapping.map(pos)))).scrollIntoView();
+  editor.view.dispatch(tr);
+}
+
+/**
+ * A paste the page sees no image in: the core reads the system clipboard, stores its image
+ * for the note and the editor inserts it at `at` (the paste point, followed through anything
+ * typed meanwhile). Without an image the clipboard's text is inserted there instead, so an
+ * image-plus-text clipboard never loses the text. A refusal shows its message.
+ */
+export async function pasteFromClipboard(
+  editor: Editor,
+  noteId: string,
+  onProblem: (problem: ImageProblem) => void,
+  at: number,
+): Promise<void> {
+  let target = at;
+  const follow = ({ transaction }: { transaction: Transaction }) => {
+    target = transaction.mapping.map(target);
+  };
+  editor.on("transaction", follow);
+  let pasted: PastedImage;
+  try {
+    pasted = await commands.pasteImage(noteId);
+  } catch (e) {
+    onProblem(problemOf(e));
+    return;
+  } finally {
+    editor.off("transaction", follow);
+  }
+  if (pasted.kind === "image") insertImage(editor, pasted.image, target);
+  else if (pasted.kind === "text") insertPlainText(editor, pasted.text, target);
+}
+
+/**
+ * Images Rust stored from files dropped on the note: inserted in order where they were
+ * dropped (`x`/`y` in CSS pixels), or at the end of the note when that point is not in the
+ * text.
+ */
+export function insertDroppedImages(editor: Editor, images: readonly ImageInfo[], x: number, y: number) {
+  if (editor.isDestroyed || images.length === 0) return;
+  let at: number | undefined;
+  try {
+    at = editor.view.posAtCoords({ left: x, top: y })?.pos;
+  } catch {
+    at = undefined; // no layout to measure (a hidden window)
+  }
+  let target = at ?? editor.state.doc.content.size;
+  for (const image of images) {
+    const after = insertImage(editor, image, target);
+    if (after === null) return;
+    target = after;
   }
 }
 

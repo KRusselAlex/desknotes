@@ -12,6 +12,7 @@ import type {
   NoteFilter,
   NoteSize,
   NoteSummary,
+  PastedImage,
   PinCheck,
   PrivacyStatus,
   RecoveryChange,
@@ -140,6 +141,8 @@ export const commands = {
     callRaw<ImageInfo>("add_image", bytes, { "note-id": noteId }),
   /** Opens the file picker in Rust and adds the chosen image; null when cancelled. */
   pickImage: (noteId: string) => call<ImageInfo | null>("pick_image", { noteId }),
+  /** Reads the system clipboard in Rust: stores its image for the note, or gives back its text. */
+  pasteImage: (noteId: string) => call<PastedImage>("paste_image", { noteId }),
   /** Answer to save-all-notes: whether this window's text is saved. */
   quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
 

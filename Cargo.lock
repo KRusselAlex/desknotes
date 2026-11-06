@@ -800,6 +800,7 @@ dependencies = [
  "chrono-tz",
  "desknotes-core",
  "gio",
+ "gtk",
  "serde",
  "serde_json",
  "tauri",

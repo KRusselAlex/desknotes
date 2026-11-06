@@ -6,7 +6,14 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu, type MenuItem, type QuickAction } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
-import { onSaveAllRequest, onNoteAction, onNotesChanged, onPrivacyChanged, onRemindersChanged } from "../../ipc/events";
+import {
+  onImagesDropped,
+  onSaveAllRequest,
+  onNoteAction,
+  onNotesChanged,
+  onPrivacyChanged,
+  onRemindersChanged,
+} from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
 import { PRIVATE_FALLBACK_LABEL, type AppAppearance, type Appearance, type Note } from "../../types/note";
 import type { ReminderView } from "../../types/reminder";
@@ -29,7 +36,16 @@ import { ColorPopover } from "./ColorPopover";
 import { DoneStrip } from "./DoneStrip";
 import { createExtensions, serializeDoc } from "./extensions";
 import { FormatBar } from "./FormatBar";
-import { addImageFiles, imageFilesIn, pastePoint, shouldPasteFiles, type ImageProblem } from "./imageInput";
+import {
+  addImageFiles,
+  imageFilesIn,
+  insertDroppedImages,
+  pasteFromClipboard,
+  pastePoint,
+  pasteSource,
+  problemOf,
+  type ImageProblem,
+} from "./imageInput";
 import { ImageMessage } from "./ImageMessage";
 import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
@@ -98,31 +114,11 @@ function noteLook(color: string, appearance: Appearance, app: AppAppearance) {
   return { classes: appClasses(app), style: appearanceStyle(color, effectiveAppearance(appearance, app)) };
 }
 
-/**
- * A file dropped where the editor does not take it (the header, a read-only or locked note)
- * must do nothing: the webview, which gets file drops itself, would otherwise open the file
- * in place of the note.
- */
-function useFileDropGuard() {
-  useEffect(() => {
-    const guard = (e: DragEvent) => {
-      if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) e.preventDefault();
-    };
-    window.addEventListener("dragover", guard);
-    window.addEventListener("drop", guard);
-    return () => {
-      window.removeEventListener("dragover", guard);
-      window.removeEventListener("drop", guard);
-    };
-  }, []);
-}
-
 export function NoteWindow({ noteId }: { noteId: string }) {
   const [note, setNote] = useState<Note | null>(null);
   const [loadError, setLoadError] = useState(false);
   // Read before anything is drawn, so a note opened after a change never shows the old look.
   const app = useAppAppearance();
-  useFileDropGuard();
 
   useEffect(() => {
     commands.getNote(noteId).then(setNote, () => setLoadError(true));
@@ -423,22 +419,24 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         return false;
       },
       // Image files are pasted when the clipboard's HTML holds nothing but images (a browser's
-      // "Copy Image"); an office paste, whose HTML comes with a picture of it, stays text. The
-      // images go where the paste was, whatever is typed or selected while they upload.
+      // "Copy Image"); an office paste, whose HTML comes with a picture of it, stays text.
+      // WebKitGTK shows the page no clipboard image at all, so a paste with nothing usable
+      // and no plain text is read in Rust. The images go where the paste was, whatever is
+      // typed or selected meanwhile. File drops never reach the webview: Tauri's handler
+      // gives them to Rust (`images-dropped` below); moving text stays the editor's.
       handlePaste: (view: EditorView, event: ClipboardEvent) => {
-        const files = imageFilesIn(event.clipboardData?.files);
-        if (!shouldPasteFiles(event.clipboardData?.getData("text/html") ?? "", files)) return false;
-        const at = pastePoint(view, files);
-        if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem, at);
-        return true;
-      },
-      // Every dropped file is taken (a PDF gets the "PNG, JPEG…" message); the editor only
-      // calls this while it can be edited. Moving text inside the note stays the editor's.
-      handleDrop: (view: EditorView, event: DragEvent, _slice: unknown, moved: boolean) => {
-        const files = Array.from(event.dataTransfer?.files ?? []);
-        if (moved || files.length === 0) return false;
-        const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-        if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem, at);
+        const data = event.clipboardData;
+        const files = imageFilesIn(data?.files);
+        const source = pasteSource(Array.from(data?.types ?? []), data?.getData("text/html") ?? "", files);
+        if (source === "default") return false;
+        if (source === "files") {
+          const at = pastePoint(view, files);
+          if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem, at);
+          return true;
+        }
+        // Nothing is known to be inserted yet, so a text selection is kept.
+        const at = pastePoint(view, []);
+        if (editorRef.current) void pasteFromClipboard(editorRef.current, note.id, showImageProblem, at);
         return true;
       },
     },
@@ -446,6 +444,15 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   useEffect(() => {
     editorRef.current = editor;
   }, [editor]);
+
+  // Files dropped on the window, read and stored by Rust.
+  useEffect(() => {
+    const unlisten = onImagesDropped(({ images, problem, x, y }) => {
+      if (editorRef.current) insertDroppedImages(editorRef.current, images, x, y);
+      if (problem) showImageProblem(problemOf({ code: problem }));
+    });
+    return () => void unlisten.then((f) => f());
+  }, [showImageProblem]);
 
   /** Save, then hide the window. Stays open if the save failed. */
   /** Save first; run `action` only if everything is saved. Returns false otherwise. */

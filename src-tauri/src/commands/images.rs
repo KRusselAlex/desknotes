@@ -2,16 +2,20 @@
 //! that serves them back to the webview (design: images in notes §6).
 
 use std::fs;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 
 use desknotes_core::db::ImageInfo;
 use desknotes_core::image_prep::{PrepLimits, PreparedImage, prepare_image};
 use desknotes_core::validation::{is_image_id, parse_note_id};
 use desknotes_core::{CoreError, ImageError};
+use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, Runtime, State, UriSchemeContext, UriSchemeResponder, http};
 use tauri_plugin_dialog::DialogExt as _;
 
 use crate::error::{IpcError, IpcResult};
+use crate::platform::clipboard::{ClipboardContent, clipboard_image};
 use crate::state::AppState;
 
 /// The custom URI scheme the editor loads images from.
@@ -125,6 +129,127 @@ pub async fn add_image(state: State<'_, AppState>, request: Request<'_>) -> IpcR
     state.with_db(|db| db.store_prepared_image(&note_id, &prepared))
 }
 
+/// What `paste_image` found on the clipboard.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PastedImage {
+    /// An image, now stored for the note.
+    Image {
+        image: ImageInfo,
+    },
+    /// No image but text, for the editor to paste as plain text.
+    Text {
+        text: String,
+    },
+    Nothing,
+}
+
+/// A paste the webview sees as empty: WebKitGTK gives the page no clipboard images, so
+/// the clipboard is read here and no image bytes cross the webview. Without an image
+/// the clipboard's text comes back, so an image-plus-text clipboard never loses it.
+#[tauri::command]
+pub async fn paste_image(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    note_id: String,
+) -> IpcResult<PastedImage> {
+    let note_id = parse_note_id(&note_id)?;
+    let bytes = match clipboard_image(&app).await? {
+        ClipboardContent::Image(bytes) => bytes,
+        ClipboardContent::Text(text) => return Ok(PastedImage::Text { text }),
+        ClipboardContent::Nothing => return Ok(PastedImage::Nothing),
+    };
+    if bytes.len() > PrepLimits::DEFAULT.max_input {
+        return Err(too_large());
+    }
+    // As in `add_image`: the note first, the slow part off the database, then store.
+    state.with_db(|db| db.check_note_accepts_images(&note_id))?;
+    let prepared = prepare(bytes).await?;
+    let image = state.with_db(|db| db.store_prepared_image(&note_id, &prepared))?;
+    Ok(PastedImage::Image { image })
+}
+
+/// Sent to one note window after files were dropped on it: the images stored for the
+/// note in drop order, the first refusal's code, and the drop point in CSS pixels.
+pub const IMAGES_DROPPED: &str = "images-dropped";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImagesDropped {
+    pub images: Vec<ImageInfo>,
+    pub problem: Option<String>,
+    pub x: f64,
+    pub y: f64,
+}
+
+fn read_error(e: std::io::Error) -> IpcError {
+    IpcError::new("io", format!("The file could not be read: {e}"))
+}
+
+/// The length of a dropped path that is a regular file (links followed); `None` for a
+/// folder or anything else, which a drop skips.
+pub fn regular_file_len(path: &Path) -> IpcResult<Option<u64>> {
+    let meta = fs::metadata(path).map_err(read_error)?;
+    Ok(meta.is_file().then_some(meta.len()))
+}
+
+/// A file's bytes, reading at most one byte past `max`, so a file that grew after its
+/// length was checked is still refused without being read whole.
+pub fn read_at_most(path: &Path, max: u64) -> IpcResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(read_error)?
+        .take(max.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(read_error)?;
+    if bytes.len() as u64 > max {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
+/// Adds dropped files in order: folders and other non-files are skipped, a file over
+/// `max` is refused from its length without being read, the rest are read and given to
+/// `add` (check the note, prepare, store). Returns what was stored and the first
+/// refusal's code; one bad file never stops the others.
+pub fn dropped_images(
+    paths: &[PathBuf],
+    max: u64,
+    mut file_len: impl FnMut(&Path) -> IpcResult<Option<u64>>,
+    mut read: impl FnMut(&Path) -> IpcResult<Vec<u8>>,
+    mut add: impl FnMut(Vec<u8>) -> IpcResult<ImageInfo>,
+) -> (Vec<ImageInfo>, Option<String>) {
+    let mut images = Vec::new();
+    let mut problem = None;
+    for path in paths {
+        let mut one = || -> IpcResult<Option<ImageInfo>> {
+            let Some(len) = file_len(path)? else {
+                return Ok(None);
+            };
+            if len > max {
+                return Err(too_large());
+            }
+            add(read(path)?).map(Some)
+        };
+        match one() {
+            Ok(Some(image)) => images.push(image),
+            Ok(None) => {}
+            Err(e) => {
+                problem.get_or_insert(e.code);
+            }
+        }
+    }
+    (images, problem)
+}
+
+/// Adds one dropped file's bytes to a note, as `add_image` does: the note checks, then
+/// the slow part without the database lock, then storing (checked again). Blocking:
+/// run it on a blocking thread.
+pub fn add_dropped_bytes(state: &AppState, note_id: &str, bytes: Vec<u8>) -> IpcResult<ImageInfo> {
+    state.with_db(|db| db.check_note_accepts_images(note_id))?;
+    let prepared = prepare_image(&bytes)?;
+    state.with_db(|db| db.store_prepared_image(note_id, &prepared))
+}
+
 /// "Insert image…": the file dialog opens here, so no path or bytes cross the
 /// webview. `None` when the dialog is cancelled.
 #[tauri::command]
@@ -169,6 +294,8 @@ pub async fn pick_image(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::path::{Path, PathBuf};
 
     use serde_json::json;
 
@@ -279,6 +406,186 @@ mod tests {
                 b"0f8fad5b-d9cb-469f-a165-70867728950e/../x"
             )))),
             "validation"
+        );
+    }
+
+    fn info(id: &str) -> ImageInfo {
+        ImageInfo {
+            id: id.into(),
+            width: 1,
+            height: 1,
+        }
+    }
+
+    /// Runs `dropped_images` over fake files: `files` maps a path to its length
+    /// (`None` for a directory) and its bytes. Returns the result and the paths read.
+    fn drop_fake(
+        files: &[(&str, Option<u64>, &[u8])],
+        max: u64,
+        mut add: impl FnMut(Vec<u8>) -> IpcResult<ImageInfo>,
+    ) -> ((Vec<ImageInfo>, Option<String>), Vec<String>) {
+        let paths: Vec<PathBuf> = files.iter().map(|(p, _, _)| PathBuf::from(p)).collect();
+        let find = |p: &Path| files.iter().find(|(n, _, _)| Path::new(n) == p).unwrap();
+        let mut read = Vec::new();
+        let result = dropped_images(
+            &paths,
+            max,
+            |p| Ok(find(p).1),
+            |p| {
+                read.push(p.display().to_string());
+                Ok(find(p).2.to_vec())
+            },
+            &mut add,
+        );
+        (result, read)
+    }
+
+    #[test]
+    fn a_dropped_directory_is_skipped_without_a_problem() {
+        let ((images, problem), read) = drop_fake(
+            &[("/photos", None, b""), ("/a.png", Some(1), b"a")],
+            10,
+            |b| Ok(info(&String::from_utf8(b).unwrap())),
+        );
+        assert_eq!(images, vec![info("a")]);
+        assert_eq!(problem, None);
+        assert_eq!(read, vec!["/a.png"]);
+    }
+
+    #[test]
+    fn a_dropped_file_over_the_limit_is_refused_without_reading_it() {
+        let mut added = 0;
+        let ((images, problem), read) = drop_fake(&[("/big.png", Some(11), b"x")], 10, |_| {
+            added += 1;
+            Ok(info("x"))
+        });
+        assert!(images.is_empty());
+        assert_eq!(problem.as_deref(), Some("image_too_large"));
+        assert!(read.is_empty(), "never read");
+        assert_eq!(added, 0);
+        // Exactly the limit is fine.
+        let ((images, problem), _) = drop_fake(&[("/ok.png", Some(10), b"ok")], 10, |b| {
+            Ok(info(&String::from_utf8(b).unwrap()))
+        });
+        assert_eq!((images, problem), (vec![info("ok")], None));
+    }
+
+    #[test]
+    fn dropped_files_keep_their_order_and_the_first_problem_wins() {
+        let files: &[(&str, Option<u64>, &[u8])] = &[
+            ("/1.png", Some(1), b"1"),
+            ("/doc.pdf", Some(3), b"pdf"),
+            ("/2.png", Some(1), b"2"),
+            ("/huge.png", Some(99), b""),
+            ("/3.png", Some(1), b"3"),
+        ];
+        let ((images, problem), _) = drop_fake(files, 10, |b| {
+            if b == b"pdf" {
+                Err(CoreError::Image(ImageError::Unsupported).into())
+            } else {
+                Ok(info(&String::from_utf8(b).unwrap()))
+            }
+        });
+        assert_eq!(images, vec![info("1"), info("2"), info("3")]);
+        assert_eq!(problem.as_deref(), Some("image_unsupported"));
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_a_problem_and_the_rest_still_go_in() {
+        let paths = vec![PathBuf::from("/gone.png"), PathBuf::from("/a.png")];
+        let (images, problem) = dropped_images(
+            &paths,
+            10,
+            |p| {
+                if p == Path::new("/gone.png") {
+                    Err(IpcError::new("io", "missing"))
+                } else {
+                    Ok(Some(1))
+                }
+            },
+            |_| Ok(b"a".to_vec()),
+            |_| Ok(info("a")),
+        );
+        assert_eq!(images, vec![info("a")]);
+        assert_eq!(problem.as_deref(), Some("io"));
+    }
+
+    /// A fresh folder under the system temp folder, removed when dropped.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "desknotes-{name}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn only_regular_files_have_a_length_to_drop() {
+        let dir = TempDir::new("drop-len");
+        let file = dir.0.join("a.png");
+        fs::write(&file, b"12345").unwrap();
+        assert_eq!(regular_file_len(&file).unwrap(), Some(5));
+        assert_eq!(regular_file_len(&dir.0).unwrap(), None);
+        assert_eq!(
+            regular_file_len(&dir.0.join("missing.png"))
+                .unwrap_err()
+                .code,
+            "io"
+        );
+    }
+
+    #[test]
+    fn reading_a_dropped_file_stops_after_the_limit() {
+        let dir = TempDir::new("drop-read");
+        let file = dir.0.join("a.png");
+        fs::write(&file, b"12345").unwrap();
+        assert_eq!(read_at_most(&file, 5).unwrap(), b"12345".to_vec());
+        // Grown since its length was read: still refused.
+        assert_eq!(code_of(read_at_most(&file, 4)), "image_too_large");
+    }
+
+    #[test]
+    fn a_pasted_result_is_tagged_by_kind() {
+        let image = serde_json::to_value(PastedImage::Image { image: info("a") }).unwrap();
+        assert_eq!(
+            image,
+            json!({"kind": "image", "image": {"id": "a", "width": 1, "height": 1}})
+        );
+        let text = serde_json::to_value(PastedImage::Text { text: "hi".into() }).unwrap();
+        assert_eq!(text, json!({"kind": "text", "text": "hi"}));
+        assert_eq!(
+            serde_json::to_value(PastedImage::Nothing).unwrap(),
+            json!({"kind": "nothing"})
+        );
+    }
+
+    #[test]
+    fn the_dropped_payload_names_images_problem_and_point() {
+        let payload = ImagesDropped {
+            images: vec![info("a")],
+            problem: Some("image_too_large".into()),
+            x: 1.5,
+            y: 2.0,
+        };
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            json!({
+                "images": [{"id": "a", "width": 1, "height": 1}],
+                "problem": "image_too_large",
+                "x": 1.5,
+                "y": 2.0
+            })
         );
     }
 

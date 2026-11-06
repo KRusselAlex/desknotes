@@ -38,6 +38,9 @@ chrono-tz = "=0.10.4"
 webkit2gtk = "=2.0.2"
 # Same version Tauri uses; GNOME settings for the show / hide all shortcut (DES-27).
 gio = "=0.18.4"
+# Same version Tauri uses; reads pasted images from the clipboard, which WebKitGTK never
+# gives the page (images in notes, DES-23).
+gtk = "=0.18.2"
 # Already in the build through Tauri's plugins (same version, same features); the
 # blocking API listens for sleep and screen-lock signals on D-Bus (design D3) and sends
 # reminder notifications to org.freedesktop.Notifications (M4).

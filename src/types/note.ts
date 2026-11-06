@@ -146,6 +146,13 @@ export interface ImageInfo {
   height: number;
 }
 
+/** What `paste_image` found on the system clipboard (read in Rust; WebKitGTK gives the page none). */
+export type PastedImage =
+  | { kind: "image"; image: ImageInfo }
+  /** No image but text: pasted as plain text, never as HTML. */
+  | { kind: "text"; text: string }
+  | { kind: "nothing" };
+
 export interface ExportResult {
   path: string;
   count: number;

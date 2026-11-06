@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppAppearance } from "../types/note";
+import type { AppAppearance, ImageInfo } from "../types/note";
 import type { RemindersChanged } from "../types/reminder";
 
 /** Emitted by Rust after any change. `id` is null when many notes changed.
@@ -94,4 +94,21 @@ export const REMINDERS_CHANGED = "reminders-changed";
 /** A reminder was set, removed, fired, snoozed or dismissed (sent to every window). */
 export function onRemindersChanged(handler: (e: RemindersChanged) => void): Promise<UnlistenFn> {
   return listen<RemindersChanged>(REMINDERS_CHANGED, (event) => handler(event.payload));
+}
+
+export const IMAGES_DROPPED = "images-dropped";
+
+/** Files dropped on this note window, read and stored by Rust (sent to that window only). */
+export interface ImagesDropped {
+  /** Stored for the note, in drop order. */
+  images: ImageInfo[];
+  /** The first refusal's error code, if any. */
+  problem: string | null;
+  /** The drop point in CSS pixels inside the window. */
+  x: number;
+  y: number;
+}
+
+export function onImagesDropped(handler: (e: ImagesDropped) => void): Promise<UnlistenFn> {
+  return listen<ImagesDropped>(IMAGES_DROPPED, (event) => handler(event.payload));
 }

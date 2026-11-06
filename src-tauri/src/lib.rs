@@ -124,6 +124,7 @@ pub fn run() {
             commands::backup::restore_backup,
             commands::images::add_image,
             commands::images::pick_image,
+            commands::images::paste_image,
             commands::privacy::privacy_status,
             commands::privacy::unlock,
             commands::privacy::lock_now,
