@@ -135,7 +135,9 @@ own decision).
   exported note references. `docs/backup-format.md` is updated.
 - Restore checks each image the same way as a new one (type, size, the id matches the
   SHA-256 of the bytes) and refuses the whole file if one is bad, as it already does for
-  bad notes. A note referencing an id missing from the file is refused the same way.
+  bad notes. A note referencing an id missing from the file still restores and shows
+  "Image not found" there, consistent with §5, so a backup of a note with a missing
+  image can always be restored.
 - Version 1–5 files still restore.
 - `MAX_BACKUP_BYTES` rises from 200 MiB to **300 MiB** **(my call)**. Restore still reads
   the whole file in memory, so the limit stays modest (no streaming rewrite). That is
