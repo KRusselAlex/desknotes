@@ -234,7 +234,7 @@
     - `commands.addImage(noteId: string, bytes: Uint8Array): Promise<ImageInfo>` passes the bytes as the raw body and `headers: { "note-id": noteId }`;
     - `commands.pickImage(noteId: string): Promise<ImageInfo | null>`;
     - `imageUrl(id: string): string` in `src/ipc/images.ts` uses `convertFileSrc(id, "desknotes-image")`.
-  - CSP: `img-src 'self' data: desknotes-image: http://desknotes-image.localhost`. Nothing else changes.
+  - CSP: `img-src 'self' data: desknotes-image:`. Nothing else changes. (Ruling during the build: the Windows-only `http://desknotes-image.localhost` form is left to the Windows port.)
   - Start-up: right after `Database::open` succeeds in `AppState::open`, call `remove_unused_images`. Log the count on success, and only log on error.
   - Note windows: `.disable_drag_drop_handler()` so the webview receives HTML5 file drops (Task 5).
 
@@ -278,7 +278,7 @@
   - when selected, shows a `--dn-focus` 2 px outline and four corner handles;
   - while dragging a handle, sets the width to a percentage of the editor's content width, clamped to 10–100 and rounded to an integer, and commits it once on pointer-up (one undo step);
   - when the image fails to load, shows a muted box reading `Image not found`.
-- **Paste:** if `clipboardData.files` contains image files, use them (pixels win over HTML) and insert each in order at the selection. Otherwise let ProseMirror handle it, so `parseHTML` filtering applies.
+- **Paste:** use image files from `clipboardData.files` only when the clipboard HTML is empty or holds nothing but `<img>` elements (`shouldPasteFiles`); insert at the paste point, mapped through edits made during the upload. Otherwise let ProseMirror paste the HTML, so `parseHTML` filtering applies. (Ruling during the build: replaces "pixels win over HTML".)
 - **Drop:** take image files from `dataTransfer.files` and insert them at `view.posAtCoords`.
 - **Before sending:**
   - `file.size > 40 MB` gives `too_large`;

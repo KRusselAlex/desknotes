@@ -15,7 +15,10 @@ backup, and never makes the app contact a server or reveal a locked note.
 - an image that loads anything from the internet, including an `<img src="https://…">`
   pasted from a page. (Image **pixels** on the clipboard, for example from a browser's
   "Copy Image", are fine: they are added like a screenshot and nothing is fetched. When
-  the clipboard has both pixels and HTML, the pixels are used **(my call)**.);
+  the clipboard has both pixels and HTML, the pixels are used only if the HTML holds
+  nothing but `<img>` elements; otherwise the HTML is pasted as text, so copying text or a
+  table from Word or LibreOffice (which also put a picture of it on the clipboard) stays
+  text **(my call, revised during the build)**.);
 - a locked private note whose images can still be seen or fetched;
 - a backup that silently leaves images out;
 - a photo that keeps its GPS location.
