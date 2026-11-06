@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { NodeSelection, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { insertPoint } from "@tiptap/pm/transform";
+import type { EditorView } from "@tiptap/pm/view";
 import { commands } from "../../ipc/commands";
 import type { ImageInfo } from "../../types/note";
 
@@ -42,6 +43,52 @@ export function imageFilesIn(files: FileList | readonly File[] | null | undefine
   return Array.from(files ?? []).filter((f) => f.type.startsWith("image/"));
 }
 
+/** Elements that only wrap what they hold; any other element is content of its own. */
+const WRAPPERS = new Set(["HTML", "HEAD", "BODY", "META", "DIV", "SPAN", "P", "A", "FIGURE", "PICTURE", "SOURCE", "BR"]);
+
+function onlyImages(node: Node): boolean {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === Node.COMMENT_NODE) continue;
+    if (child.nodeType === Node.TEXT_NODE) {
+      if (child.textContent?.trim()) return false;
+      continue;
+    }
+    if (!(child instanceof Element)) return false;
+    if (child.tagName === "IMG") continue;
+    if (!WRAPPERS.has(child.tagName) || !onlyImages(child)) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a paste adds its image files rather than its HTML. Word, Excel and LibreOffice put
+ * a picture of the copied range next to the HTML, so the files are used only when the HTML
+ * is empty or holds nothing but images (a browser's "Copy Image"); wrapper elements, `<meta>`,
+ * comments and whitespace do not count. Otherwise the editor pastes the HTML, and the image
+ * node drops any foreign `<img>` in it. The HTML is parsed inert: nothing is loaded.
+ */
+export function shouldPasteFiles(html: string, files: readonly File[]): boolean {
+  if (files.length === 0) return false;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  return onlyImages(template.content);
+}
+
+/**
+ * Settles a paste of images at paste time, as a normal paste would: a text selection is
+ * deleted at once (when at least one file may be added), a selected image gets the new ones
+ * after it. Returns the position the images go to, which is then followed through any edit
+ * made while they upload.
+ */
+export function pastePoint(view: EditorView, files: readonly File[]): number {
+  const { selection } = view.state;
+  if (selection instanceof NodeSelection) return selection.to;
+  if (!selection.empty && files.some((f) => checkImageFile(f) === null)) {
+    view.dispatch(view.state.tr.deleteSelection().scrollIntoView());
+  }
+  return view.state.selection.from;
+}
+
 const LIST_ITEMS = new Set(["listItem", "taskItem"]);
 
 /**
@@ -74,25 +121,30 @@ function blockPositionAt(tr: Transaction, pos: number): number | null {
 }
 
 /**
- * Inserts a stored image at `at` (a position in the current document) or at the selection,
- * as its own block. A text selection is replaced; a selected image gets the new one after it.
- * Afterwards the cursor is on the line below, so typing goes on there; with no line below
- * at the end of the note or a quote, an empty one is added. Does nothing while the note is
- * read-only. One undo step.
+ * Inserts a stored image as its own block at `at` (a position in the current document: a
+ * paste or drop point) or, for the picker, at the selection, replacing a text selection; a
+ * selected image gets the new one after it. With no line below at the end of the note or a
+ * quote, an empty one is added. The cursor moves to the line below when it was at the place
+ * the image goes (or for the picker); a cursor or selection elsewhere stays where it is.
+ * Does nothing while the note is read-only. One undo step. Returns the position just after
+ * the image, or null when nothing was inserted.
  */
-export function insertImage(editor: Editor, image: ImageInfo, at?: number): boolean {
-  if (editor.isDestroyed || !editor.isEditable) return false;
+export function insertImage(editor: Editor, image: ImageInfo, at?: number): number | null {
+  if (editor.isDestroyed || !editor.isEditable) return null;
   const { state } = editor;
   const tr = state.tr;
   let pos: number;
-  if (at !== undefined) pos = Math.max(0, Math.min(at, tr.doc.content.size));
-  else if (state.selection instanceof NodeSelection) pos = state.selection.to;
+  let moveCursor = true;
+  if (at !== undefined) {
+    pos = Math.max(0, Math.min(at, tr.doc.content.size));
+    moveCursor = state.selection.empty && state.selection.from === pos;
+  } else if (state.selection instanceof NodeSelection) pos = state.selection.to;
   else {
     if (!state.selection.empty) tr.deleteSelection();
     pos = tr.selection.from;
   }
   const blockPos = blockPositionAt(tr, pos);
-  if (blockPos === null) return false;
+  if (blockPos === null) return null;
   const node = state.schema.nodes.image!.create({ id: image.id, width: null });
   tr.insert(blockPos, node);
   const after = blockPos + node.nodeSize;
@@ -100,15 +152,19 @@ export function insertImage(editor: Editor, image: ImageInfo, at?: number): bool
   if (!$after.nodeAfter && !LIST_ITEMS.has($after.parent.type.name)) {
     tr.insert(after, state.schema.nodes.paragraph!.create());
   }
-  if (tr.doc.resolve(after).nodeAfter?.isTextblock) tr.setSelection(TextSelection.create(tr.doc, after + 1));
-  else tr.setSelection(NodeSelection.create(tr.doc, blockPos));
-  editor.view.dispatch(tr.scrollIntoView());
-  return true;
+  if (moveCursor) {
+    if (tr.doc.resolve(after).nodeAfter?.isTextblock) tr.setSelection(TextSelection.create(tr.doc, after + 1));
+    else tr.setSelection(NodeSelection.create(tr.doc, blockPos));
+    tr.scrollIntoView();
+  }
+  editor.view.dispatch(tr);
+  return after;
 }
 
 /**
- * Sends each file to the core and inserts what it stored, in order: at `at` (a drop, mapped
- * through anything typed meanwhile) or at the selection (a paste). Typing is never blocked.
+ * Sends each file to the core and inserts what it stored, in order, at `at` (the paste or
+ * drop point, followed through anything typed meanwhile; each next image goes right after
+ * the last one), or at the selection when no point is given. Typing is never blocked.
  * Good files are added even when others fail; only the first failure is reported.
  */
 export async function addImageFiles(
@@ -144,10 +200,10 @@ export async function addImageFiles(
         continue;
       }
       editor.off("transaction", follow);
-      const inserted = insertImage(editor, image, target);
+      const after = insertImage(editor, image, target);
       editor.on("transaction", follow);
-      // The next one goes after it: where the insert left the cursor.
-      if (inserted) target = undefined;
+      // The next one goes right after it, wherever the cursor is by then.
+      if (after !== null) target = after;
     }
   } finally {
     editor.off("transaction", follow);

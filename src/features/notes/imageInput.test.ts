@@ -18,6 +18,7 @@ import {
   MAX_IMAGE_INPUT_BYTES,
   pickImage,
   problemOf,
+  shouldPasteFiles,
   type ImageProblem,
 } from "./imageInput";
 
@@ -90,6 +91,40 @@ describe("imageFilesIn", () => {
     const png = pngFile();
     expect(imageFilesIn([text, svg, png])).toEqual([svg, png]);
     expect(imageFilesIn(null)).toEqual([]);
+  });
+});
+
+describe("shouldPasteFiles", () => {
+  it("html_with_text_and_bitmap_pastes_as_text", () => {
+    // Word, Excel and LibreOffice put a picture of the copied range next to its HTML.
+    const html = "<p>Hello</p><table><tr><td>1</td><td>2</td></tr></table>";
+    expect(shouldPasteFiles(html, [pngFile()])).toBe(false);
+  });
+
+  it("lone_img_html_with_file_pastes_the_image", () => {
+    // A browser's "Copy Image".
+    expect(shouldPasteFiles('<meta charset="utf-8"><img src="https://x/a.png">', [pngFile()])).toBe(true);
+  });
+
+  it("empty html with a file pastes the image", () => {
+    expect(shouldPasteFiles("", [pngFile()])).toBe(true);
+  });
+
+  it("wrappers, comments and whitespace do not count; any text or other element does", () => {
+    const files = [pngFile()];
+    expect(
+      shouldPasteFiles(
+        '<html><body>\n<!--StartFragment--><div><img src="https://x/a.png"></div> <!--EndFragment-->\n</body></html>',
+        files,
+      ),
+    ).toBe(true);
+    expect(shouldPasteFiles('<img src="https://x/a.png"> caption', files)).toBe(false);
+    expect(shouldPasteFiles("<table><tr><td></td></tr></table>", files)).toBe(false);
+    expect(shouldPasteFiles("<ul><li></li></ul>", files)).toBe(false);
+  });
+
+  it("no files: never", () => {
+    expect(shouldPasteFiles("", [])).toBe(false);
   });
 });
 
@@ -168,6 +203,24 @@ describe("addImageFiles", () => {
     expect(content()).toEqual([para("zero one"), img(), para("two")]);
   });
 
+  it("a two-file drop puts both images in order at the drop point, even when the cursor moves", async () => {
+    editorWith(para("one"), para("two"), para("three"));
+    const finish: ((i: ReturnType<typeof info>) => void)[] = [];
+    vi.mocked(commands.addImage).mockImplementation(() => new Promise((r) => finish.push(r)));
+    // Dropped at the end of "one" (position 4); the cursor is elsewhere.
+    const done = addImageFiles(editor, NOTE, [pngFile(), pngFile()], vi.fn(), 4);
+    await vi.waitFor(() => expect(finish).toHaveLength(1));
+    editor.commands.setTextSelection(13); // inside "three"
+    finish[0]!(info(ID));
+    await vi.waitFor(() => expect(finish).toHaveLength(2));
+    // Meanwhile the cursor moves and text is typed far from the drop point.
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    editor.commands.insertContent("!");
+    finish[1]!(info(ID2));
+    await done;
+    expect(content()).toEqual([para("one"), img(ID), img(ID2), para("two"), para("three!")]);
+  });
+
   it("inserts nothing once the note became read-only", async () => {
     editorWith(para("a"));
     vi.mocked(commands.addImage).mockResolvedValue(info());
@@ -181,7 +234,7 @@ describe("addImageFiles", () => {
 describe("insertImage", () => {
   const insertAt = (pos: number) => {
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, pos)));
-    expect(insertImage(editor, info())).toBe(true);
+    expect(insertImage(editor, info())).not.toBeNull();
     return content();
   };
 
@@ -217,7 +270,7 @@ describe("insertImage", () => {
     expect(insertAt(3)).toEqual([{ type: "bulletList", content: [item(para("ab"), img())] }]);
     expect(editor.state.selection).toBeInstanceOf(NodeSelection);
     // A second image goes after the first.
-    expect(insertImage(editor, info(ID2))).toBe(true);
+    expect(insertImage(editor, info(ID2))).not.toBeNull();
     expect(content()).toEqual([{ type: "bulletList", content: [item(para("ab"), img(), img(ID2))] }]);
   });
 
@@ -230,7 +283,7 @@ describe("insertImage", () => {
   it("a selected image gets the next one after it", () => {
     editorWith(img(), para("x"));
     editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 0)));
-    expect(insertImage(editor, info(ID2))).toBe(true);
+    expect(insertImage(editor, info(ID2))).not.toBeNull();
     expect(content()).toEqual([img(), img(ID2), para("x")]);
   });
 
@@ -238,7 +291,7 @@ describe("insertImage", () => {
     const item = (...content: JSONContent[]): JSONContent => ({ type: "listItem", content });
     editorWith({ type: "bulletList", content: [item(para("a")), item(para("b"))] });
     // 6 is between the two list items, where only a list item may go.
-    expect(insertImage(editor, info(), 6)).toBe(true);
+    expect(insertImage(editor, info(), 6)).not.toBeNull();
     const json = JSON.stringify(editor.getJSON());
     expect(json).toContain(ID);
     expect(() => editor.schema.nodeFromJSON(editor.getJSON()).check()).not.toThrow();
@@ -247,7 +300,7 @@ describe("insertImage", () => {
   it("does nothing while the note is read-only", () => {
     editorWith(para("ab"));
     editor.setEditable(false);
-    expect(insertImage(editor, info())).toBe(false);
+    expect(insertImage(editor, info())).toBeNull();
     expect(types()).toEqual(["paragraph"]);
   });
 });

@@ -1883,6 +1883,35 @@ describe("NoteWindow", () => {
       expect(screen.queryByRole("alert")).toBeNull();
     });
 
+    it("html_with_text_and_bitmap_pastes_as_text", async () => {
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [png()], "<p>Hello office</p><table><tr><td>1</td></tr></table>");
+      await waitFor(() => expect(editorEl(container)).toHaveTextContent("Hello office"));
+      expect(commands.addImage).not.toHaveBeenCalled();
+      expect(container.querySelectorAll(".dn-image")).toHaveLength(1); // the fixture's own
+    });
+
+    it("an image lands where it was pasted; a word selected meanwhile survives", async () => {
+      const para = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+      const { container } = await openNote({ content: { type: "doc", content: [para("Groceries for Saturday"), para("alpha beta")] } });
+      const ed = (editorEl(container) as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+      let finish!: (i: { id: string; width: number; height: number }) => void;
+      vi.mocked(commands.addImage).mockReturnValue(new Promise((r) => (finish = r)));
+      // The cursor after "alpha" (the second line starts at 25).
+      await act(async () => ed.commands.setTextSelection(30));
+      pasteWith(editorEl(container), [png()]);
+      await waitFor(() => expect(commands.addImage).toHaveBeenCalledTimes(1));
+      // While it uploads: text typed at the top, then the word "beta" selected.
+      await act(async () => {
+        ed.commands.insertContentAt(1, "My ");
+        ed.commands.setTextSelection({ from: 34, to: 38 });
+      });
+      expect(ed.state.doc.textBetween(34, 38)).toBe("beta");
+      await act(async () => finish({ id: IMG, width: 800, height: 450 }));
+      const blocks = (ed.getJSON().content ?? []).map((n) => (n.type === "image" ? `image:${n.attrs!.id}` : ed.schema.nodeFromJSON(n).textContent));
+      expect(blocks).toEqual(["My Groceries for Saturday", "alpha", `image:${IMG}`, " beta"]);
+    });
+
     it("a paste without image files is left to the editor", async () => {
       const { container } = await openNote();
       pasteWith(editorEl(container), [], "<p>plain words</p>");

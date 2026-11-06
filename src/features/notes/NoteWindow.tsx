@@ -29,7 +29,7 @@ import { ColorPopover } from "./ColorPopover";
 import { DoneStrip } from "./DoneStrip";
 import { createExtensions, serializeDoc } from "./extensions";
 import { FormatBar } from "./FormatBar";
-import { addImageFiles, imageFilesIn, type ImageProblem } from "./imageInput";
+import { addImageFiles, imageFilesIn, pastePoint, shouldPasteFiles, type ImageProblem } from "./imageInput";
 import { ImageMessage } from "./ImageMessage";
 import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
@@ -422,12 +422,14 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         }
         return false;
       },
-      // Image pixels on the clipboard win over its HTML (a browser's "Copy Image" gives both).
-      // Without image files the editor pastes as usual, and the image node drops foreign <img>.
-      handlePaste: (_view: EditorView, event: ClipboardEvent) => {
+      // Image files are pasted when the clipboard's HTML holds nothing but images (a browser's
+      // "Copy Image"); an office paste, whose HTML comes with a picture of it, stays text. The
+      // images go where the paste was, whatever is typed or selected while they upload.
+      handlePaste: (view: EditorView, event: ClipboardEvent) => {
         const files = imageFilesIn(event.clipboardData?.files);
-        if (files.length === 0) return false;
-        if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem);
+        if (!shouldPasteFiles(event.clipboardData?.getData("text/html") ?? "", files)) return false;
+        const at = pastePoint(view, files);
+        if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem, at);
         return true;
       },
       // Every dropped file is taken (a PDF gets the "PNG, JPEG…" message); the editor only
