@@ -2,7 +2,8 @@
 //!
 //! A backup is one UTF-8 JSON file holding every note, including archived and
 //! trashed ones, with its window state and privacy flag. It contains no
-//! settings and no PIN. Version 5 added `completedAt` (when a note was marked done); version 4
+//! settings and no PIN. Version 6 added `images` (the pictures notes use, as base64).
+//! Version 5 added `completedAt` (when a note was marked done); version 4
 //! added `reminder` (a note's reminder); version 3
 //! added `appearance` (per-note text and window styling); version 2 added
 //! `private` and `privateLabel`. Older files still restore, with every note not
@@ -11,21 +12,25 @@
 
 use std::collections::HashSet;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
 use crate::geometry::enforce_min_size;
+use crate::image_prep::{PrepLimits, image_id, sniff_mime};
 use crate::model::{Appearance, NoteWindow};
 use crate::now_ms;
 use crate::reminders::{validate_rule, within_range};
 use crate::validation::{
-    parse_content, parse_note_id, validate_appearance, validate_color, validate_private_label,
+    is_image_id, parse_content, parse_note_id, validate_appearance, validate_color,
+    validate_private_label,
 };
 
 pub const BACKUP_FORMAT: &str = "desknotes-backup";
-pub const BACKUP_VERSION: u32 = 5;
+pub const BACKUP_VERSION: u32 = 6;
 /// Refuse files larger than this before parsing them.
-pub const MAX_BACKUP_BYTES: usize = 200 * 1024 * 1024;
+pub const MAX_BACKUP_BYTES: usize = 300 * 1024 * 1024;
 pub const MAX_BACKUP_NOTES: usize = 100_000;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,6 +44,23 @@ pub struct Backup {
     /// Unix ms, UTC.
     pub exported_at: i64,
     pub notes: Vec<BackupNote>,
+    /// The images the notes use (version 6; absent in older files = none).
+    #[serde(default)]
+    pub images: Vec<BackupImage>,
+}
+
+/// An image as written to a backup: the stored bytes, unchanged, as standard base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackupImage {
+    /// 64 lowercase hex characters: the SHA-256 of the decoded bytes.
+    pub id: String,
+    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+    pub mime: String,
+    pub width: u32,
+    pub height: u32,
+    /// Standard base64 (with padding) of the stored bytes.
+    pub data: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -110,6 +132,46 @@ fn validate_backup_reminder(r: &BackupReminder) -> CoreResult<()> {
     }
 }
 
+/// The image types DeskNotes stores.
+const IMAGE_MIMES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+/// The widest or tallest an image can be (a GIF's own limit). Sizes are only recorded.
+const MAX_IMAGE_SIDE: u32 = 65_535;
+
+/// The bytes of a backup image, after the checks that make them safe to store. Nothing
+/// is re-encoded, so the id (the SHA-256 of the bytes) stays the same as when written.
+pub(crate) fn decode_backup_image(img: &BackupImage) -> CoreResult<Vec<u8>> {
+    if !is_image_id(&img.id) {
+        return Err(invalid("the id is not 64 lowercase hex characters"));
+    }
+    if !IMAGE_MIMES.contains(&img.mime.as_str()) {
+        return Err(invalid("the type is not PNG, JPEG, GIF or WebP"));
+    }
+    if [img.width, img.height]
+        .into_iter()
+        .any(|side| side == 0 || side > MAX_IMAGE_SIDE)
+    {
+        return Err(invalid("the size is not valid"));
+    }
+    let max = PrepLimits::DEFAULT.max_output;
+    // Base64 is 4 characters per 3 bytes: refuse before decoding something huge.
+    if img.data.len() > max.div_ceil(3) * 4 {
+        return Err(invalid("the image is too large"));
+    }
+    let bytes = STANDARD
+        .decode(&img.data)
+        .map_err(|_| invalid("the data is not valid base64"))?;
+    if bytes.len() > max {
+        return Err(invalid("the image is too large"));
+    }
+    if sniff_mime(&bytes) != Some(img.mime.as_str()) {
+        return Err(invalid("the data is not an image of the stated type"));
+    }
+    if image_id(&bytes) != img.id {
+        return Err(invalid("the id does not match the image"));
+    }
+    Ok(bytes)
+}
+
 /// Parse and fully validate a backup file. Nothing is changed on failure.
 pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
     if raw.len() > MAX_BACKUP_BYTES {
@@ -160,6 +222,14 @@ pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
             return Err(invalid(format!("note {n}: invalid window position")));
         }
         (w.width, w.height) = enforce_min_size(w.width, w.height);
+    }
+    let mut seen_images = HashSet::new();
+    for (i, img) in backup.images.iter().enumerate() {
+        let n = i + 1;
+        decode_backup_image(img).map_err(|e| invalid(format!("image {n}: {e}")))?;
+        if !seen_images.insert(img.id.as_str()) {
+            return Err(invalid(format!("image {n}: the same image appears twice")));
+        }
     }
     Ok(backup)
 }

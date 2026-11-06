@@ -16,6 +16,8 @@ sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 argon2 = "0.6.0"
+# Images travel inside the backup file as base64 text.
+base64 = "0.22"
 # Reminder time rules (local wall clock, DST). `clock` gives `Local` to the shell.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 

@@ -818,6 +818,7 @@ name = "desknotes-core"
 version = "0.2.0"
 dependencies = [
  "argon2",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "image",
