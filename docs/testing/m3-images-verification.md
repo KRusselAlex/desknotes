@@ -1,6 +1,6 @@
 # Milestone 3 — images in notes: verification on Ubuntu
 
-Date: 2026-11-06 · Branch: `feat/images-in-notes` (verified at fb911bc) · Jira: DES-23
+Date: 2026-11-06 · Branch: `feat/images-in-notes` (verified at fb911bc; I12 at d0b1d7b, after the final-review fixes) · Jira: DES-23
 Design: `docs/superpowers/specs/2026-11-06-images-in-notes-design.md`
 
 ## Machine and conditions
@@ -29,6 +29,7 @@ Design: `docs/superpowers/specs/2026-11-06-images-in-notes-design.md`
 | I9 | Settings → Backup → Export backup… | The file has `"version": 6`, 1 note and an `images` entry (`image/png`, 800 × 500, base64). |
 | I10 | Restore that file into a **fresh** data folder (Restore from backup… → "Replace notes") | The image comes back from the file, and `note_images` is 1. A `pre-restore-….db` copy is written first. After a restart the image is still there: the start-up clean-up keeps restored images. |
 | I11 | Upgrade the v0.2.0 fixture (schema 3, 5 notes) | It reaches schema **8** with its 5 notes. `pre-migration-v3-….db` is written. |
+| I12 | Insert image… with a generated animated GIF: 1280 × 720, 60 frames, 150.7 KB, with a GIF comment | Stored as `image/gif` at 147.3 KB. All 60 frames and the endless loop are kept, and the comment is gone. It shows in the note. |
 
 ## Not checked in the real app
 
