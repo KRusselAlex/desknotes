@@ -26,11 +26,18 @@ Design: `docs/superpowers/specs/2026-11-05-welcome-and-about-design.md`
 | W3 | Delete the welcome note permanently, then restart | No note is created. The manager opens, as with any empty install. `first_run_done` stays 1. |
 | W4 | An existing 0.2.0 database with every note deleted | Upgraded to schema 7 with its pre-migration copy. **No** welcome note, and `first_run_done` is not set. |
 
+## Checked by the owner on their desktop
+
+2026-11-06: the .deb of 4a7ee37 (`npm run tauri build -- --bundles deb`, built 06:14) was installed with `apt install --reinstall` at 06:15:50. The installed `/usr/bin/desknotes` has the same SHA-256 as the package's binary, and DeskNotes was restarted at 06:17:14.
+
+| Check | Result |
+|---|---|
+| Settings → About → **Copy**, then paste | The owner confirmed the pasted text was `DeskNotes 0.2.0 · Ubuntu 24.04.5 LTS` |
+
 ## Not checked in the real app
 
 | Item | Why |
 |---|---|
-| What Copy puts on the clipboard (`DeskNotes 0.2.0 · Ubuntu 24.04.5 LTS`) | Clipboard content can't be read back on a bare hidden display: even a plain GTK program's clipboard couldn't be read there. Unit tests cover the exact text. **Owner check** with the .deb. |
 | Centring on native Wayland | DeskNotes runs through XWayland (ADR-0002). Where the window manager does not allow positioning, the note falls back to the normal new-note cascade (by design). |
 | The real browser opening | It deliberately wasn't opened. The URL handed to the system was checked instead. |
 
