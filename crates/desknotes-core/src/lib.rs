@@ -8,13 +8,14 @@ pub mod backup;
 pub mod db;
 pub mod error;
 pub mod geometry;
+pub mod image_prep;
 pub mod model;
 pub mod privacy;
 pub mod reminders;
 pub mod validation;
 
 pub use db::Database;
-pub use error::{CoreError, CoreResult};
+pub use error::{CoreError, CoreResult, ImageError};
 pub use model::*;
 
 /// Current time as Unix milliseconds (UTC).
