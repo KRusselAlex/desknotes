@@ -11,8 +11,6 @@ export type ImageProblem = "too_large" | "unsupported" | "failed";
 /** Files over this are refused before they are sent (the core checks again). */
 export const MAX_IMAGE_INPUT_BYTES = 40 * 1024 * 1024;
 
-const ACCEPTED_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-
 const PROBLEM_TEXT: Record<ImageProblem, string> = {
   too_large: "That image is too large. Images can be up to 5 MB.",
   unsupported: "DeskNotes can add PNG, JPEG, GIF or WebP images.",
@@ -23,10 +21,22 @@ export function imageProblemText(problem: ImageProblem): string {
   return PROBLEM_TEXT[problem];
 }
 
-/** The quick checks made before sending a file; the core decides from the bytes. */
+/**
+ * Whether a file's type allows it to be an image. The type comes from the file's name, not
+ * its bytes, so an empty one (no or an unknown extension) may still be a PNG or JPEG.
+ */
+function mayBeImage(file: File): boolean {
+  const type = file.type.toLowerCase();
+  return type === "" || type.startsWith("image/");
+}
+
+/**
+ * The quick checks made before sending a file: its size, and a type that rules it out (a PDF,
+ * an SVG). An empty or any other image type is sent; the core decides from the bytes.
+ */
 export function checkImageFile(file: File): ImageProblem | null {
   if (file.size > MAX_IMAGE_INPUT_BYTES) return "too_large";
-  if (!ACCEPTED_TYPES.has(file.type)) return "unsupported";
+  if (!mayBeImage(file) || file.type.toLowerCase() === "image/svg+xml") return "unsupported";
   return null;
 }
 
@@ -38,9 +48,12 @@ export function problemOf(error: unknown): ImageProblem {
   return "failed";
 }
 
-/** The files of a paste that are images of any kind (an SVG is then refused with its message). */
+/**
+ * The files of a paste that may be images: any image type, or none (an SVG is then refused
+ * with its message, and an untyped file that is not an image by the core).
+ */
 export function imageFilesIn(files: FileList | readonly File[] | null | undefined): File[] {
-  return Array.from(files ?? []).filter((f) => f.type.startsWith("image/"));
+  return Array.from(files ?? []).filter(mayBeImage);
 }
 
 /** Elements that only wrap what they hold; any other element is content of its own. */

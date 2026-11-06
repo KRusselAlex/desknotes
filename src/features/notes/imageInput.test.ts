@@ -64,11 +64,15 @@ describe("checkImageFile", () => {
     expect(checkImageFile(limit)).toBeNull();
   });
 
-  it("accepts PNG, JPEG, GIF and WebP only", () => {
-    for (const type of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
+  it("sends any image type, or none, to the core, which decides from the bytes", () => {
+    // The type comes from the file name, so a JPEG named "photo" has none.
+    for (const type of ["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/x-unknown", ""]) {
       expect(checkImageFile(new File(["x"], "f", { type }))).toBeNull();
     }
-    for (const type of ["image/svg+xml", "image/bmp", "application/pdf", ""]) {
+  });
+
+  it("refuses SVG and files typed as something other than an image", () => {
+    for (const type of ["image/svg+xml", "IMAGE/SVG+XML", "application/pdf", "text/plain", "video/mp4"]) {
       expect(checkImageFile(new File(["x"], "f", { type }))).toBe<ImageProblem>("unsupported");
     }
   });
@@ -85,11 +89,13 @@ describe("problemOf", () => {
 });
 
 describe("imageFilesIn", () => {
-  it("keeps only image files", () => {
+  it("keeps image files and untyped files, which may be images", () => {
     const text = new File(["x"], "a.txt", { type: "text/plain" });
+    const pdf = new File(["x"], "a.pdf", { type: "application/pdf" });
     const svg = new File(["x"], "a.svg", { type: "image/svg+xml" });
+    const untyped = new File([new Uint8Array([0xff, 0xd8, 0xff])], "photo", { type: "" });
     const png = pngFile();
-    expect(imageFilesIn([text, svg, png])).toEqual([svg, png]);
+    expect(imageFilesIn([text, svg, pdf, untyped, png])).toEqual([svg, untyped, png]);
     expect(imageFilesIn(null)).toEqual([]);
   });
 });
@@ -146,6 +152,26 @@ describe("addImageFiles", () => {
     await addImageFiles(editor, NOTE, [new File(["<svg/>"], "a.svg", { type: "image/svg+xml" })], onProblem);
     expect(onProblem).toHaveBeenCalledWith("unsupported");
     expect(commands.addImage).not.toHaveBeenCalled();
+  });
+
+  it("a PDF gives unsupported without calling addImage", async () => {
+    editorWith(para("a"));
+    const onProblem = vi.fn();
+    await addImageFiles(editor, NOTE, [new File(["%PDF-1.7"], "a.pdf", { type: "application/pdf" })], onProblem);
+    expect(onProblem).toHaveBeenCalledWith("unsupported");
+    expect(commands.addImage).not.toHaveBeenCalled();
+  });
+
+  it("a file with no type (no extension) goes to the core, which reads its bytes", async () => {
+    editorWith(para("a"));
+    vi.mocked(commands.addImage).mockResolvedValue(info());
+    const onProblem = vi.fn();
+    const png = new File([new Uint8Array([137, 80, 78, 71])], "pasted", { type: "" });
+    await addImageFiles(editor, NOTE, [png], onProblem);
+    expect(commands.addImage).toHaveBeenCalledTimes(1);
+    expect(Array.from(vi.mocked(commands.addImage).mock.calls[0]![1])).toEqual([137, 80, 78, 71]);
+    expect(onProblem).not.toHaveBeenCalled();
+    expect(types()).toContain("image");
   });
 
   it("a PNG calls addImage(noteId, bytes) and inserts a node with the returned id", async () => {
