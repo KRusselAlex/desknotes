@@ -31,17 +31,43 @@ Design: `docs/superpowers/specs/2026-11-06-images-in-notes-design.md`
 | I11 | Upgrade the v0.2.0 fixture (schema 3, 5 notes) | It reaches schema **8** with its 5 notes. `pre-migration-v3-….db` is written. |
 | I12 | Insert image… with a generated animated GIF: 1280 × 720, 60 frames, 150.7 KB, with a GIF comment | Stored as `image/gif` at 147.3 KB. All 60 frames and the endless loop are kept, and the comment is gone. It shows in the note. |
 
+## Checked on the owner's real desktop (2026-11-06, with the owner's agreement)
+
+The first owner-desktop run used the installed .deb of 46d524c. It found that **pasting and dropping images did not work**. Temporary logging showed that WebKitGTK gives the page:
+- **for a clipboard image:** an empty `clipboardData` (no types, no files);
+- **for a dropped file:** no `File` (only `text/uri-list` with empty data). The file's URL was inserted as text.
+
+Paste and drop were then moved to Rust (commits 1b971c2 and ab20f40) and re-checked on the same desktop.
+
+**Conditions:**
+- Build: the release binary of ab20f40. R4 and R6–R8 ran with two temporary `eprintln!` logging lines that were not committed.
+- Display: the owner's GNOME 46 Wayland session, through XWayland (`:0`).
+- Data: a scratch `HOME` and a private D-Bus daemon, so the owner's notes were untouched.
+- Input: clipboard owners and a drag source were small GTK helper programs, and clicks and keys were sent with libxdo.
+
+| # | Check | Result |
+|---|---|---|
+| R1 | Ctrl+V with only `image/png` on the clipboard (like a screenshot) | The image is added (800 × 500 PNG) |
+| R2 | Ctrl+V with `image/png` and text | The image is added |
+| R3 | Ctrl+V with `image/png` and `text/html` holding only `<img src="https://…">` (a browser's "Copy Image") | The image is added from the clipboard pixels. Nothing is fetched. |
+| R4 | Select an image in a note, Ctrl+C, then Ctrl+V | The page gets `types ["text/html","text/plain"]` with our own `<img data-image-id>`. The same image is pasted, as a second node with the same id. |
+| R5 | Ctrl+V with HTML of a paragraph and a table, plus plain text and a PNG (an office copy) | Pasted as text ("Quarterly figures" and the table's text). No image is added. |
+| R6 | Drag an image file (`text/uri-list`) onto a note's text | The image is inserted exactly at the drop point, splitting the line there |
+| R7 | Drag a web link onto a note | Inserted as plain text. No image and no message. |
+| R8 | Two notes open; drop an image on note 1 | Only note 1 changes. Note 2 is untouched. |
+
 ## Not checked in the real app
 
 | Item | Why |
 |---|---|
-| **Paste (Ctrl+V) of a screenshot or a browser's "Copy Image"** | The clipboard cannot be read on a bare hidden display: even a plain GTK program could not read it, as in the DES-29 check. A clipboard image set by a GTK helper was not pasted. Unit tests cover the paste logic, including Word/LibreOffice pastes staying text. **Owner check** with the `.deb`. |
-| **Dropping a file from Files onto a note** | Needs a real file manager and drag session. **Owner check.** |
-| **Images of private notes withheld while locked** | The scheme has no way to be called outside the webview here. The core tests `image_for_display_respects_the_lock` and `an_unreferenced_image_is_served_while_locked` cover the rule the scheme uses. A locked note's content is already empty in the webview, so no image address reaches it. |
+| **Moving text by dragging it inside a note** (Tauri's file-drop handler is on again) | A synthetic text drag did not start a WebKit drag here. Reading the wry source shows it only takes `text/uri-list` drops and leaves everything else to WebKit. **Owner check.** |
+| **Dropping a photo from the Files app** | Files is a native Wayland app that a synthetic mouse cannot drive. R6 covers the same path from an X11 drag source. **Owner check.** |
+| **A BMP or TIFF on the clipboard** | Unit tests cover the conversion. No app that copies BMP or TIFF was at hand. |
+| **Images of private notes withheld while locked** | The scheme cannot be called from outside the webview here. The core tests `image_for_display_respects_the_lock` and `an_unreferenced_image_is_served_while_locked` cover the rule the scheme uses. A locked note's content is already empty in the webview, so no image address reaches it. |
 | **The 300 MB backup limit** | Tested in core with a lower limit. |
 
 ## Automated tests
 
-`npm test` (744), `npm run lint`, `npm run typecheck`, `cargo test --workspace`,
+`npm test` (765), `npm run lint`, `npm run typecheck`, `cargo test --workspace`,
 `cargo clippy -D warnings` and `cargo fmt --check` pass. Every task was reviewed separately,
 and each review fix was re-reviewed.
