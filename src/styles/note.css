@@ -269,6 +269,74 @@
   color: var(--dn-ink-muted);
 }
 
+/* Images (DES-23): a block at the note's width (or its own percentage of it), keeping its
+   shape. Selected: the focus outline and four corner handles, which resize it (imageNode.ts).
+   The handles show only while the note can be edited. */
+.dn-note-body .tiptap .dn-image {
+  position: relative;
+  max-width: 100%;
+  margin: 2px 0 8px;
+  border-radius: var(--dn-radius-sm);
+}
+.dn-note-body .tiptap .dn-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--dn-radius-sm);
+}
+/* The image or its "Image not found" box: whichever is not shown is `hidden`. */
+.dn-note-body .tiptap .dn-image [hidden] {
+  display: none;
+}
+.dn-note-body .tiptap .dn-image.ProseMirror-selectednode {
+  outline: 2px solid var(--dn-focus);
+  outline-offset: 2px;
+}
+.dn-image-handle {
+  display: none;
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid var(--dn-focus);
+  border-radius: 3px;
+  background: #fff;
+  touch-action: none;
+}
+.dn-note-body .tiptap[contenteditable="true"] .dn-image.ProseMirror-selectednode:not(.is-missing) .dn-image-handle {
+  display: block;
+}
+.dn-image-handle.is-tl {
+  left: -7px;
+  top: -7px;
+  cursor: nwse-resize;
+}
+.dn-image-handle.is-tr {
+  right: -7px;
+  top: -7px;
+  cursor: nesw-resize;
+}
+.dn-image-handle.is-bl {
+  left: -7px;
+  bottom: -7px;
+  cursor: nesw-resize;
+}
+.dn-image-handle.is-br {
+  right: -7px;
+  bottom: -7px;
+  cursor: nwse-resize;
+}
+/* An image the app cannot find (a hand-edited database, say): a small box to delete. */
+.dn-image-missing {
+  padding: 8px 10px;
+  border-radius: var(--dn-radius-sm);
+  background: var(--dn-ink-fill);
+  color: var(--dn-ink-muted);
+  font-family: var(--dn-font);
+  font-size: var(--dn-text-sm);
+  line-height: 1.35;
+}
+
 /* Checklists (N1, N16, N17). Tiptap 3 renders <label><input><span sr-only></label>. */
 .dn-note-body ul[data-type="taskList"] {
   list-style: none;
@@ -371,6 +439,22 @@
   color: var(--dn-danger-ink);
   font-size: var(--dn-text-sm);
   font-weight: 650;
+}
+/* The image message closes with a plain ×, not a pill. */
+.dn-save-error .dn-message-close {
+  width: var(--dn-hit-min);
+  height: var(--dn-hit-min);
+  padding: 0;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--dn-radius-sm);
+  background: transparent;
+  color: inherit;
+}
+.dn-save-error .dn-message-close:hover {
+  background: var(--dn-ink-hover);
 }
 
 /* "Marked done" strip (DES-39): overlays the top of the body under the header, so the text
@@ -896,6 +980,17 @@ html.dn-see-through #root {
 }
 .dn-note.is-high-contrast .dn-save-error button {
   border-color: var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-note-body .tiptap .dn-image.ProseMirror-selectednode {
+  outline: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+.dn-note.is-high-contrast .dn-image-handle {
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+  background: var(--dn-hc-bg);
+}
+.dn-note.is-high-contrast .dn-image-missing {
+  border: var(--dn-hc-rule) solid var(--dn-hc-line);
+  background: var(--dn-hc-bg);
 }
 .dn-note.is-high-contrast .dn-modal {
   border: var(--dn-hc-rule) solid var(--dn-hc-line);

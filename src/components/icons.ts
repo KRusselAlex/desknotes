@@ -58,6 +58,7 @@ export const ICONS = {
   info: "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 16v-4.5\"/><path d=\"M12 8h.01\"/>",
   quit: "<path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\"/><path d=\"m16 17 5-5-5-5\"/><path d=\"M21 12H9\"/>",
   resize: "<path d=\"M21 15 15 21\"/><path d=\"M21 9 9 21\"/>",
+  image: "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><circle cx=\"9\" cy=\"9\" r=\"2\"/><path d=\"m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21\"/>",
 } as const;
 
 export type IconName = keyof typeof ICONS;

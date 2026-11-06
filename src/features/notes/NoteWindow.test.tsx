@@ -1,20 +1,12 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import fullFixture from "../../../tests/fixtures/rich-doc.json";
+import fixture from "../../../tests/fixtures/rich-doc.json";
 // @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
 import { readFileSync } from "node:fs";
 import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Note, type PrivacyStatus } from "../../types/note";
 import type { RemindersChanged, ReminderView } from "../../types/reminder";
 import { appearanceStyle } from "../appearance/appearance";
-
-// TODO(images Task 5): the shared fixture now holds an image node the editor cannot
-// load yet, and an unknown node would open every note empty. Until the editor has
-// the node, tests use the fixture without it; Task 5 deletes this filter.
-const fixture = {
-  ...fullFixture,
-  content: fullFixture.content.filter((node) => node.type !== "image"),
-};
 
 const handlers: {
   appAppearance?: (a: AppAppearance) => void;
@@ -84,11 +76,17 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     getReminder: vi.fn().mockResolvedValue(null),
     setReminder: vi.fn(),
     removeReminder: vi.fn().mockResolvedValue(undefined),
+    addImage: vi.fn(),
+    pickImage: vi.fn(),
   },
 }));
 
 import { CommandError, commands } from "../../ipc/commands";
+import { setImageUrlResolver } from "../../ipc/images";
 import { NoteWindow } from "./NoteWindow";
+
+// jsdom has no native scheme; any address will do.
+setImageUrlResolver((id) => `desknotes-image://localhost/${id}`);
 
 const ID = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
 const note = (over: Partial<Note> = {}): Note => ({
@@ -1831,6 +1829,84 @@ describe("NoteWindow", () => {
       expect(rule![1]).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
       expect(rule![1]).toMatch(/position:\s*absolute/);
       expect(css).toMatch(/\.dn-note\.is-high-contrast \.dn-done-strip[^{]*\{[^}]*var\(--dn-hc-line\)/);
+    });
+  });
+  describe("images", () => {
+    const IMG = "d".repeat(64);
+    const png = () => new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+    const editorEl = (container: HTMLElement) => container.querySelector(".tiptap") as HTMLElement;
+    const imageNodes = (container: HTMLElement) =>
+      JSON.stringify(
+        (editorEl(container) as HTMLElement & { editor: { getJSON: () => unknown } }).editor.getJSON(),
+      ).split(`"id":"${IMG}"`).length - 1;
+    /** A paste whose clipboard has both pixels and HTML, as a browser's "Copy Image" gives. */
+    const pasteWith = (el: HTMLElement, files: File[], html = `<img src="https://example.com/a.png">`) =>
+      fireEvent.paste(el, {
+        clipboardData: {
+          files,
+          types: ["Files", "text/html"],
+          getData: (type: string) => (type === "text/html" ? html : ""),
+        },
+      });
+
+    it("opens the shared fixture with its image", async () => {
+      const { container } = await openNote();
+      expect(container.querySelector(`.dn-image img[src="desknotes-image://localhost/${"a".repeat(64)}"]`)).not.toBeNull();
+    });
+
+    it("pasting a PNG with HTML inserts one image node and calls addImage once", async () => {
+      vi.mocked(commands.addImage).mockResolvedValue({ id: IMG, width: 800, height: 450 });
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [png()]);
+      await waitFor(() => expect(imageNodes(container)).toBe(1));
+      expect(commands.addImage).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(commands.addImage).mock.calls[0]![0]).toBe(ID);
+      // The pixels win: nothing from the HTML (no foreign image, no extra text).
+      expect(container.querySelector('img[src^="https:"]')).toBeNull();
+      await waitFor(() => expect(commands.saveNoteContent).toHaveBeenCalled());
+      expect(vi.mocked(commands.saveNoteContent).mock.calls.at(-1)![1]).toContain(`"id":"${IMG}"`);
+    });
+
+    it("a refused paste shows the message strip, and nothing is added", async () => {
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [new File(["<svg/>"], "a.svg", { type: "image/svg+xml" })]);
+      expect(await screen.findByRole("alert")).toHaveTextContent("DeskNotes can add PNG, JPEG, GIF or WebP images.");
+      expect(commands.addImage).not.toHaveBeenCalled();
+      // A new problem replaces the old one.
+      vi.mocked(commands.addImage).mockRejectedValue(new CommandError("image_too_large", "x"));
+      pasteWith(editorEl(container), [png()]);
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent("That image is too large. Images can be up to 5 MB."),
+      );
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("a paste without image files is left to the editor", async () => {
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [], "<p>plain words</p>");
+      await waitFor(() => expect(editorEl(container)).toHaveTextContent("plain words"));
+      expect(commands.addImage).not.toHaveBeenCalled();
+    });
+
+    it("does not add images to a read-only note", async () => {
+      const { container } = await openNote({ editLocked: true });
+      pasteWith(editorEl(container), [png()]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(commands.addImage).not.toHaveBeenCalled();
+    });
+
+    it("a file dropped anywhere in the window never opens in it", async () => {
+      const { container } = await openNote({ editLocked: true });
+      const files = { files: [png()], types: ["Files"] };
+      const over = createEvent.dragOver(container.querySelector(".dn-note-header")!, { dataTransfer: files });
+      fireEvent(container.querySelector(".dn-note-header")!, over);
+      expect(over.defaultPrevented).toBe(true);
+      const drop = createEvent.drop(container.querySelector(".dn-note-header")!, { dataTransfer: files });
+      fireEvent(container.querySelector(".dn-note-header")!, drop);
+      expect(drop.defaultPrevented).toBe(true);
+      expect(commands.addImage).not.toHaveBeenCalled();
     });
   });
 });

@@ -46,7 +46,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import fullFixture from "../../tests/fixtures/rich-doc.json";
+import fixture from "../../tests/fixtures/rich-doc.json";
 import { App } from "../app/App";
 import { setImageUrlResolver } from "../ipc/images";
 import { followSystemTheme } from "../app/theme";
@@ -70,13 +70,9 @@ import "../styles/settings.css";
 import "../styles/privacy.css";
 import "../styles/note-settings.css";
 
-// TODO(images Task 5): the editor cannot load the fixture's image node yet (an unknown
-// node would open the note empty). Task 5 deletes this filter.
-const fixture = {
-  ...fullFixture,
-  content: fullFixture.content.filter((node) => node.type !== "image"),
-};
 const now = Date.now();
+/** An image id the preview cannot show, for the "Image not found" box. */
+const MISSING_IMAGE = "f".repeat(64);
 const H = 3_600_000;
 const doc = (title: string, ...lines: string[]) => ({
   type: "doc",
@@ -127,6 +123,26 @@ const notes: Note[] = [
             { type: "taskItem", attrs: { checked: false }, content: [{ type: "paragraph", content: [{ type: "text", text: "Water the balcony plants" }] }] },
           ],
         },
+      ],
+    },
+  },
+  {
+    ...base,
+    id: "i1",
+    title: "Build error",
+    color: "#fff4a3",
+    updatedAt: now - 1 * H,
+    window: { ...win, visible: false },
+    content: {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Build error" }] },
+        { type: "image", attrs: { id: "0".repeat(64), width: null } },
+        { type: "paragraph", content: [{ type: "text", text: "At half the width:" }] },
+        { type: "image", attrs: { id: "0".repeat(64), width: 50 } },
+        { type: "paragraph", content: [{ type: "text", text: "Missing:" }] },
+        { type: "image", attrs: { id: MISSING_IMAGE, width: null } },
+        { type: "paragraph", content: [{ type: "text", text: "Ask Sam on Monday." }] },
       ],
     },
   },
@@ -307,9 +323,14 @@ Object.assign(window, {
 
 // Images: the native `desknotes-image` scheme does not exist in a browser, so every image
 // shows a small fixed PNG (a 16x9 grey-blue rectangle) and add_image / pick_image return it.
+// ?w=note&id=i1 shows images at full and half width and one that is missing ("Image not
+// found"); &imageError=image_too_large (or image_unsupported, io) makes add_image and
+// pick_image refuse, to show the message strip.
 const PREVIEW_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAIAAAC0SDtlAAAAFElEQVR4nGOYs+UCSYhhVMOg0AAAhOIyEEFvP38AAAAASUVORK5CYII=";
-setImageUrlResolver(() => PREVIEW_PNG);
+// A PNG that does not decode: the editor's error path, with nothing fetched.
+const BROKEN_PNG = "data:image/png;base64,AAAA";
+setImageUrlResolver((id) => (id === MISSING_IMAGE ? BROKEN_PNG : PREVIEW_PNG));
 const PREVIEW_IMAGE = { id: "0".repeat(64), width: 800, height: 450 };
 
 mockIPC(
@@ -562,8 +583,11 @@ mockIPC(
         return null;
       }
       case "add_image":
-      case "pick_image":
+      case "pick_image": {
+        const code = params.get("imageError");
+        if (code) throw { code, message: "refused by the preview" };
         return { ...PREVIEW_IMAGE };
+      }
       case "report_activity":
         return null;
       case "open_settings":

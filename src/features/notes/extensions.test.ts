@@ -1,14 +1,10 @@
 import { Editor, type JSONContent } from "@tiptap/core";
-import fullFixture from "../../../tests/fixtures/rich-doc.json";
+import fixture from "../../../tests/fixtures/rich-doc.json";
+import { setImageUrlResolver } from "../../ipc/images";
 import { createExtensions, sanitizeDoc, serializeDoc } from "./extensions";
 
-// TODO(images Task 5): the shared fixture now holds an image node the editor cannot
-// load yet, and an unknown node would open every note empty. Until the editor has
-// the node, tests use the fixture without it; Task 5 deletes this filter.
-const fixture = {
-  ...fullFixture,
-  content: fullFixture.content.filter((node) => node.type !== "image"),
-};
+// jsdom has no native scheme; any address will do.
+setImageUrlResolver((id) => `desknotes-image://localhost/${id}`);
 
 function editorWith(content: object) {
   return new Editor({ extensions: createExtensions(), content });
@@ -21,8 +17,13 @@ describe("editor document format", () => {
     editor.destroy();
   });
 
-  // TODO(images Task 5): restore by deleting the filter above and this todo.
-  it.todo("round-trips the image node of the shared fixture (Task 5 adds the editor node)");
+  it("round-trips the image node of the shared fixture", () => {
+    const editor = editorWith(fixture);
+    const images = editor.getJSON().content!.filter((n) => n.type === "image");
+    expect(images).toEqual([{ type: "image", attrs: { id: "a".repeat(64), width: 50 } }]);
+    expect(serializeDoc(editor.getJSON())).toContain(`{"type":"image","attrs":{"id":"${"a".repeat(64)}","width":50}}`);
+    editor.destroy();
+  });
 
   it("keeps formatting through serialize and reload", () => {
     const first = editorWith(fixture);
@@ -87,7 +88,7 @@ describe("editor document format", () => {
 
     const allowedNodes = new Set([
       "doc", "paragraph", "text", "heading", "bulletList", "orderedList", "listItem",
-      "taskList", "taskItem", "blockquote", "codeBlock", "hardBreak", "horizontalRule",
+      "taskList", "taskItem", "blockquote", "codeBlock", "hardBreak", "horizontalRule", "image",
     ]);
     const allowedMarks = new Set(["bold", "italic", "underline", "strike", "code", "link", "textStyle", "highlight"]);
     const walk = (n: { type?: string; marks?: { type: string }[]; content?: unknown[] }) => {

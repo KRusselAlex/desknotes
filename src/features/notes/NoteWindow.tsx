@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
 import { noteDateLabel } from "../../app/time";
 import { useWindowSize } from "../../app/useWindowSize";
@@ -29,6 +29,8 @@ import { ColorPopover } from "./ColorPopover";
 import { DoneStrip } from "./DoneStrip";
 import { createExtensions, serializeDoc } from "./extensions";
 import { FormatBar } from "./FormatBar";
+import { addImageFiles, imageFilesIn, type ImageProblem } from "./imageInput";
+import { ImageMessage } from "./ImageMessage";
 import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
 import { isSafeLink } from "./links";
@@ -96,11 +98,31 @@ function noteLook(color: string, appearance: Appearance, app: AppAppearance) {
   return { classes: appClasses(app), style: appearanceStyle(color, effectiveAppearance(appearance, app)) };
 }
 
+/**
+ * A file dropped where the editor does not take it (the header, a read-only or locked note)
+ * must do nothing: the webview, which gets file drops itself, would otherwise open the file
+ * in place of the note.
+ */
+function useFileDropGuard() {
+  useEffect(() => {
+    const guard = (e: DragEvent) => {
+      if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", guard);
+    window.addEventListener("drop", guard);
+    return () => {
+      window.removeEventListener("dragover", guard);
+      window.removeEventListener("drop", guard);
+    };
+  }, []);
+}
+
 export function NoteWindow({ noteId }: { noteId: string }) {
   const [note, setNote] = useState<Note | null>(null);
   const [loadError, setLoadError] = useState(false);
   // Read before anything is drawn, so a note opened after a change never shows the old look.
   const app = useAppAppearance();
+  useFileDropGuard();
 
   useEffect(() => {
     commands.getNote(noteId).then(setNote, () => setLoadError(true));
@@ -333,6 +355,15 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** Set when stored content could not be loaded: never autosave over it. */
   const contentBroken = useRef(false);
   const [contentError, setContentError] = useState(false);
+  /** Why the last image was not added; `n` remounts the message, so a new one replaces it. */
+  const [imageProblem, setImageProblem] = useState<{ problem: ImageProblem; n: number } | null>(null);
+  const showImageProblem = useCallback(
+    (problem: ImageProblem) => setImageProblem((old) => ({ problem, n: (old?.n ?? 0) + 1 })),
+    [],
+  );
+  const closeImageProblem = useCallback(() => setImageProblem(null), []);
+  /** For the paste and drop handlers, which the editor holds from before it exists. */
+  const editorRef = useRef<Editor | null>(null);
   const { width, height } = useWindowSize();
   const narrow = width < NARROW;
 
@@ -391,8 +422,28 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         }
         return false;
       },
+      // Image pixels on the clipboard win over its HTML (a browser's "Copy Image" gives both).
+      // Without image files the editor pastes as usual, and the image node drops foreign <img>.
+      handlePaste: (_view: EditorView, event: ClipboardEvent) => {
+        const files = imageFilesIn(event.clipboardData?.files);
+        if (files.length === 0) return false;
+        if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem);
+        return true;
+      },
+      // Every dropped file is taken (a PDF gets the "PNG, JPEG…" message); the editor only
+      // calls this while it can be edited. Moving text inside the note stays the editor's.
+      handleDrop: (view: EditorView, event: DragEvent, _slice: unknown, moved: boolean) => {
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (moved || files.length === 0) return false;
+        const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem, at);
+        return true;
+      },
     },
   });
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
 
   /** Save, then hide the window. Stays open if the save failed. */
   /** Save first; run `action` only if everything is saved. Returns false otherwise. */
@@ -1056,10 +1107,18 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
           onUnlock={saveRefusedByLock ? () => setUnlocking(true) : undefined}
         />
       )}
+      {imageProblem && <ImageMessage key={imageProblem.n} problem={imageProblem.problem} onDismiss={closeImageProblem} />}
       {showBar && editor && (
-        <FormatBar editor={editor} narrow={narrow} appearance={shown} onLink={() => openPopover("link")} />
+        <FormatBar
+          editor={editor}
+          narrow={narrow}
+          appearance={shown}
+          onLink={() => openPopover("link")}
+          noteId={note.id}
+          onImageProblem={showImageProblem}
+        />
       )}
-      {!showBar && saveState !== "error" && !refusal && (
+      {!showBar && saveState !== "error" && !refusal && !imageProblem && (
         <span className="dn-resize-mark" aria-hidden="true">
           <Icon name="resize" size={12} />
         </span>

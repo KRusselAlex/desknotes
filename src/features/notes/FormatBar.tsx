@@ -4,6 +4,7 @@ import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
 import { Menu, type MenuItem } from "../../components/Menu";
 import type { Appearance } from "../../types/note";
+import { pickImage, type ImageProblem } from "./imageInput";
 import { TextStylePopover } from "./TextStylePopover";
 
 export type ListType = "taskList" | "bulletList" | "orderedList";
@@ -53,11 +54,16 @@ export function FormatBar({
   narrow,
   appearance,
   onLink,
+  noteId,
+  onImageProblem,
 }: {
   editor: Editor;
   narrow: boolean;
   appearance: Appearance;
   onLink: () => void;
+  noteId: string;
+  /** An image could not be added (NoteWindow shows the message). */
+  onImageProblem: (problem: ImageProblem) => void;
 }) {
   const [open, setOpen] = useState<Open>("none");
   const [lastList, setLastList] = useState<ListType>("taskList");
@@ -89,11 +95,15 @@ export function FormatBar({
     },
   }));
 
+  const insertImage = () => void pickImage(editor, noteId, onImageProblem);
+
+  // Below 260 px the bar has no room for one more button: Insert image… waits here.
   const overflowItems: MenuItem[] = [
     { id: "underline", label: "Underline", icon: "underline", shortcut: "Ctrl+U", onSelect: () => run().toggleUnderline().run() },
     { id: "strike", label: "Strikethrough", icon: "strike", onSelect: () => run().toggleStrike().run() },
     { id: "heading", label: "Heading", icon: "heading", onSelect: () => run().toggleHeading({ level: 2 }).run() },
     { id: "textStyle", label: "Text style…", icon: "type", onSelect: () => setOpen("textStyle") },
+    { id: "image", label: "Insert image…", icon: "image", onSelect: insertImage },
   ];
 
   const close = () => {
@@ -134,6 +144,7 @@ export function FormatBar({
         </>
       )}
       <Tool label="Link" icon="link" title="Link (Ctrl+K)" active={s.link} onPress={onLink} />
+      {!narrow && <Tool label="Insert image…" icon="image" onPress={insertImage} />}
       {!narrow && (
         <>
           <span className="dn-format-divider" aria-hidden="true" />
