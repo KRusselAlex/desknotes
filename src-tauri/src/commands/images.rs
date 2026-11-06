@@ -75,28 +75,53 @@ async fn prepare(bytes: Vec<u8>) -> IpcResult<PreparedImage> {
         .map_err(IpcError::from)
 }
 
-/// Add an image to a note. The body is the file's bytes (raw binary IPC) and the
-/// `note-id` header names the note. Returns what the editor needs to place it.
-#[tauri::command]
-pub async fn add_image(state: State<'_, AppState>, request: Request<'_>) -> IpcResult<ImageInfo> {
-    let InvokeBody::Raw(bytes) = request.body() else {
-        return Err(IpcError::new(
-            "validation",
-            "the image must be sent as raw bytes",
-        ));
-    };
-    let note_id = request
-        .headers()
+/// The image's bytes from an `add_image` body, at most the input limit.
+pub fn body_bytes(body: &InvokeBody) -> IpcResult<Vec<u8>> {
+    body_bytes_within(body, PrepLimits::DEFAULT.max_input)
+}
+
+/// Normally the body is raw binary. Once a window's custom-protocol IPC has failed,
+/// Tauri sends every call through postMessage for the life of that window, and the
+/// `Uint8Array` then arrives as a JSON array of numbers; that is accepted too, as long
+/// as every element is a whole number from 0 to 255. The length is checked first, so
+/// an over-long array is refused before anything is converted.
+fn body_bytes_within(body: &InvokeBody, max: usize) -> IpcResult<Vec<u8>> {
+    let not_bytes = || IpcError::new("validation", "the image must be sent as bytes");
+    match body {
+        InvokeBody::Raw(bytes) if bytes.len() > max => Err(too_large()),
+        InvokeBody::Raw(bytes) => Ok(bytes.clone()),
+        InvokeBody::Json(serde_json::Value::Array(items)) => {
+            if items.len() > max {
+                return Err(too_large());
+            }
+            items
+                .iter()
+                .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+                .collect::<Option<Vec<u8>>>()
+                .ok_or_else(not_bytes)
+        }
+        InvokeBody::Json(_) => Err(not_bytes()),
+    }
+}
+
+/// The note named by the `note-id` header, in canonical form.
+pub fn note_id_from_headers(headers: &http::HeaderMap) -> IpcResult<String> {
+    let raw = headers
         .get("note-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| IpcError::new("validation", "the note id is missing"))?;
-    let note_id = parse_note_id(note_id)?;
-    if bytes.len() > PrepLimits::DEFAULT.max_input {
-        return Err(too_large());
-    }
+    Ok(parse_note_id(raw)?)
+}
+
+/// Add an image to a note. The body is the file's bytes (see `body_bytes`) and the
+/// `note-id` header names the note. Returns what the editor needs to place it.
+#[tauri::command]
+pub async fn add_image(state: State<'_, AppState>, request: Request<'_>) -> IpcResult<ImageInfo> {
+    let note_id = note_id_from_headers(request.headers())?;
+    let bytes = body_bytes(request.body())?;
     // A refusal for the note comes first and quickly; it is checked again when storing.
     state.with_db(|db| db.check_note_accepts_images(&note_id))?;
-    let prepared = prepare(bytes.clone()).await?;
+    let prepared = prepare(bytes).await?;
     state.with_db(|db| db.store_prepared_image(&note_id, &prepared))
 }
 
@@ -144,6 +169,118 @@ pub async fn pick_image(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use serde_json::json;
+
+    fn code_of<T: std::fmt::Debug>(r: IpcResult<T>) -> String {
+        r.expect_err("expected a refusal").code
+    }
+
+    #[test]
+    fn raw_body_bytes_pass_through() {
+        let body = InvokeBody::Raw(vec![0x89, b'P', b'N', b'G']);
+        assert_eq!(body_bytes(&body).unwrap(), vec![0x89, b'P', b'N', b'G']);
+    }
+
+    #[test]
+    fn json_array_of_bytes_is_accepted_after_the_postmessage_fallback() {
+        let body = InvokeBody::Json(json!([0, 1, 127, 255]));
+        assert_eq!(body_bytes(&body).unwrap(), vec![0, 1, 127, 255]);
+        assert_eq!(
+            body_bytes(&InvokeBody::Json(json!([]))).unwrap(),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn json_array_with_anything_but_bytes_is_refused() {
+        for bad in [
+            json!([1, 256]),
+            json!([1, -1]),
+            json!([1, "2"]),
+            json!([1, 2.5]),
+            json!([1, 1.0]),
+            json!([1, null]),
+            json!([[1]]),
+        ] {
+            assert_eq!(
+                code_of(body_bytes(&InvokeBody::Json(bad.clone()))),
+                "validation",
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_json_bodies_are_refused() {
+        for bad in [
+            json!({"bytes": [1, 2]}),
+            json!("iVBORw0KGgo="),
+            json!(null),
+            json!(7),
+        ] {
+            assert_eq!(code_of(body_bytes(&InvokeBody::Json(bad))), "validation");
+        }
+    }
+
+    #[test]
+    fn bodies_over_the_limit_are_too_large() {
+        let too_large = CoreError::Image(ImageError::TooLarge).code();
+        let array = InvokeBody::Json(json!([1, 2, 3, 4, 5]));
+        assert_eq!(code_of(body_bytes_within(&array, 4)), too_large);
+        assert_eq!(body_bytes_within(&array, 5).unwrap(), vec![1, 2, 3, 4, 5]);
+        // The length is checked before any element, so a long array is refused even
+        // when its elements are not bytes.
+        let junk = InvokeBody::Json(json!(["x", "x", "x", "x", "x"]));
+        assert_eq!(code_of(body_bytes_within(&junk, 4)), too_large);
+        let raw = InvokeBody::Raw(vec![0; 5]);
+        assert_eq!(code_of(body_bytes_within(&raw, 4)), too_large);
+    }
+
+    fn headers(value: Option<&[u8]>) -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        if let Some(v) = value {
+            map.insert("note-id", http::HeaderValue::from_bytes(v).unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn note_id_header_is_parsed() {
+        let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        assert_eq!(
+            note_id_from_headers(&headers(Some(id.as_bytes()))).unwrap(),
+            id
+        );
+        assert_eq!(
+            note_id_from_headers(&headers(Some(id.to_uppercase().as_bytes()))).unwrap(),
+            id
+        );
+    }
+
+    #[test]
+    fn missing_or_bad_note_id_header_is_refused() {
+        assert_eq!(code_of(note_id_from_headers(&headers(None))), "validation");
+        assert_eq!(
+            code_of(note_id_from_headers(&headers(Some(b"not-a-uuid")))),
+            "validation"
+        );
+        assert_eq!(
+            code_of(note_id_from_headers(&headers(Some(b"")))),
+            "validation"
+        );
+        // Not visible ASCII, so not readable as a string.
+        assert_eq!(
+            code_of(note_id_from_headers(&headers(Some(b"\xff\xfe")))),
+            "validation"
+        );
+        assert_eq!(
+            code_of(note_id_from_headers(&headers(Some(
+                b"0f8fad5b-d9cb-469f-a165-70867728950e/../x"
+            )))),
+            "validation"
+        );
+    }
 
     #[test]
     fn path_must_be_slash_and_64_lowercase_hex() {
