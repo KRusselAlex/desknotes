@@ -596,9 +596,44 @@ fn manager_shown_at_startup(notes_to_show: usize, has_errors: bool, pin_reset: b
     notes_to_show == 0 || has_errors || pin_reset
 }
 
+/// Where a window of `width` x `height` sits centred in `area`.
+fn centred_in(area: &Rect, width: f64, height: f64) -> (f64, f64) {
+    (
+        area.x + (area.width - width) / 2.0,
+        area.y + (area.height - height) / 2.0,
+    )
+}
+
+/// On the very first start, create the welcome note and save it centred on the
+/// primary screen, so it opens there like a restored note. A failure is only
+/// logged: start-up must never wait on, or report, the welcome note.
+fn place_welcome_note(app: &AppHandle, state: &AppState) {
+    match state.with_db(|db| db.create_welcome_note()) {
+        Ok(Some(note)) => {
+            let area = work_areas(app)[0];
+            let (x, y) = centred_in(&area, note.window.width, note.window.height);
+            let position = window_positioning_supported().then_some((x, y));
+            if let Err(e) = state.with_db(|db| {
+                db.set_window_geometry(&note.id, position, note.window.width, note.window.height)
+            }) && e.code != crate::state::DATABASE_UNAVAILABLE
+            {
+                // DATABASE_UNAVAILABLE is already reported.
+                eprintln!("DeskNotes: could not place the welcome note: {}", e.message);
+            }
+        }
+        Ok(None) => {}
+        Err(e) if e.code == crate::state::DATABASE_UNAVAILABLE => {} // already reported
+        Err(e) => eprintln!(
+            "DeskNotes: could not create the welcome note: {}",
+            e.message
+        ),
+    }
+}
+
 /// Open saved notes and the manager at startup.
 pub fn restore_on_startup(app: &AppHandle) {
     let state = app.state::<AppState>();
+    place_welcome_note(app, &state);
     let notes = match state.with_db(|db| db.notes_to_show()) {
         Ok((notes, unreadable)) => {
             for id in unreadable {
@@ -698,6 +733,14 @@ mod tests {
     fn the_note_settings_window_is_not_taken_for_a_note() {
         assert_eq!(note_id_from_label(NOTE_SETTINGS), None);
         assert_eq!(note_id_from_label(&note_label("abc")), Some("abc"));
+    }
+
+    #[test]
+    fn a_window_is_centred_in_an_area_at_any_offset() {
+        let area = Rect::new(1920.0, 27.0, 1920.0, 1053.0);
+        assert_eq!(centred_in(&area, 300.0, 280.0), (2730.0, 413.5));
+        let origin = Rect::new(0.0, 0.0, 1280.0, 800.0);
+        assert_eq!(centred_in(&origin, 300.0, 280.0), (490.0, 260.0));
     }
 
     #[test]

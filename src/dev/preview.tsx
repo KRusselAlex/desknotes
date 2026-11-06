@@ -350,7 +350,10 @@ mockIPC(
       case "hidden_note_count":
         return 0;
       case "get_settings":
-        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, appAppearance: { ...appAppearance }, version: "0.1.0", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, appAppearance: { ...appAppearance }, version: "0.1.0", osName: "Ubuntu 24.04 LTS", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+      case "open_external_link":
+        console.info("preview: would open link", a.id);
+        return null;
       case "get_app_appearance":
         return { ...appAppearance };
       case "set_app_appearance": {

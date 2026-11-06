@@ -18,6 +18,8 @@ pub struct SettingsView {
     /// App-wide look of every note window (Settings → Appearance).
     pub app_appearance: AppAppearance,
     pub version: String,
+    /// Readable OS name, e.g. "Ubuntu 24.04.1 LTS" (About window).
+    pub os_name: String,
     pub data_dir: String,
     /// Time of the last successful export (Unix ms), if any.
     pub last_backup_at: Option<i64>,
@@ -54,6 +56,7 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Set
         min_note_size: state.with_db(|db| db.min_note_size())?,
         app_appearance: state.with_db(|db| db.app_appearance())?,
         version: app.package_info().version.to_string(),
+        os_name: crate::platform::os_name(),
         data_dir,
         last_backup_at: state
             .with_db(|db| db.get_setting(desknotes_core::db::LAST_BACKUP_AT))?
@@ -258,6 +261,63 @@ pub fn open_data_folder(app: AppHandle) -> IpcResult<()> {
     app.opener()
         .open_path(dir.display().to_string(), None::<&str>)
         .map_err(|e| IpcError::new("opener", e.to_string()))
+}
+
+const REPO: &str = "https://github.com/KRusselAlex/desknotes";
+
+/// The address behind a fixed About link id. The webview sends an id, never a
+/// URL; anything else is refused.
+fn link_url(id: &str, version: &str) -> Option<String> {
+    Some(match id {
+        "source" => REPO.to_owned(),
+        "issues" => format!("{REPO}/issues"),
+        "more_tools" => "https://github.com/KRusselAlex".to_owned(),
+        "notices" => format!("{REPO}/blob/v{version}/THIRD_PARTY_NOTICES.md"),
+        "license" => format!("{REPO}/blob/v{version}/LICENSE"),
+        _ => return None,
+    })
+}
+
+/// Open one of the About window's fixed links in the system browser. Only
+/// called when the person clicks it.
+#[tauri::command]
+pub fn open_external_link(app: AppHandle, id: String) -> IpcResult<()> {
+    let version = app.package_info().version.to_string();
+    let url = link_url(&id, &version)
+        .ok_or_else(|| IpcError::new("validation", "There is no such link."))?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| IpcError::new("opener", e.to_string()))
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::link_url;
+
+    #[test]
+    fn link_url_knows_only_fixed_ids() {
+        let r = "https://github.com/KRusselAlex/desknotes";
+        assert_eq!(link_url("source", "1.2.3").as_deref(), Some(r));
+        assert_eq!(
+            link_url("issues", "1.2.3").as_deref(),
+            Some("https://github.com/KRusselAlex/desknotes/issues")
+        );
+        assert_eq!(
+            link_url("more_tools", "1.2.3").as_deref(),
+            Some("https://github.com/KRusselAlex")
+        );
+        assert_eq!(
+            link_url("notices", "1.2.3").as_deref(),
+            Some("https://github.com/KRusselAlex/desknotes/blob/v1.2.3/THIRD_PARTY_NOTICES.md")
+        );
+        assert_eq!(
+            link_url("license", "1.2.3").as_deref(),
+            Some("https://github.com/KRusselAlex/desknotes/blob/v1.2.3/LICENSE")
+        );
+        for bad in ["", "https://x", "SOURCE", "../", "source ", "notices/.."] {
+            assert_eq!(link_url(bad, "1.2.3"), None, "{bad:?}");
+        }
+    }
 }
 
 #[cfg(test)]

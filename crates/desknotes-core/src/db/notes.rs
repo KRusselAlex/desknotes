@@ -127,9 +127,33 @@ impl Database {
         private_label: &str,
         appearance: &Appearance,
     ) -> CoreResult<Note> {
+        let tx = self.conn.unchecked_transaction()?;
+        let id = Self::insert_note_in(
+            &tx,
+            content,
+            color,
+            window,
+            private,
+            private_label,
+            appearance,
+        )?;
+        tx.commit()?;
+        self.get_note(&id)
+    }
+
+    /// The two inserts of a new note, inside a transaction the caller owns, so a
+    /// caller can add more writes to the same transaction. Returns the new id.
+    pub(super) fn insert_note_in(
+        tx: &rusqlite::Transaction<'_>,
+        content: &serde_json::Value,
+        color: &str,
+        window: &NoteWindow,
+        private: bool,
+        private_label: &str,
+        appearance: &Appearance,
+    ) -> CoreResult<String> {
         let id = Uuid::new_v4().to_string();
         let now = now_ms();
-        let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO notes (id, title, content_json, search_text, color, created_at, updated_at,
                                 private, private_label, appearance)
@@ -160,8 +184,7 @@ impl Database {
                 window.collapsed
             ],
         )?;
-        tx.commit()?;
-        self.get_note(&id)
+        Ok(id)
     }
 
     /// A note, or its locked view while the privacy lock withholds it.

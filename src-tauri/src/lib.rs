@@ -112,6 +112,7 @@ pub fn run() {
             commands::settings::get_app_appearance,
             commands::settings::set_app_appearance,
             commands::settings::open_data_folder,
+            commands::settings::open_external_link,
             commands::backup::export_backup,
             commands::backup::choose_backup,
             commands::backup::cancel_restore,

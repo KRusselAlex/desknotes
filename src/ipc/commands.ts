@@ -19,6 +19,7 @@ import type {
   RestoreResult,
   SaveResult,
   SettingsView,
+  AboutLink,
   SettingsSection,
   SetupResult,
   ToggleShortcut,
@@ -107,6 +108,8 @@ export const commands = {
   setToggleShortcut: (binding: string) => call<ToggleShortcut>("set_toggle_shortcut", { binding }),
   removeToggleShortcut: () => call<ToggleShortcut>("remove_toggle_shortcut"),
   openDataFolder: () => call<void>("open_data_folder"),
+  /** Opens one of the About window's fixed links in the system browser. */
+  openExternalLink: (id: AboutLink) => call<void>("open_external_link", { id }),
   /** Opens a save dialog; null when cancelled. */
   exportBackup: () => call<ExportResult | null>("export_backup"),
   /** Opens a file dialog and validates the file; null when cancelled. Nothing changes yet. */

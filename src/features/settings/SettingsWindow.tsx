@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import appIcon from "../../assets/app-icon.png";
 import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
 import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
 import { onSettingsSection } from "../../ipc/events";
-import type { AppAppearance, SettingsSection, SettingsView } from "../../types/note";
+import type { AboutLink, AppAppearance, SettingsSection, SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
 import { AppearancePane } from "./AppearancePane";
 import { BackupPane } from "./BackupPane";
@@ -220,32 +221,152 @@ export function SettingsWindow() {
             />
           )}
           {settings && section === "about" && (
-            <>
-              <h1>About</h1>
-              <div className="dn-about">
-                <div>
-                  <span className="dn-about-name">DeskNotes</span>{" "}
-                  <span className="dn-muted">version {settings.version} · MIT license</span>
-                </div>
-                <div className="dn-about-folder">
-                  <span className="dn-muted">Your notes are stored in</span>
-                  <div className="dn-about-path">
-                    <span className="dn-path">{settings.dataDir}</span>
-                    <button type="button" className="dn-btn-outline" onClick={() => void update(async () => (await commands.openDataFolder(), {}))}>
-                      <Icon name="folder" size={14} />
-                      Open folder
-                    </button>
-                  </div>
-                </div>
-                <div className="dn-about-safe">
-                  <Icon name="shield" />
-                  No data leaves this computer.
-                </div>
-              </div>
-            </>
+            <AboutPane
+              settings={settings}
+              onOpenFolder={() => void update(async () => (await commands.openDataFolder(), {}))}
+              onOpenLink={(id) => void update(async () => (await commands.openExternalLink(id), {}))}
+            />
           )}
         </main>
       </div>
     </SettingsHold.Provider>
+  );
+}
+
+const COPIED_FOR_MS = 2000;
+
+/** A link to the system browser: only the fixed id goes to Rust, which builds the address. */
+function ExternalLink({
+  id,
+  onOpen,
+  describedBy,
+  children,
+}: {
+  id: AboutLink;
+  onOpen: (id: AboutLink) => void;
+  describedBy?: string;
+  children: string;
+}) {
+  return (
+    <button type="button" className="dn-about-link" aria-describedby={describedBy} onClick={() => onOpen(id)}>
+      {children}
+    </button>
+  );
+}
+
+function AboutPane({
+  settings,
+  onOpenFolder,
+  onOpenLink,
+}: {
+  settings: SettingsView;
+  onOpenFolder: () => void;
+  onOpenLink: (id: AboutLink) => void;
+}) {
+  const hintBase = useId();
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  function stopTimer() {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }
+
+  async function copyVersion() {
+    let failed = false;
+    try {
+      await navigator.clipboard.writeText(`DeskNotes ${settings.version} · ${settings.osName}`);
+    } catch {
+      failed = true;
+    }
+    if (!mounted.current) return;
+    stopTimer();
+    setCopyFailed(failed);
+    setCopied(!failed);
+    if (!failed) timer.current = setTimeout(() => setCopied(false), COPIED_FOR_MS);
+  }
+
+  return (
+    <>
+      <h1>About</h1>
+      <div className="dn-about">
+        <div className="dn-about-head">
+          <img className="dn-about-icon" src={appIcon} alt="" width={48} height={48} />
+          <div>
+            <div className="dn-about-name">DeskNotes</div>
+            <div className="dn-muted dn-about-version">
+              <span>version {settings.version}</span>
+              <button type="button" className="dn-btn-outline" onClick={() => void copyVersion()}>
+                {copied ? "Copied" : "Copy"}
+              </button>
+              <span className="dn-visually-hidden" role="status" aria-live="polite">
+                {copied ? "Copied" : ""}
+              </span>
+              <span>· MIT license</span>
+            </div>
+          </div>
+        </div>
+        {copyFailed && (
+          <div className="dn-field-error" role="alert">
+            Could not copy.
+          </div>
+        )}
+        <p className="dn-about-text">Sticky notes for your desktop that work offline and keep everything on your computer.</p>
+        <p className="dn-about-text">
+          Made by <strong>Alex</strong> (KRusselAlex) and DeskNotes contributors.
+        </p>
+        <div className="dn-about-links">
+          {(
+            [
+              ["source", "Source code on GitHub"],
+              ["issues", "Report a problem or suggest an idea"],
+              ["more_tools", "More free open-source tools by Alex"],
+            ] as const
+          ).map(([id, label]) => (
+            <div key={id} className="dn-about-link-row">
+              <ExternalLink id={id} onOpen={onOpenLink} describedBy={`${hintBase}-${id}`}>
+                {label}
+              </ExternalLink>
+              <span id={`${hintBase}-${id}`} className="dn-muted dn-about-hint">
+                opens browser
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="dn-about-folder">
+          <span className="dn-muted">Your notes are stored in</span>
+          <div className="dn-about-path">
+            <span className="dn-path">{settings.dataDir}</span>
+            <button type="button" className="dn-btn-outline" onClick={onOpenFolder}>
+              <Icon name="folder" size={14} />
+              Open folder
+            </button>
+          </div>
+        </div>
+        <div className="dn-about-safe">
+          <Icon name="shield" />
+          No data leaves this computer. The app never connects to the internet on its own.
+        </div>
+        <div className="dn-muted dn-about-foot">
+          Icons derived from Lucide (ISC).{" "}
+          <ExternalLink id="notices" onOpen={onOpenLink}>
+            Third-party notices
+          </ExternalLink>{" "}
+          ·{" "}
+          <ExternalLink id="license" onOpen={onOpenLink}>
+            Licence text
+          </ExternalLink>
+        </div>
+      </div>
+    </>
   );
 }
