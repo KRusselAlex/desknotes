@@ -1,8 +1,10 @@
 # DeskNotes — instructions for Claude Code
 
 DeskNotes is an offline sticky-note desktop app: Tauri 2 + React/TypeScript + SQLite,
-Ubuntu first, Windows/macOS later. Read `docs/design.md` and `docs/adr/` before changing
-architecture. The owner's full requirements are in the M0 design and the Jira board.
+Ubuntu first, Windows/macOS later. `docs/architecture.md` is the current guide to the
+structure, windows, data model, IPC and every feature; keep it up to date when you change
+them. Read it and `docs/adr/` before changing architecture. The owner's full requirements
+are in the original M0 design (`docs/design.md`) and the Jira board.
 
 ## Non-negotiables
 - No network access, telemetry, accounts or paid services in the app. Anything that

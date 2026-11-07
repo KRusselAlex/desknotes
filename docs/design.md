@@ -3,6 +3,10 @@
 Status: accepted for Milestone 1 · Date: 2026-11-01
 Source requirements: the project *cahier des charges* (sections 1–20).
 
+> **This is the original Milestone 0 design, kept as a record.** Its architecture and
+> data model stop at migration 1. For how DeskNotes works today (structure, windows,
+> data model, IPC and every feature), see [architecture.md](architecture.md).
+
 This document records the environment, the decisions taken, the risks, and the
 milestone plan. Architecture decisions with trade-offs live in `docs/adr/`.
 
