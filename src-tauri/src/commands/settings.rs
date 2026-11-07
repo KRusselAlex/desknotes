@@ -256,21 +256,29 @@ pub fn set_app_appearance(
     Ok(saved)
 }
 
-/// Save the automation rules, run rules 3 and 4 once at once (on another
-/// thread), then tell every window the saved value. Out-of-range days are refused
-/// in the core, and nothing is saved, run or sent.
+/// Settings only. Save the automation rules, run rules 3 and 4 once at once (on
+/// another thread), then tell every window the saved value. Out-of-range days are
+/// refused in the core, and nothing is saved, run or sent.
 #[tauri::command]
 pub fn set_automations(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     automations: Automations,
 ) -> IpcResult<Automations> {
+    automations_window(window.label())?;
     let saved = state.with_db(|db| db.set_automations(&automations))?;
     automation::run_soon(&app);
     if let Err(e) = app.emit(AUTOMATIONS_CHANGED, &saved) {
         eprintln!("DeskNotes: could not notify windows of the automations: {e}");
     }
     Ok(saved)
+}
+
+/// Only the Settings window changes the rules: turning on "Empty old trash" deletes
+/// notes for good, and Settings asks first.
+fn automations_window(label: &str) -> IpcResult<()> {
+    only_from_settings_label(label, "Automations")
 }
 
 /// How many notes "Empty old trash" would delete right now with `days` (7–365),
@@ -439,7 +447,26 @@ mod appearance_tests {
 
 #[cfg(test)]
 mod automation_tests {
-    use super::purge_cutoff;
+    use super::{automations_window, purge_cutoff};
+
+    #[test]
+    fn automations_change_only_from_settings() {
+        assert!(automations_window("settings").is_ok());
+        for other in [
+            "manager",
+            "note-0b9d6f6e-3f0a-4b8e-9a51-2a4c1d7e8f90",
+            "note_settings",
+            "",
+            "Settings",
+        ] {
+            let refused = automations_window(other).unwrap_err();
+            assert_eq!(refused.code, "not_allowed", "{other:?}");
+            assert_eq!(
+                refused.message, "Automations can only be changed in Settings.",
+                "{other:?}"
+            );
+        }
+    }
 
     #[test]
     fn count_purgeable_accepts_7_to_365_days_only() {

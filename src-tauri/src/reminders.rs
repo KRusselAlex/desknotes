@@ -1161,9 +1161,12 @@ mod tests {
 
     /// What `run` does after a pass: rule 2 for every recorded fire (window closed).
     fn after_pass(db: &Database, run: &mut Run) -> Vec<crate::automation::ResetAction> {
+        let pending = crate::automation::PendingResets::default();
         run.recorded
             .drain(..)
-            .map(|(id, due)| crate::automation::react_to_fire(db, &id, due, false).unwrap())
+            .map(|(id, due)| {
+                crate::automation::react_to_fire(db, &pending, &id, due, false).unwrap()
+            })
             .collect()
     }
 

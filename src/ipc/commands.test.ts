@@ -59,3 +59,15 @@ describe("automations", () => {
     expect(invoke).toHaveBeenCalledWith("count_purgeable", { days: 30 });
   });
 });
+
+describe("claimChecklistReset", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("calls claim_checklist_reset with the note id and returns whether a reset was waiting", async () => {
+    invoke.mockResolvedValue(true);
+    expect(await commands.claimChecklistReset("n1")).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("claim_checklist_reset", { noteId: "n1" });
+  });
+});

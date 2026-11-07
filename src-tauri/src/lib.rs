@@ -95,6 +95,7 @@ pub fn run() {
             commands::notes::hide_all_notes,
             commands::notes::show_hidden_notes,
             commands::notes::hidden_note_count,
+            commands::notes::claim_checklist_reset,
             commands::note_settings::set_note_appearance,
             commands::note_settings::set_note_size,
             commands::note_settings::list_fonts,

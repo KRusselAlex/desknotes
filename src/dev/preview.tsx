@@ -44,7 +44,8 @@
 //
 // Automations (DES-42): every rule starts off with the default days (7 and 30), and changes
 // emit automations-changed like the native side. "Empty old trash" always counts 4 notes.
-// In the console, previewChecklistReset() sends checklist-reset to this note window.
+// In the console, previewChecklistReset() sends checklist-reset to this note window and
+// leaves one reset for claim_checklist_reset to hand out.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -256,6 +257,8 @@ let automations: Automations = {
   purgeTrashDays: 30,
   purgeOffByRestore: false,
 };
+// A checklist reset sent to this note window, claimed once (claim_checklist_reset).
+let checklistResetPending = false;
 const inRange = (n: number, min: number, max: number) => Number.isInteger(n) && n >= min && n <= max;
 
 // Fake reminders, following the native rules loosely (crates/desknotes-core/src/reminders.rs).
@@ -313,7 +316,10 @@ Object.assign(window, {
     r.dueAt = Date.now() - 1000;
     remindersChanged(id);
   },
-  previewChecklistReset: () => void emit("checklist-reset", { noteId }),
+  previewChecklistReset: () => {
+    checklistResetPending = true;
+    void emit("checklist-reset", { noteId });
+  },
 });
 
 mockIPC(
@@ -397,6 +403,11 @@ mockIPC(
         };
         void emit("automations-changed", { ...automations });
         return { ...automations };
+      }
+      case "claim_checklist_reset": {
+        const claimed = checklistResetPending && a.noteId === noteId;
+        if (claimed) checklistResetPending = false;
+        return claimed;
       }
       case "count_purgeable": {
         if (!inRange(a.days as number, 7, 365)) {

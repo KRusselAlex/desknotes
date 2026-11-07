@@ -9,6 +9,8 @@
 //! thread after start-up, logs counts and errors only (never note text) and sends
 //! `notes-changed` when it changed something.
 
+use std::collections::HashSet;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use desknotes_core::db::cutoff_ms;
@@ -124,19 +126,48 @@ pub fn reset_action(window_exists: bool, due: bool) -> ResetAction {
     }
 }
 
-/// Rule 2 against the database, under one lock: ask the core, and untick the
-/// stored note when no window is open. Returns what is left for the shell to do:
-/// [`ResetAction::Emit`] (tell the window), [`ResetAction::WriteDb`] (the stored
-/// note was unticked) or [`ResetAction::Nothing`].
+/// Checklist resets sent to an open note window and not yet carried out. The event
+/// alone could be lost: a window restored at start-up may not listen yet when the
+/// start-up fires go off. So the editor claims the reset (`claim_checklist_reset`)
+/// when it loads and on each `checklist-reset`, and unticks only when the claim
+/// succeeds: once per reset. In memory only.
+#[derive(Default)]
+pub struct PendingResets(Mutex<HashSet<String>>);
+
+impl PendingResets {
+    pub fn insert(&self, note_id: &str) {
+        self.set().insert(note_id.to_owned());
+    }
+
+    /// Take the note's pending reset; true when there was one.
+    pub fn claim(&self, note_id: &str) -> bool {
+        self.set().remove(note_id)
+    }
+
+    fn set(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Rule 2 against the database, under one lock: ask the core; untick the stored
+/// note when no window is open, or leave a reset in `pending` for the open window
+/// to claim. Returns what is left for the shell to do: [`ResetAction::Emit`] (tell
+/// the window), [`ResetAction::WriteDb`] (the stored note was unticked) or
+/// [`ResetAction::Nothing`].
 pub fn react_to_fire(
     db: &Database,
+    pending: &PendingResets,
     note_id: &str,
     fired_due: i64,
     window_exists: bool,
 ) -> CoreResult<ResetAction> {
     let action = reset_action(window_exists, db.checklist_reset_due(note_id, fired_due)?);
-    if action == ResetAction::WriteDb && !db.untick_checklist(note_id)? {
-        return Ok(ResetAction::Nothing);
+    match action {
+        ResetAction::Emit => pending.insert(note_id),
+        ResetAction::WriteDb if !db.untick_checklist(note_id)? => {
+            return Ok(ResetAction::Nothing);
+        }
+        _ => {}
     }
     Ok(action)
 }
@@ -158,7 +189,10 @@ pub fn on_fired(app: &AppHandle, note_id: &str, fired_due: i64) {
     };
     let label = windows::note_label(note_id);
     let window_exists = app.get_webview_window(&label).is_some();
-    match state.with_db(|db| react_to_fire(db, note_id, fired_due, window_exists)) {
+    let pending = &state.pending_resets;
+    match state.with_db(|db| react_to_fire(db, pending, note_id, fired_due, window_exists)) {
+        // The reset is pending first, so a window that is not listening yet claims
+        // it when its editor loads.
         Ok(ResetAction::Emit) => {
             let payload = ChecklistReset {
                 note_id: note_id.to_owned(),
@@ -304,33 +338,49 @@ mod tests {
     #[test]
     fn react_to_fire_unticks_the_stored_note_only_without_a_window() {
         let db = db();
+        let pending = PendingResets::default();
         let (id, due) = routine(&db);
 
-        // Window open: the editor unticks, the stored note is left alone.
+        // Window open: the editor unticks, once it claims the pending reset; the
+        // stored note is left alone.
         assert_eq!(
-            react_to_fire(&db, &id, due, true).unwrap(),
+            react_to_fire(&db, &pending, &id, due, true).unwrap(),
             ResetAction::Emit
         );
         assert!(ticked(&db, &id));
+        assert!(pending.claim(&id), "an Emit leaves a reset to claim");
+        assert!(!pending.claim(&id));
 
         // A snoozed fire (not the occurrence's due_at) does nothing.
         assert_eq!(
-            react_to_fire(&db, &id, due + 600_000, false).unwrap(),
+            react_to_fire(&db, &pending, &id, due + 600_000, true).unwrap(),
             ResetAction::Nothing
         );
+        assert!(!pending.claim(&id));
         assert!(ticked(&db, &id));
 
-        // Window closed: the core unticks the stored note.
+        // Window closed: the core unticks the stored note; nothing to claim.
         assert_eq!(
-            react_to_fire(&db, &id, due, false).unwrap(),
+            react_to_fire(&db, &pending, &id, due, false).unwrap(),
             ResetAction::WriteDb
         );
         assert!(!ticked(&db, &id));
+        assert!(!pending.claim(&id));
         // Nothing left to untick.
         assert_eq!(
-            react_to_fire(&db, &id, due, false).unwrap(),
+            react_to_fire(&db, &pending, &id, due, false).unwrap(),
             ResetAction::Nothing
         );
+    }
+
+    #[test]
+    fn a_pending_reset_is_claimed_once() {
+        let pending = PendingResets::default();
+        pending.insert("a");
+        pending.insert("a");
+        assert!(pending.claim("a"));
+        assert!(!pending.claim("a"), "claimed already");
+        assert!(!pending.claim("b"), "never sent");
     }
 
     #[test]

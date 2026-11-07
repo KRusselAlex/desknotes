@@ -104,11 +104,15 @@ export const commands = {
   /** Saves and tells every window. Returns the normalised value; a refused value throws. */
   setAppAppearance: (appearance: AppAppearance) =>
     call<AppAppearance>("set_app_appearance", { appearance }),
-  /** Saves the rules, runs "Archive done notes" and "Empty old trash" once and tells every
-   * window. Returns what was saved; out-of-range days throw a validation error. */
+  /** Settings window only (refused elsewhere). Saves the rules, runs "Archive done notes"
+   * and "Empty old trash" once and tells every window. Returns what was saved;
+   * out-of-range days throw a validation error. */
   setAutomations: (automations: Automations) => call<Automations>("set_automations", { automations }),
   /** How many notes "Empty old trash" would delete right now with `days` (7–365). */
   countPurgeable: (days: number) => call<number>("count_purgeable", { days }),
+  /** Takes this note's pending checklist reset (sent with `checklist-reset`). True means
+   * untick now; call it on load and on each event, and untick only on true. */
+  claimChecklistReset: (noteId: string) => call<boolean>("claim_checklist_reset", { noteId }),
   getToggleShortcut: () => call<ToggleShortcut>("get_toggle_shortcut"),
   /** Adds or changes DeskNotes' GNOME shortcut. Call only after the person confirmed. */
   setToggleShortcut: (binding: string) => call<ToggleShortcut>("set_toggle_shortcut", { binding }),
