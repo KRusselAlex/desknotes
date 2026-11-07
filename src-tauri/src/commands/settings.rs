@@ -1,9 +1,11 @@
-use desknotes_core::{AppAppearance, CoreError, NoteSize};
+use desknotes_core::db::{Automations, PURGE_TRASH_DAYS_RANGE, cutoff_ms};
+use desknotes_core::{AppAppearance, CoreError, NoteSize, now_ms};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
+use crate::automation::{self, AUTOMATIONS_CHANGED};
 use crate::error::{IpcError, IpcResult};
 use crate::state::AppState;
 use crate::windows::{self, emit_app_appearance_changed, emit_changed};
@@ -23,6 +25,8 @@ pub struct SettingsView {
     pub data_dir: String,
     /// Time of the last successful export (Unix ms), if any.
     pub last_backup_at: Option<i64>,
+    /// The automation rules (Settings → Automations).
+    pub automations: Automations,
 }
 
 /// Opens Settings, at `section` when given ("general", "privacy",
@@ -61,6 +65,7 @@ pub fn get_settings(app: AppHandle, state: State<'_, AppState>) -> IpcResult<Set
         last_backup_at: state
             .with_db(|db| db.get_setting(desknotes_core::db::LAST_BACKUP_AT))?
             .and_then(|v| v.parse().ok()),
+        automations: state.with_db(|db| db.automations())?,
     })
 }
 
@@ -251,6 +256,46 @@ pub fn set_app_appearance(
     Ok(saved)
 }
 
+/// Save the automation rules, run rules 3 and 4 once at once (on another
+/// thread), then tell every window the saved value. Out-of-range days are refused
+/// in the core, and nothing is saved, run or sent.
+#[tauri::command]
+pub fn set_automations(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    automations: Automations,
+) -> IpcResult<Automations> {
+    let saved = state.with_db(|db| db.set_automations(&automations))?;
+    automation::run_soon(&app);
+    if let Err(e) = app.emit(AUTOMATIONS_CHANGED, &saved) {
+        eprintln!("DeskNotes: could not notify windows of the automations: {e}");
+    }
+    Ok(saved)
+}
+
+/// How many notes "Empty old trash" would delete right now with `days` (7–365),
+/// for the confirmation dialog.
+#[tauri::command]
+pub fn count_purgeable(state: State<'_, AppState>, days: u32) -> IpcResult<usize> {
+    let cutoff = purge_cutoff(now_ms(), days)?;
+    state.with_db(|db| db.count_purgeable(cutoff))
+}
+
+/// The cutoff for rule 4 with `days`, refused outside 7–365.
+fn purge_cutoff(now_ms: i64, days: u32) -> IpcResult<i64> {
+    if !PURGE_TRASH_DAYS_RANGE.contains(&days) {
+        return Err(IpcError::new(
+            "validation",
+            format!(
+                "purgeTrashDays must be {}–{}",
+                PURGE_TRASH_DAYS_RANGE.start(),
+                PURGE_TRASH_DAYS_RANGE.end()
+            ),
+        ));
+    }
+    Ok(cutoff_ms(now_ms, days))
+}
+
 /// Show the folder that holds the notes database in the file manager.
 #[tauri::command]
 pub fn open_data_folder(app: AppHandle) -> IpcResult<()> {
@@ -389,5 +434,22 @@ mod appearance_tests {
                 "defaultSize": 18
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod automation_tests {
+    use super::purge_cutoff;
+
+    #[test]
+    fn count_purgeable_accepts_7_to_365_days_only() {
+        let now = 1_800_000_000_000;
+        for days in [0, 6, 366, u32::MAX] {
+            let e = purge_cutoff(now, days).unwrap_err();
+            assert_eq!(e.code, "validation", "{days}");
+            assert!(e.message.contains("purgeTrashDays"), "{}", e.message);
+        }
+        assert_eq!(purge_cutoff(now, 7).unwrap(), now - 7 * 86_400_000);
+        assert_eq!(purge_cutoff(now, 365).unwrap(), now - 365 * 86_400_000);
     }
 }

@@ -19,6 +19,15 @@ pub const ARCHIVE_DONE_DAYS_RANGE: std::ops::RangeInclusive<u32> = 1..=90;
 pub const PURGE_TRASH_DAYS_DEFAULT: u32 = 30;
 pub const PURGE_TRASH_DAYS_RANGE: std::ops::RangeInclusive<u32> = 7..=365;
 
+/// One day in UTC milliseconds. Rules count days this way, never calendar days.
+const DAY_MS: i64 = 86_400_000;
+
+/// The cutoff for "more than `days` days ago": `now_ms - days × 86 400 000`.
+/// A time strictly before it is old enough for a rule.
+pub fn cutoff_ms(now_ms: i64, days: u32) -> i64 {
+    now_ms - i64::from(days) * DAY_MS
+}
+
 /// The four automation rules and their settings. Every rule is off by default.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -255,9 +264,6 @@ mod tests {
     use crate::reminders::{Snooze, validate_rule};
     use crate::validation::untick_all;
 
-    /// Rules compare UTC milliseconds, never calendar days.
-    const DAY_MS: i64 = 86_400_000;
-
     fn db() -> Database {
         Database::open_in_memory().unwrap()
     }
@@ -301,6 +307,16 @@ mod tests {
 
     fn ago(days: i64) -> i64 {
         now_ms() - days * DAY_MS
+    }
+
+    #[test]
+    fn cutoff_is_whole_days_of_milliseconds() {
+        assert_eq!(cutoff_ms(1_000_000_000_000, 0), 1_000_000_000_000);
+        assert_eq!(
+            cutoff_ms(1_000_000_000_000, 7),
+            1_000_000_000_000 - 7 * DAY_MS
+        );
+        assert_eq!(cutoff_ms(0, 365), -365 * 86_400_000);
     }
 
     fn set_col(db: &Database, id: &str, column: &str, value: Option<i64>) {

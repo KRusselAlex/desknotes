@@ -70,6 +70,10 @@ pub fn emit_privacy_changed(app: &AppHandle, locked: bool) {
     }
     // The manager's list shows locked rows differently.
     emit_changed(app, None, "other");
+    // Rules 3 and 4 skipped the private notes the lock withheld (DES-42).
+    if !locked {
+        crate::automation::run_soon(app);
+    }
 }
 
 /// Lock private notes: every open note saves first; a private note that could

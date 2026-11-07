@@ -17,7 +17,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{CoreError, CoreResult};
 
-pub use automation::Automations;
+pub use automation::{Automations, PURGE_TRASH_DAYS_RANGE, cutoff_ms};
 pub use backup::{Export, LAST_BACKUP_AT};
 pub use migrations::LATEST_VERSION;
 pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};

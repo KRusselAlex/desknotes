@@ -424,6 +424,10 @@ struct Run {
     /// Fires sent but not recorded (the database failed): retried at each pass and
     /// never sent again meanwhile.
     unrecorded: HashSet<(String, i64)>,
+    /// Fires `due_reminders` produced that this pass recorded with `mark_fired`, each
+    /// with the effective due time given to it, for automation rule 2. Drained after
+    /// every pass; a recorded fire is never due again, so it is here only once.
+    recorded: Vec<(String, i64)>,
 }
 
 impl Run {
@@ -436,6 +440,7 @@ impl Run {
             failing: false,
             unavailable: false,
             unrecorded: HashSet::new(),
+            recorded: Vec::new(),
         }
     }
 }
@@ -456,6 +461,11 @@ fn run(app: &AppHandle) {
             offset,
             &mut log,
         );
+        // Automation rule 2, for each fire just recorded (live or in the start-up
+        // summary), with the effective due time given to `mark_fired`.
+        for (note_id, due) in std::mem::take(&mut run.recorded) {
+            crate::automation::on_fired(app, &note_id, due);
+        }
         if changed {
             windows::emit_reminders_changed(app, None);
         }
@@ -503,6 +513,7 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         for fire in pending {
             if db.db(|db| db.mark_fired(&fire.0, fire.1)).is_ok() {
                 run.unrecorded.remove(&fire);
+                run.recorded.push(fire);
             }
         }
     }
@@ -590,8 +601,12 @@ fn pass<D: DbAccess, Tz: TimeZone>(
             }
         });
         match marked {
-            Ok(true) => scheduler.close(id, log),
-            Ok(false) => {}
+            Ok(closed) => {
+                run.recorded.extend(out.fires.iter().cloned());
+                if closed {
+                    scheduler.close(id, log);
+                }
+            }
             Err(e) => {
                 // Sent: never sent again. Recorded at a later pass (see above).
                 log(&format!(
@@ -1110,6 +1125,132 @@ mod tests {
         tick(&db, &s, &mut run, &mut log);
         assert_eq!(fake.summaries().len(), 6);
         assert!(log.is_empty());
+    }
+
+    /// A note titled "Routine" with one ticked checklist item and a daily reminder at
+    /// 10:45 Paris (now due), with automation rule 2 on.
+    fn routine_with_due_reminder(db: &Database) -> String {
+        db.set_automations(&desknotes_core::db::Automations {
+            reset_checklists_on_repeat: true,
+            ..db.automations().unwrap()
+        })
+        .unwrap();
+        let id = db.create_note(None).unwrap().id;
+        db.save_content(&id, &routine_doc(true)).unwrap();
+        let rule = validate_rule("2026-11-04", "10:45", "daily").unwrap();
+        db.set_reminder(&id, rule, utc(2026, 11, 4, 9, 0), &Paris)
+            .unwrap();
+        id
+    }
+
+    fn routine_doc(checked: bool) -> String {
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"Routine"}]},
+            {"type":"taskList","content":[{"type":"taskItem","attrs":{"checked":checked},
+                "content":[{"type":"paragraph","content":[{"type":"text","text":"Stretch"}]}]}]}]})
+        .to_string()
+    }
+
+    fn ticked(db: &Database, id: &str) -> bool {
+        db.get_note(id)
+            .unwrap()
+            .content
+            .to_string()
+            .contains("\"checked\":true")
+    }
+
+    /// What `run` does after a pass: rule 2 for every recorded fire (window closed).
+    fn after_pass(db: &Database, run: &mut Run) -> Vec<crate::automation::ResetAction> {
+        run.recorded
+            .drain(..)
+            .map(|(id, due)| crate::automation::react_to_fire(db, &id, due, false).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_fire_resets_its_checklist_once_even_across_a_restart() {
+        use crate::automation::ResetAction;
+        let db = Database::open_in_memory().unwrap();
+        let id = routine_with_due_reminder(&db);
+        let due = db.reminder(&id).unwrap().unwrap().due_at;
+        let (_fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+
+        assert!(tick(&db, &s, &mut run, &mut log));
+        assert_eq!(run.recorded, [(id.clone(), due)], "the occurrence's due_at");
+        assert_eq!(after_pass(&db, &mut run), [ResetAction::WriteDb]);
+        assert!(!ticked(&db, &id));
+
+        // The person ticks again; the next pass and a restart do not untick twice.
+        db.save_content(&id, &routine_doc(true)).unwrap();
+        tick(&db, &s, &mut run, &mut log);
+        assert!(run.recorded.is_empty());
+        let mut restarted = Run::new();
+        tick(&db, &s, &mut restarted, &mut log);
+        assert!(restarted.recorded.is_empty(), "recorded: never due again");
+        assert!(ticked(&db, &id));
+        assert!(log.is_empty(), "{log:?}");
+    }
+
+    #[test]
+    fn a_fire_in_the_start_up_summary_resets_its_checklist_once() {
+        use crate::automation::ResetAction;
+        let db = Database::open_in_memory().unwrap();
+        for n in 0..STARTUP_LIMIT {
+            note_with_due_reminder(&db, &format!("Note {n}"));
+        }
+        // Created last, so it is beyond the burst and fired by the summary.
+        let id = routine_with_due_reminder(&db);
+        let due = db.reminder(&id).unwrap().unwrap().due_at;
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+
+        assert!(tick(&db, &s, &mut run, &mut log));
+        let summaries = fake.summaries();
+        assert_eq!(summaries.len(), STARTUP_LIMIT + 1);
+        assert_eq!(summaries[STARTUP_LIMIT], "1 more reminder");
+        assert!(!summaries.contains(&"Routine".to_owned()));
+        assert_eq!(run.recorded.len(), STARTUP_LIMIT + 1);
+        assert!(run.recorded.contains(&(id.clone(), due)));
+        let actions = after_pass(&db, &mut run);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|a| **a == ResetAction::WriteDb)
+                .count(),
+            1,
+            "only the routine is reset: {actions:?}"
+        );
+        assert!(!ticked(&db, &id));
+
+        // Restarted after the person ticked again: the summary does not count it twice.
+        db.save_content(&id, &routine_doc(true)).unwrap();
+        let mut restarted = Run::new();
+        tick(&db, &s, &mut restarted, &mut log);
+        assert!(restarted.recorded.is_empty());
+        assert!(ticked(&db, &id));
+    }
+
+    #[test]
+    fn a_fire_recorded_at_a_later_pass_resets_its_checklist_once() {
+        let db = Database::open_in_memory().unwrap();
+        let id = routine_with_due_reminder(&db);
+        let due = db.reminder(&id).unwrap().unwrap().due_at;
+        let (_fake, s) = scheduler();
+        let mut run = Run::new();
+        // Sent at an earlier pass, but the database failed to record it.
+        run.first = false;
+        run.unrecorded.insert((id.clone(), due));
+
+        tick(&db, &s, &mut run, &mut Vec::new());
+        assert!(fired(&db, &id));
+        assert_eq!(run.recorded, [(id.clone(), due)], "recorded now, once");
+        assert_eq!(
+            after_pass(&db, &mut run),
+            [crate::automation::ResetAction::WriteDb]
+        );
+        tick(&db, &s, &mut run, &mut Vec::new());
+        assert!(run.recorded.is_empty());
     }
 
     #[test]

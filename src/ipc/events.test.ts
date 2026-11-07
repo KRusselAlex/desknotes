@@ -7,6 +7,8 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () =>
 
 import {
   APP_APPEARANCE_CHANGED,
+  AUTOMATIONS_CHANGED,
+  CHECKLIST_RESET,
   NOTE_ACTION,
   NOTE_RESIZED,
   NOTE_SETTINGS_NOTE,
@@ -14,6 +16,8 @@ import {
   REMINDERS_CHANGED,
   SETTINGS_SECTION,
   onAppAppearanceChanged,
+  onAutomationsChanged,
+  onChecklistReset,
   onNoteAction,
   onNoteResized,
   onNoteSettingsNote,
@@ -21,7 +25,7 @@ import {
   onRemindersChanged,
   onSettingsSection,
 } from "./events";
-import { APP_APPEARANCE_DEFAULTS, type AppAppearance } from "../types/note";
+import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Automations } from "../types/note";
 
 describe("onAppAppearanceChanged", () => {
   beforeEach(() => {
@@ -77,6 +81,34 @@ describe("onRemindersChanged", () => {
   });
 });
 
+describe("onAutomationsChanged", () => {
+  beforeEach(() => {
+    listen.mockReset();
+    listen.mockResolvedValue(() => {});
+  });
+
+  it("listens app-wide on automations-changed and passes the saved settings on", async () => {
+    expect(AUTOMATIONS_CHANGED).toBe("automations-changed");
+    const handler = vi.fn();
+    await onAutomationsChanged(handler);
+    expect(listen).toHaveBeenCalledTimes(1);
+    const [name, callback, options] = listen.mock.calls[0] as [string, (e: { payload: Automations }) => void, unknown];
+    expect(name).toBe("automations-changed");
+    expect(options).toBeUndefined();
+    const saved: Automations = {
+      autoCompleteChecklists: false,
+      resetChecklistsOnRepeat: true,
+      archiveDoneEnabled: false,
+      archiveDoneDays: 7,
+      purgeTrashEnabled: true,
+      purgeTrashDays: 45,
+      purgeOffByRestore: false,
+    };
+    callback({ payload: saved });
+    expect(handler).toHaveBeenCalledWith(saved);
+  });
+});
+
 // Rust sends these to one window with `emit_to`. Tauri 2 also delivers such an event to every
 // listener registered without a target, so each must listen for its own window only.
 describe("events sent to one window", () => {
@@ -91,6 +123,7 @@ describe("events sent to one window", () => {
     [SETTINGS_SECTION, "settings-section", onSettingsSection, "privacy"],
     [NOTE_RESIZED, "note-resized", onNoteResized, { id: "n", width: 300, height: 200 }],
     [NOTE_SETTINGS_NOTE, "note-settings-note", onNoteSettingsNote, "n"],
+    [CHECKLIST_RESET, "checklist-reset", onChecklistReset, { noteId: "abc" }],
   ] as [string, string, (h: (p: unknown) => void) => Promise<unknown>, unknown][])(
     "%s listens for this window only and passes the payload on",
     async (constant, name, subscribe, payload) => {

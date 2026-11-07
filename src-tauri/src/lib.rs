@@ -1,6 +1,7 @@
 //! DeskNotes desktop adapter: Tauri commands, windows and platform code
 //! around the platform-independent `desknotes-core` crate (ADR-0001).
 
+mod automation;
 mod commands;
 mod error;
 pub mod platform;
@@ -63,6 +64,8 @@ pub fn run() {
             // Opening the state also turns the privacy lock on when a PIN is set,
             // before any note window can ask for its text.
             app.manage(AppState::open(&handle));
+            // Rules 3 and 4 (DES-42) once before any window shows, then hourly.
+            automation::start(&handle);
             windows::restore_on_startup(&handle);
             tray::install(&handle);
             // After the manager exists: a click on a notification may open a note.
@@ -111,6 +114,8 @@ pub fn run() {
             commands::settings::set_min_note_size,
             commands::settings::get_app_appearance,
             commands::settings::set_app_appearance,
+            commands::settings::set_automations,
+            commands::settings::count_purgeable,
             commands::settings::open_data_folder,
             commands::settings::open_external_link,
             commands::backup::export_backup,

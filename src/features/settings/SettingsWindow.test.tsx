@@ -45,6 +45,15 @@ const settings = {
   osName: "Ubuntu 24.04 LTS",
   dataDir: "/home/me/.local/share/io.github.krusselalex.desknotes",
   lastBackupAt: null,
+  automations: {
+    autoCompleteChecklists: false,
+    resetChecklistsOnRepeat: false,
+    archiveDoneEnabled: false,
+    archiveDoneDays: 7,
+    purgeTrashEnabled: false,
+    purgeTrashDays: 30,
+    purgeOffByRestore: false,
+  },
 };
 
 describe("SettingsWindow", () => {
