@@ -281,9 +281,10 @@ pub const SETTINGS_SECTION: &str = "settings-section";
 /// Sections Settings can be opened at (R19). "privacy-new-pin" opens Privacy at
 /// "choose a new PIN" after a forgotten-PIN proof; `choose_new_pin` still
 /// refuses without that proof, so the name grants nothing by itself.
-pub const SETTINGS_SECTIONS: [&str; 6] = [
+pub const SETTINGS_SECTIONS: [&str; 7] = [
     "general",
     "appearance",
+    "automations",
     "privacy",
     "privacy-new-pin",
     "backup",
@@ -807,6 +808,10 @@ mod tests {
     fn a_new_settings_window_loads_its_section_from_the_url() {
         assert_eq!(settings_url(None), "index.html");
         assert_eq!(settings_url(Some("privacy")), "index.html?section=privacy");
+        assert_eq!(
+            settings_url(settings_section("automations")),
+            "index.html?section=automations"
+        );
         assert_eq!(
             settings_url(settings_section("privacy-new-pin")),
             "index.html?section=privacy-new-pin"

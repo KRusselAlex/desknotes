@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import type { Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { noteDateLabel } from "../../app/time";
 import { useWindowSize } from "../../app/useWindowSize";
@@ -7,6 +8,8 @@ import { Icon } from "../../components/Icon";
 import { Menu, type MenuItem, type QuickAction } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
 import {
+  onAutomationsChanged,
+  onChecklistReset,
   onImagesDropped,
   onSaveAllRequest,
   onNoteAction,
@@ -32,6 +35,7 @@ import { PrivateLabelDialog } from "../privacy/PrivateLabelDialog";
 import { isLockRefusal, refusalText } from "../privacy/refusal";
 import { UnlockDialog } from "../privacy/UnlockDialog";
 import { Autosave, type SaveState } from "./autosave";
+import { isUserTickOfLastItem, retick, untickAll } from "./checklist";
 import { ColorPopover } from "./ColorPopover";
 import { DoneStrip } from "./DoneStrip";
 import { createExtensions, serializeDoc } from "./extensions";
@@ -63,6 +67,10 @@ const SHORT = 160;
 export const LOCK_HOLD_MS = 5_000;
 /** How long "Marked done" stays undoable before the note is really marked done (DES-39). */
 export const DONE_STRIP_MS = 5_000;
+/** The strip when automation rule 1 marks the note done (DES-42). */
+const AUTO_DONE_TEXT = "Marked done · every item is ticked";
+/** The strip when automation rule 2 unticks the checklist; it stays undoable for DONE_STRIP_MS. */
+const RESET_TEXT = "Checklist reset for this reminder";
 
 type Popover = "none" | "color" | "menu" | "link";
 
@@ -97,6 +105,38 @@ function useReminder(noteId: string): ReminderView | null {
     };
   }, [noteId]);
   return reminder;
+}
+
+/**
+ * Automation rule 1, "Mark a checklist done when every item is ticked": read with the settings,
+ * and again whenever Settings saves the rules. Off until known.
+ */
+function useAutoCompleteRule(): boolean {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    let live = true;
+    /** A change heard first is newer than the settings still being read. */
+    let heard = false;
+    commands.getSettings().then(
+      (s) => live && !heard && setOn(s.automations.autoCompleteChecklists),
+      () => undefined,
+    );
+    const unlisten = onAutomationsChanged((a) => {
+      heard = true;
+      setOn(a.autoCompleteChecklists);
+    });
+    return () => {
+      live = false;
+      void unlisten.then((f) => f());
+    };
+  }, []);
+  return on;
+}
+
+/** A repeating reminder makes the note a routine: rule 1 leaves it open (owner decision 2026-11-06). */
+function isRepeating(reminder: ReminderView | null): boolean {
+  const repeat: string | undefined = reminder?.repeat;
+  return repeat !== undefined && repeat !== "none";
 }
 
 /** The native window is transparent only below 100 % opacity; then the page must be too. */
@@ -329,6 +369,11 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** The reminder popover (design R1); apart from `popover` because the menu closes itself after a pick. */
   const [reminderOpen, setReminderOpen] = useState(false);
   const reminder = useReminder(note.id);
+  const autoComplete = useAutoCompleteRule();
+  /** The note is done (rule 1 leaves it alone); read by the editor's update handler. */
+  const doneRef = useRef(note.completedAt !== null);
+  /** Rule 1, given each change of the text; set below, once the strip exists. */
+  const autoCompleteCheck = useRef<(tr: Transaction) => void>(() => undefined);
   /** Opens one of the header popovers; only one is open at a time. */
   const openPopover = useCallback((next: Popover) => {
     setReminderOpen(false);
@@ -341,11 +386,20 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   const closing = useRef(false);
   /** "Marked done" shows for DONE_STRIP_MS; nothing is written until it ends (ruling R1). */
   const [stripShown, setStripShown] = useState(false);
+  /** The strip's text: "Marked done", or with rule 1's reason. */
+  const [stripText, setStripText] = useState<string>();
   /** Read by handlers registered once. */
   const stripRef = useRef(false);
   const stripTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The completion in flight (from the timer, a close or a save-all round); later callers share it. */
   const completing = useRef<Promise<boolean> | null>(null);
+  /** Rule 2's "Checklist reset for this reminder" strip, shown for DONE_STRIP_MS. */
+  const [resetShown, setResetShown] = useState(false);
+  /** The items the reset unticked (indices in document order), for its Undo. */
+  const resetTicked = useRef<number[]>([]);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** A reset arrived while "Marked done" showed: claimed once that strip ends. */
+  const resetWaiting = useRef(false);
   /** Last content known to be saved (or loaded); avoids writes when nothing changed. */
   const lastContent = useRef<string | null>(null);
   /** Set when stored content could not be loaded: never autosave over it. */
@@ -395,12 +449,13 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     onCreate: ({ editor: e }) => {
       lastContent.current = serializeDoc(e.getJSON());
     },
-    onUpdate: ({ editor: e }) => {
+    onUpdate: ({ editor: e, transaction }) => {
       if (contentBroken.current) return;
       const content = serializeDoc(e.getJSON());
       if (content === lastContent.current) return;
       lastContent.current = content;
       autosave.change(content);
+      autoCompleteCheck.current(transaction);
     },
     onBlur: () => void autosave.flush(),
     editorProps: {
@@ -475,12 +530,76 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
     setStripShown(false);
   }, []);
 
+  const stopReset = useCallback(() => {
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    resetTimer.current = null;
+    resetTicked.current = [];
+    setResetShown(false);
+  }, []);
+
   useEffect(
     () => () => {
       if (stripTimer.current) clearTimeout(stripTimer.current);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
     },
     [],
   );
+
+  /**
+   * Rule 2 with this window open: the shell leaves a pending reset, then nudges with
+   * checklist-reset. Claim it, and untick only when the claim succeeds, so one reset unticks once
+   * however many nudges arrive. Under "Marked done" it waits until that strip ends. A note that is
+   * read-only now (edit lock, or held for a privacy lock) is skipped: claimed, never applied later.
+   */
+  const claimReset = useCallback(async () => {
+    if (stripRef.current || completing.current) {
+      resetWaiting.current = true;
+      return;
+    }
+    const claimed = await commands.claimChecklistReset(note.id).catch(() => false);
+    if (!claimed || !editor || editor.isDestroyed || contentBroken.current || !editor.isEditable) return;
+    // "Marked done" started, or the window began closing, while the claim was answered.
+    if (stripRef.current || completing.current || closing.current) return;
+    const ticked = untickAll(editor); // one undoable step; autosave saves it
+    if (ticked.length === 0) return;
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    resetTicked.current = [...new Set([...resetTicked.current, ...ticked])];
+    setResetShown(true);
+    resetTimer.current = setTimeout(stopReset, DONE_STRIP_MS);
+  }, [editor, note.id, stopReset]);
+
+  /** Undo on the reset strip: tick again exactly the items it unticked. */
+  const undoReset = useCallback(() => {
+    if (editor && !editor.isDestroyed && editor.isEditable) retick(editor, resetTicked.current);
+    stopReset();
+    editor?.commands.focus();
+  }, [editor, stopReset]);
+
+  /** "Marked done" ended: a reset that waited is applied if the note stayed open, else taken and dropped. */
+  const settleWaitingReset = useCallback(
+    (done: boolean) => {
+      if (!resetWaiting.current) return;
+      resetWaiting.current = false;
+      if (done) void commands.claimChecklistReset(note.id).catch(() => undefined);
+      else void claimReset();
+    },
+    [claimReset, note.id],
+  );
+
+  useEffect(() => {
+    let live = true;
+    const unlisten = onChecklistReset(({ noteId }) => {
+      if (noteId === note.id) void claimReset();
+    });
+    // A reset sent before this window listened (a note restored at start-up) is still pending.
+    void unlisten.then(() => {
+      if (live) void claimReset();
+    });
+    return () => {
+      live = false;
+      void unlisten.then((f) => f());
+    };
+  }, [claimReset, note.id]);
 
   /**
    * The strip is over, or the window is closing or the app quitting during it: save any pending
@@ -507,17 +626,20 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       completing.current = null;
     });
     completing.current = p;
+    void p.then(settleWaitingReset);
     return p;
-  }, [autosave, editor, note.id, saveThen, stopStrip]);
+  }, [autosave, editor, note.id, saveThen, settleWaitingReset, stopStrip]);
 
   /**
    * "Mark as done": the strip shows, and the timer starts. Ignored while it already shows, the
    * note is going away, or its content could not be loaded (that view has no strip to show, and a
-   * timer must never run unseen).
+   * timer must never run unseen). `text` adds rule 1's reason; it replaces a reset strip.
    */
-  const startStrip = useCallback(() => {
+  const startStrip = useCallback((text?: string) => {
     if (contentBroken.current || stripRef.current || closing.current || completing.current) return;
+    stopReset();
     stripRef.current = true;
+    setStripText(text);
     setStripShown(true);
     stripTimer.current = setTimeout(() => {
       // A close is already under way (it hides the note): drop the strip rather than leave it up with no timer.
@@ -527,13 +649,22 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       }
       void completeStrip();
     }, DONE_STRIP_MS);
-  }, [completeStrip, stopStrip]);
+  }, [completeStrip, stopReset, stopStrip]);
 
   /** Undo, or Ctrl+Z while the strip shows: the note stays as it was, and the editor has focus again. */
   const undoStrip = useCallback(() => {
     stopStrip();
     editor?.commands.focus();
-  }, [editor, stopStrip]);
+    settleWaitingReset(false);
+  }, [editor, settleWaitingReset, stopStrip]);
+
+  // Rule 1: the person ticked the last unticked item. Not for a done note, nor for a routine.
+  useEffect(() => {
+    autoCompleteCheck.current = (tr) => {
+      if (!autoComplete || doneRef.current || isRepeating(reminder) || !isUserTickOfLastItem(tr)) return;
+      startStrip(AUTO_DONE_TEXT);
+    };
+  }, [autoComplete, reminder, startStrip]);
 
   /** Save, then hide the window. Stays open if the save failed. During the strip, closing marks the note done. */
   const hide = useCallback(async () => {
@@ -671,6 +802,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
               void checkLock();
               return;
             }
+            doneRef.current = n.completedAt !== null;
             setColor(n.color);
             // Restyle only: the editor content is never reloaded from here.
             setAppearance(n.appearance);
@@ -840,6 +972,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** Collapse only after the text is saved; expanding never needs a save. */
   async function setCollapsed(next: boolean) {
     setPopover("none");
+    if (next) stopReset(); // its strip is not drawn while rolled up; the reset itself stays
     // The rolled-up note shows no strip, so collapsing during it completes the note at once, as a
     // close does: the strip must never run unseen.
     if (next && (stripRef.current || completing.current)) {
@@ -1091,7 +1224,11 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         />
       )}
 
-      {stripShown && <DoneStrip onUndo={undoStrip} />}
+      {stripShown ? (
+        <DoneStrip key="done" text={stripText} onUndo={undoStrip} />
+      ) : (
+        resetShown && <DoneStrip key="reset" text={RESET_TEXT} takeFocus={false} onUndo={undoReset} />
+      )}
 
       <div className="dn-note-body" ref={setBodyEl}>
         <EditorContent editor={editor} />

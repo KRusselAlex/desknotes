@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { AppAppearance, ImageInfo } from "../types/note";
+import type { AppAppearance, Automations, ImageInfo } from "../types/note";
 import type { RemindersChanged } from "../types/reminder";
 
 /** Emitted by Rust after any change. `id` is null when many notes changed.
@@ -13,6 +13,17 @@ export interface NotesChanged {
 export const NOTES_CHANGED = "notes-changed";
 /** Rust asks every note window to save now (before quit, export, restore). */
 export const SAVE_ALL_NOTES = "save-all-notes";
+
+/**
+ * Listens in this window only, for events Rust sends to one window with `emit_to`. A plain
+ * `listen()` targets any window, and Tauri 2 delivers `emit_to` events to those listeners in
+ * every window too. Events Rust sends to every window with `emit` still arrive.
+ * Async so that, like `listen()`, a failure outside the app is a rejection, not a throw.
+ */
+async function listenHere<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
+  const label = getCurrentWebviewWindow().label;
+  return listen<T>(event, (e) => handler(e.payload), { target: { kind: "WebviewWindow", label } });
+}
 
 export function onNotesChanged(handler: (e: NotesChanged) => void): Promise<UnlistenFn> {
   return listen<NotesChanged>(NOTES_CHANGED, (event) => handler(event.payload));
@@ -29,7 +40,7 @@ export type NoteAction = "hide" | "archive" | "trash" | "complete" | "reopen";
 
 /** Rust asks this note window to save, then hide, archive, trash, complete or reopen itself. */
 export function onNoteAction(handler: (action: NoteAction) => void): Promise<UnlistenFn> {
-  return listen<NoteAction>(NOTE_ACTION, (event) => handler(event.payload));
+  return listenHere(NOTE_ACTION, handler);
 }
 
 /** Quitting was cancelled because `count` notes still hold unsaved text. */
@@ -53,14 +64,14 @@ export interface PrivacyChanged {
 }
 
 export function onPrivacyChanged(handler: (e: PrivacyChanged) => void): Promise<UnlistenFn> {
-  return listen<PrivacyChanged>(PRIVACY_CHANGED, (event) => handler(event.payload));
+  return listenHere(PRIVACY_CHANGED, handler);
 }
 
 export const SETTINGS_SECTION = "settings-section";
 
 /** Another window asked the open Settings window to show a section. */
 export function onSettingsSection(handler: (section: string) => void): Promise<UnlistenFn> {
-  return listen<string>(SETTINGS_SECTION, (event) => handler(event.payload));
+  return listenHere(SETTINGS_SECTION, handler);
 }
 
 export const NOTE_RESIZED = "note-resized";
@@ -73,14 +84,14 @@ export interface NoteResized {
 }
 
 export function onNoteResized(handler: (e: NoteResized) => void): Promise<UnlistenFn> {
-  return listen<NoteResized>(NOTE_RESIZED, (event) => handler(event.payload));
+  return listenHere(NOTE_RESIZED, handler);
 }
 
 export const NOTE_SETTINGS_NOTE = "note-settings-note";
 
 /** The Note settings window was pointed at another note (its id; sent to that window only). */
 export function onNoteSettingsNote(handler: (id: string) => void): Promise<UnlistenFn> {
-  return listen<string>(NOTE_SETTINGS_NOTE, (event) => handler(event.payload));
+  return listenHere(NOTE_SETTINGS_NOTE, handler);
 }
 
 export const APP_APPEARANCE_CHANGED = "app-appearance-changed";
@@ -116,13 +127,26 @@ export interface ImagesDropped {
   y: number;
 }
 
-/**
- * Listens in this window only: a plain `listen()` targets any window, so an event Rust sends
- * to one note window would reach every open note.
- */
+/** Sent to the note's window only. */
 export function onImagesDropped(handler: (e: ImagesDropped) => void): Promise<UnlistenFn> {
-  const label = getCurrentWebviewWindow().label;
-  return listen<ImagesDropped>(IMAGES_DROPPED, (event) => handler(event.payload), {
-    target: { kind: "WebviewWindow", label },
-  });
+  return listenHere(IMAGES_DROPPED, handler);
+}
+
+export const AUTOMATIONS_CHANGED = "automations-changed";
+
+/** The automation rules were saved in Settings (the saved value, sent to every window). */
+export function onAutomationsChanged(handler: (a: Automations) => void): Promise<UnlistenFn> {
+  return listen<Automations>(AUTOMATIONS_CHANGED, (event) => handler(event.payload));
+}
+
+export const CHECKLIST_RESET = "checklist-reset";
+
+/** This note's repeating reminder went off with "Untick a checklist when its repeating
+ * reminder goes off" on: untick its checklist in the editor (sent to that note's window only). */
+export interface ChecklistReset {
+  noteId: string;
+}
+
+export function onChecklistReset(handler: (e: ChecklistReset) => void): Promise<UnlistenFn> {
+  return listenHere(CHECKLIST_RESET, handler);
 }

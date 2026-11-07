@@ -581,6 +581,30 @@ pub fn image_ids(doc: &Value) -> Vec<String> {
     out
 }
 
+/// A copy of `doc` with every `taskItem` unticked (`attrs.checked = false`), however
+/// deeply nested, or `None` when no item was ticked (so there is nothing to save).
+/// Everything else in the document is copied unchanged.
+pub fn untick_all(doc: &Value) -> Option<Value> {
+    fn walk(node: &mut Value) -> bool {
+        let mut changed = false;
+        if node.get("type").and_then(Value::as_str) == Some("taskItem")
+            && let Some(attrs) = node.get_mut("attrs").and_then(Value::as_object_mut)
+            && attrs.get("checked").and_then(Value::as_bool) == Some(true)
+        {
+            attrs.insert("checked".into(), Value::Bool(false));
+            changed = true;
+        }
+        if let Some(children) = node.get_mut("content").and_then(Value::as_array_mut) {
+            for child in children {
+                changed |= walk(child);
+            }
+        }
+        changed
+    }
+    let mut copy = doc.clone();
+    walk(&mut copy).then_some(copy)
+}
+
 fn invalid(msg: impl Into<String>) -> CoreError {
     CoreError::Validation(msg.into())
 }

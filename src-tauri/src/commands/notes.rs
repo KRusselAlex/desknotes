@@ -493,6 +493,19 @@ pub fn set_edit_locked(
     Ok(())
 }
 
+/// Take this note's pending checklist reset (automation rule 2), sent while its
+/// window was open. The editor calls it when it loads and on each
+/// `checklist-reset`, and unticks only when it returns true: once per reset.
+#[tauri::command]
+pub fn claim_checklist_reset(state: State<'_, AppState>, note_id: String) -> IpcResult<bool> {
+    claim_reset(&state.pending_resets, &note_id)
+}
+
+fn claim_reset(pending: &crate::automation::PendingResets, note_id: &str) -> IpcResult<bool> {
+    let id = parse_note_id(note_id)?;
+    Ok(pending.claim(&id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,5 +597,21 @@ mod tests {
         assert_eq!(complete_route(true, false, false), CompleteRoute::Direct);
         // Reopening never waits for a window: there is none.
         assert_eq!(complete_route(false, false, true), CompleteRoute::Direct);
+    }
+
+    #[test]
+    fn claiming_a_checklist_reset_needs_a_note_id_and_works_once() {
+        let pending = crate::automation::PendingResets::default();
+        let id = "0b9d6f6e-3f0a-4b8e-9a51-2a4c1d7e8f90";
+        pending.insert(id);
+        assert_eq!(
+            claim_reset(&pending, "../x").unwrap_err().code,
+            "validation"
+        );
+        assert!(pending.claim(id), "a refused id claims nothing");
+        pending.insert(id);
+        // The id is normalised as everywhere else.
+        assert!(claim_reset(&pending, &id.to_uppercase()).unwrap());
+        assert!(!claim_reset(&pending, id).unwrap());
     }
 }

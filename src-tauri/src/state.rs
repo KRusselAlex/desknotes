@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use desknotes_core::{CoreError, CoreResult, Database, now_ms};
 use tauri::{AppHandle, Manager};
 
+use crate::automation::PendingResets;
 use crate::error::{IpcError, IpcResult};
 use crate::quit::QuitCoordinator;
 use crate::windows::geometry::GeometryWriter;
@@ -26,6 +27,9 @@ pub struct AppState {
     /// One-shot permission to choose a new PIN without the current one, set
     /// only after the Ubuntu password or a recovery code was accepted (Task 7).
     pub new_pin_allowed: AtomicBool,
+    /// Checklist resets (automation rule 2) sent to open note windows, waiting
+    /// for their editor to claim them.
+    pub pending_resets: PendingResets,
 }
 
 /// The notes database inside the app data folder.
@@ -98,6 +102,7 @@ impl AppState {
             notes_action: AtomicBool::new(false),
             last_activity_ms: AtomicI64::new(now_ms()),
             new_pin_allowed: AtomicBool::new(false),
+            pending_resets: PendingResets::default(),
         }
     }
 

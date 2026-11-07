@@ -136,6 +136,24 @@ export interface SettingsView {
   dataDir: string;
   /** Last successful export, Unix ms. */
   lastBackupAt: number | null;
+  /** The automation rules (Settings → Automations). */
+  automations: Automations;
+}
+
+/** The automation rules (Rust `Automations`, Settings → Automations). Every rule is off by default. */
+export interface Automations {
+  /** Rule 1: mark a checklist done when every item is ticked. */
+  autoCompleteChecklists: boolean;
+  /** Rule 2: untick a checklist when its repeating reminder goes off. */
+  resetChecklistsOnRepeat: boolean;
+  /** Rule 3: archive done notes after `archiveDoneDays` (1–90, default 7). */
+  archiveDoneEnabled: boolean;
+  archiveDoneDays: number;
+  /** Rule 4: delete notes in the trash for more than `purgeTrashDays` (7–365, default 30). */
+  purgeTrashEnabled: boolean;
+  purgeTrashDays: number;
+  /** Read-only: restoring a backup turned rule 4 off. Ignored when saving. */
+  purgeOffByRestore: boolean;
 }
 
 /** A stored image, as the editor needs it to place the image. */
@@ -221,4 +239,4 @@ export type AboutLink = "source" | "issues" | "more_tools" | "notices" | "licens
 
 /** Settings sections another window may open Settings at (Rust `SETTINGS_SECTIONS`).
  * "privacy-new-pin" opens Privacy at "choose a new PIN", after a forgotten-PIN proof. */
-export type SettingsSection = "general" | "appearance" | "privacy" | "privacy-new-pin" | "backup" | "about";
+export type SettingsSection = "general" | "appearance" | "automations" | "privacy" | "privacy-new-pin" | "backup" | "about";
