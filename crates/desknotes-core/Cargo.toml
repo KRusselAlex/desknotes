@@ -8,12 +8,18 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+image.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 argon2 = "0.6.0"
+# Animated GIFs are copied frame by frame in indexed form (already pulled in by `image`).
+gif = { version = "0.14.2", default-features = false, features = ["std"] }
+# Images travel inside the backup file as base64 text.
+base64 = "0.22"
 # Reminder time rules (local wall clock, DST). `clock` gives `Local` to the shell.
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 

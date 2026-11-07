@@ -216,8 +216,8 @@ impl Database {
         Ok(ids)
     }
 
-    /// Untick every checklist item of a note and save it through `save_content`
-    /// (title and search text recomputed), in one transaction. Returns false when
+    /// Untick every checklist item of a note and save it through `save_content_in`
+    /// (title, search text and image references recomputed), in one transaction. Returns false when
     /// no item was ticked. Refused for a withheld note (`PrivateLocked`) and for an
     /// edit-locked one (`NotAllowed`).
     pub fn untick_checklist(&self, note_id: &str) -> CoreResult<bool> {
@@ -232,7 +232,7 @@ impl Database {
         let Some(doc) = untick_all(&note.content) else {
             return Ok(false);
         };
-        self.save_content(note_id, &doc.to_string())?;
+        self.save_content_in(&tx, note_id, &doc.to_string())?;
         tx.commit()?;
         Ok(true)
     }

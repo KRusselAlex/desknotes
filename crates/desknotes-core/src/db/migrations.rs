@@ -72,6 +72,26 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE notes ADD COLUMN completed_at INTEGER;
     "#,
+    // v8 — images stored as blobs, keyed by the SHA-256 of their bytes, and which notes
+    // use which image. `note_images` is rewritten from a note's content whenever the note
+    // is saved. No existing data changes.
+    r#"
+    CREATE TABLE images (
+        id          TEXT PRIMARY KEY NOT NULL,
+        mime        TEXT NOT NULL,
+        width       INTEGER NOT NULL,
+        height      INTEGER NOT NULL,
+        bytes       BLOB NOT NULL,
+        created_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE note_images (
+        note_id   TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        image_id  TEXT NOT NULL REFERENCES images(id),
+        PRIMARY KEY (note_id, image_id)
+    );
+    CREATE INDEX note_images_image ON note_images(image_id);
+    "#,
 ];
 
 pub const LATEST_VERSION: i64 = MIGRATIONS.len() as i64;

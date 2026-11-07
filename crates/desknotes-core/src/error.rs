@@ -21,6 +21,35 @@ pub enum CoreError {
          it was left untouched"
     )]
     SchemaTooNew { found: i64, supported: i64 },
+    /// An image could not be accepted (design: images in notes §3).
+    #[error("image error: {0}")]
+    Image(#[from] ImageError),
+}
+
+/// Why an image was refused. Carries no file name, path or content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ImageError {
+    /// Over the input cap, over the pixel limit, or still over the stored-size cap
+    /// after shrinking.
+    #[error("the image is too large")]
+    TooLarge,
+    /// Not a PNG, JPEG, GIF or WebP file.
+    #[error("only PNG, JPEG, GIF and WebP images are supported")]
+    Unsupported,
+    /// Looks like a supported image but cannot be decoded.
+    #[error("the image file is damaged or cannot be read")]
+    Unreadable,
+}
+
+impl ImageError {
+    /// Stable machine-readable code for the UI.
+    pub fn code(&self) -> &'static str {
+        match self {
+            ImageError::TooLarge => "image_too_large",
+            ImageError::Unsupported => "image_unsupported",
+            ImageError::Unreadable => "image_unreadable",
+        }
+    }
 }
 
 impl CoreError {
@@ -34,6 +63,7 @@ impl CoreError {
             CoreError::NotAllowed(_) => "not_allowed",
             CoreError::PrivateLocked => "private_locked",
             CoreError::SchemaTooNew { .. } => "schema_too_new",
+            CoreError::Image(e) => e.code(),
         }
     }
 }

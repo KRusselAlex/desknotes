@@ -1,13 +1,13 @@
-# DeskNotes backup format (version 5)
+# DeskNotes backup format (version 6)
 
 A backup is one UTF-8 JSON file, usually named `desknotes-YYYY-MM-DD.json`. It holds
 every note — active, archived and in the trash — with its window state, its text and
-window styling, whether it is private, its reminder, and when it was marked done. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
+window styling, whether it is private, its reminder, when it was marked done, and the images its text uses. It holds no settings, no PIN and no recovery code. The same file works on every operating system.
 
 ```json
 {
   "format": "desknotes-backup",
-  "version": 5,
+  "version": 6,
   "appVersion": "0.1.0",
   "exportedAt": 1793520000000,
   "notes": [
@@ -28,6 +28,15 @@ window styling, whether it is private, its reminder, and when it was marked done
                     "dueAt": 1793797200000, "snoozedUntil": null, "firedAt": null },
       "window": { "x": 130, "y": 96, "width": 300, "height": 280,
                   "visible": true, "alwaysOnTop": false, "collapsed": false }
+    }
+  ],
+  "images": [
+    {
+      "id": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "mime": "image/png",
+      "width": 640,
+      "height": 480,
+      "data": "iVBORw0KGgo… (standard base64)"
     }
   ]
 }
@@ -70,6 +79,29 @@ window styling, whether it is private, its reminder, and when it was marked done
   trash; it appears in the Completed list only when it is neither. A negative value
   refuses the whole file (the error names the note).
 
+- `images` (optional, default `[]`) holds the pictures the notes use, each once, whether the
+  note is active, archived or in the trash. A note refers to an image with an `image` node
+  whose `id` is the image's `id`. Each entry has:
+  - `id`: 64 lowercase hex characters, the SHA-256 of the image bytes;
+  - `mime`: `image/png`, `image/jpeg`, `image/gif` or `image/webp`;
+  - `width` and `height`: whole pixels, 1 to 65535;
+  - `data`: the image bytes exactly as DeskNotes stores them (already shrunk, with no
+    metadata), as standard base64 with padding.
+
+  Images nobody uses are not written. On restore every image is checked: the `mime` must
+  be one of the four and match the first bytes of the data (the file's own claim is never
+  trusted), the decoded data is at most 5 MB (`5 * 1024 * 1024` bytes), the base64 must be
+  valid, the SHA-256 of the bytes must equal `id`, and an `id` must not appear twice. Any
+  failure refuses the whole file, and nothing changes (the error says which image). The
+  bytes are not re-encoded, so ids stay the same. An image in the file that no note uses
+  is skipped, not stored. A note that refers to an image the file does not hold still
+  restores, with the image node in its text; the editor shows "Image not found" there.
+  Unknown keys in an image refuse the whole file.
+
+- A backup file can be at most 300 MiB (`300 * 1024 * 1024` bytes). Export is refused,
+  before anything is written, with "This backup would be over 300 MB. Remove some images
+  and try again." when the file would be larger; restore refuses a larger file as too large.
+
 ## Versions
 
 | Version | Changes |
@@ -79,10 +111,13 @@ window styling, whether it is private, its reminder, and when it was marked done
 | 3 | Adds the optional `appearance` object per note. |
 | 4 | Adds the optional `reminder` object per note. |
 | 5 | Adds the optional `completedAt` per note (when it was marked done). |
+| 6 | Adds the optional top-level `images` list (the pictures notes use, as base64), and raises the file limit from 200 MiB to 300 MiB. |
 
-DeskNotes writes version 5 and still restores version 1, 2, 3 and 4 files; their notes come
-back not done, version 1, 2 and 3 notes without reminders, version 1 and 2 notes with default appearance, and version 1
-notes also not private, with an empty label.
+DeskNotes writes version 6 and still restores version 1 to 5 files; files before version 6
+have no images, so a note that has an `image` node comes back with the "Image not found"
+placeholder. Their notes come back not done (before version 5), version 1, 2 and 3 notes
+without reminders, version 1 and 2 notes with default appearance, and version 1 notes also
+not private, with an empty label.
 
 ## Exporting
 
@@ -99,7 +134,10 @@ Restore replaces **all** notes with the notes in the file, after confirmation:
 2. The whole file is validated first. If anything is wrong, nothing changes.
 3. A copy of the current database is written to `backups/pre-restore-<time>.db` in the
    data folder.
-4. Notes are replaced in a single transaction, then visible notes reopen.
+4. Notes are replaced in a single transaction, then visible notes reopen. The file's
+   images are stored in that same transaction, before the notes, so the notes' image
+   references are recorded; images already in the database but used by no restored note
+   are removed by the clean-up at the next start-up.
 
 A file with a higher `version` than the app supports is refused ("made by a newer
 DeskNotes"). Notes whose stored content is damaged are left out of an export, and the

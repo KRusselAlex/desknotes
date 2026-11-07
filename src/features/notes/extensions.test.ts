@@ -1,6 +1,10 @@
 import { Editor, type JSONContent } from "@tiptap/core";
 import fixture from "../../../tests/fixtures/rich-doc.json";
+import { setImageUrlResolver } from "../../ipc/images";
 import { createExtensions, sanitizeDoc, serializeDoc } from "./extensions";
+
+// jsdom has no native scheme; any address will do.
+setImageUrlResolver((id) => `desknotes-image://localhost/${id}`);
 
 function editorWith(content: object) {
   return new Editor({ extensions: createExtensions(), content });
@@ -10,6 +14,14 @@ describe("editor document format", () => {
   it("round-trips the shared fixture exactly (contract with the Rust validator)", () => {
     const editor = editorWith(fixture);
     expect(editor.getJSON()).toEqual(fixture);
+    editor.destroy();
+  });
+
+  it("round-trips the image node of the shared fixture", () => {
+    const editor = editorWith(fixture);
+    const images = editor.getJSON().content!.filter((n) => n.type === "image");
+    expect(images).toEqual([{ type: "image", attrs: { id: "a".repeat(64), width: 50 } }]);
+    expect(serializeDoc(editor.getJSON())).toContain(`{"type":"image","attrs":{"id":"${"a".repeat(64)}","width":50}}`);
     editor.destroy();
   });
 
@@ -76,7 +88,7 @@ describe("editor document format", () => {
 
     const allowedNodes = new Set([
       "doc", "paragraph", "text", "heading", "bulletList", "orderedList", "listItem",
-      "taskList", "taskItem", "blockquote", "codeBlock", "hardBreak", "horizontalRule",
+      "taskList", "taskItem", "blockquote", "codeBlock", "hardBreak", "horizontalRule", "image",
     ]);
     const allowedMarks = new Set(["bold", "italic", "underline", "strike", "code", "link", "textStyle", "highlight"]);
     const walk = (n: { type?: string; marks?: { type: string }[]; content?: unknown[] }) => {

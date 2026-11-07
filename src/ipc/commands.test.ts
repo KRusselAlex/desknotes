@@ -75,6 +75,34 @@ describe("automations", () => {
   });
 });
 
+describe("images", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("addImage sends the bytes as the raw body with the note-id header", async () => {
+    invoke.mockResolvedValue({ id: "a".repeat(64), width: 8, height: 6 });
+    const bytes = new Uint8Array([1, 2, 3]);
+    const info = await commands.addImage("n1", bytes);
+    expect(invoke).toHaveBeenCalledWith("add_image", bytes, { headers: { "note-id": "n1" } });
+    expect(info).toEqual({ id: "a".repeat(64), width: 8, height: 6 });
+  });
+
+  it("addImage maps a native error to a CommandError with its code", async () => {
+    invoke.mockRejectedValue({ code: "image_too_large", message: "the image is too large" });
+    await expect(commands.addImage("n1", new Uint8Array([1]))).rejects.toMatchObject({
+      name: "CommandError",
+      code: "image_too_large",
+    });
+  });
+
+  it("pickImage calls pick_image with the note id; null when cancelled", async () => {
+    invoke.mockResolvedValue(null);
+    expect(await commands.pickImage("n1")).toBeNull();
+    expect(invoke).toHaveBeenCalledWith("pick_image", { noteId: "n1" });
+  });
+});
+
 describe("claimChecklistReset", () => {
   beforeEach(() => {
     invoke.mockReset();

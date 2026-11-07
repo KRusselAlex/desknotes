@@ -15,6 +15,7 @@ import { Color, FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-s
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { ImageNode, normalizeImageWidth } from "./imageNode";
 import { isSafeLink } from "./links";
 import {
   DEFAULT_HIGHLIGHT,
@@ -339,6 +340,7 @@ export function createExtensions(): Extensions {
     PasteStyleFilter,
     TaskList,
     TaskItem.configure({ nested: true }),
+    ImageNode,
     Placeholder.configure({ placeholder: "Write something…" }),
   ];
 }
@@ -374,15 +376,20 @@ function sanitizeMark(m: NonNullable<JSONContent["marks"]>[number]): typeof m | 
 
 /**
  * Drop link marks whose href is not safe, keeping the text, and give other
- * targets `_blank`. Keep only allowed values in text style, highlight and
- * alignment. The native layer rejects other documents, so fixing them here
- * prevents a failed save, including for content already in an open note.
+ * targets `_blank`. Keep only allowed values in text style, highlight,
+ * alignment and image width. The native layer rejects other documents, so
+ * fixing them here prevents a failed save, including for content already in an
+ * open note.
  *
  * A `textAlign` that is null (no alignment, which the editor writes on every
  * paragraph and heading) or not allowed is left out, and so is an `attrs` it
  * leaves empty: a note saved before alignment existed serializes exactly as stored.
  */
 export function sanitizeDoc(node: JSONContent): JSONContent {
+  // An image has exactly an id and a width the core accepts (anything else is full width).
+  if (node.type === "image") {
+    return { type: "image", attrs: { id: node.attrs?.id, width: normalizeImageWidth(node.attrs?.width) } };
+  }
   const copy: JSONContent = { ...node };
   if (node.marks) {
     copy.marks = node.marks.flatMap((m) => sanitizeMark(m) ?? []);

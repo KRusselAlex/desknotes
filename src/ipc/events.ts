@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { AppAppearance, Automations } from "../types/note";
+import type { AppAppearance, Automations, ImageInfo } from "../types/note";
 import type { RemindersChanged } from "../types/reminder";
 
 /** Emitted by Rust after any change. `id` is null when many notes changed.
@@ -106,6 +106,30 @@ export const REMINDERS_CHANGED = "reminders-changed";
 /** A reminder was set, removed, fired, snoozed or dismissed (sent to every window). */
 export function onRemindersChanged(handler: (e: RemindersChanged) => void): Promise<UnlistenFn> {
   return listen<RemindersChanged>(REMINDERS_CHANGED, (event) => handler(event.payload));
+}
+
+export const IMAGES_DROPPED = "images-dropped";
+
+/**
+ * Something dropped on a note window, read and stored by Rust. Rust sends it to that window
+ * only; `noteId` names the note it is for.
+ */
+export interface ImagesDropped {
+  noteId: string;
+  /** Stored for the note, in drop order. */
+  images: ImageInfo[];
+  /** Dropped links (anything that was not a local file), to insert as plain text. */
+  texts: string[];
+  /** The first refusal's error code, if any. */
+  problem: string | null;
+  /** The drop point in CSS pixels inside the window. */
+  x: number;
+  y: number;
+}
+
+/** Sent to the note's window only. */
+export function onImagesDropped(handler: (e: ImagesDropped) => void): Promise<UnlistenFn> {
+  return listenHere(IMAGES_DROPPED, handler);
 }
 
 export const AUTOMATIONS_CHANGED = "automations-changed";

@@ -53,6 +53,11 @@ pub fn run() {
                 eprintln!("DeskNotes: could not show the manager: {e}");
             }
         }))
+        // Serves stored images to the editor; answers off the main thread.
+        .register_asynchronous_uri_scheme_protocol(
+            commands::images::SCHEME,
+            commands::images::handle_scheme,
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
@@ -124,6 +129,9 @@ pub fn run() {
             commands::backup::choose_backup,
             commands::backup::cancel_restore,
             commands::backup::restore_backup,
+            commands::images::add_image,
+            commands::images::pick_image,
+            commands::images::paste_image,
             commands::privacy::privacy_status,
             commands::privacy::unlock,
             commands::privacy::lock_now,

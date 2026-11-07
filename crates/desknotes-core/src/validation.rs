@@ -41,7 +41,15 @@ const ALLOWED_NODES: &[&str] = &[
     "codeBlock",
     "hardBreak",
     "horizontalRule",
+    "image",
 ];
+
+/// Where an `image` node may sit: block containers only, never inside a paragraph
+/// or heading (the editor schema is block-level, design: images in notes §5).
+const IMAGE_PARENTS: &[&str] = &["doc", "listItem", "taskItem", "blockquote"];
+
+/// Width of an image, in percent of the note's width.
+const IMAGE_WIDTHS: RangeInclusive<i64> = 10..=100;
 
 /// Must equal the marks the editor schema can load. A mark accepted here but
 /// unknown to the editor would make the note open empty (and be overwritten).
@@ -105,10 +113,10 @@ pub fn validate_doc(doc: &Value) -> CoreResult<()> {
     if doc.get("type").and_then(Value::as_str) != Some("doc") {
         return Err(invalid("root node must be of type \"doc\""));
     }
-    validate_node(doc, 0)
+    validate_node(doc, 0, "")
 }
 
-fn validate_node(node: &Value, depth: usize) -> CoreResult<()> {
+fn validate_node(node: &Value, depth: usize, parent: &str) -> CoreResult<()> {
     if depth > MAX_DEPTH {
         return Err(invalid("document is nested too deeply"));
     }
@@ -141,6 +149,7 @@ fn validate_node(node: &Value, depth: usize) -> CoreResult<()> {
                 return Err(invalid("heading level must be 1 to 6"));
             }
         }
+        "image" => validate_image(obj, parent)?,
         _ => {}
     }
 
@@ -158,10 +167,46 @@ fn validate_node(node: &Value, depth: usize) -> CoreResult<()> {
             .as_array()
             .ok_or_else(|| invalid("content must be an array"))?;
         for child in children {
-            validate_node(child, depth + 1)?;
+            validate_node(child, depth + 1, kind)?;
         }
     }
     Ok(())
+}
+
+/// An `image` node is `{"id": <64 lowercase hex>, "width": <integer 10 to 100 | null>}`
+/// and nothing else: no URL, no children, no marks. `width` may be missing (= null).
+fn validate_image(node: &serde_json::Map<String, Value>, parent: &str) -> CoreResult<()> {
+    if !IMAGE_PARENTS.contains(&parent) {
+        return Err(invalid("an image cannot be placed here"));
+    }
+    if node.contains_key("content") || node.contains_key("marks") {
+        return Err(invalid("an image has no content or marks"));
+    }
+    let attrs = node
+        .get("attrs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid("an image needs an id"))?;
+    if attrs.keys().any(|k| k != "id" && k != "width") {
+        return Err(invalid("an image has only an id and a width"));
+    }
+    if !attrs
+        .get("id")
+        .and_then(Value::as_str)
+        .is_some_and(is_image_id)
+    {
+        return Err(invalid("image id must be 64 lowercase hex characters"));
+    }
+    match attrs.get("width") {
+        None | Some(Value::Null) => {}
+        Some(w) if w.as_i64().is_some_and(|w| IMAGE_WIDTHS.contains(&w)) => {}
+        Some(_) => return Err(invalid("image width must be a whole number from 10 to 100")),
+    }
+    Ok(())
+}
+
+/// 64 lowercase hex characters: the SHA-256 of a stored image.
+pub fn is_image_id(id: &str) -> bool {
+    id.len() == 64 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn validate_mark(mark: &Value) -> CoreResult<()> {
@@ -419,7 +464,12 @@ pub fn parse_appearance(raw: &str) -> CoreResult<Appearance> {
     validate_appearance(a)
 }
 
-/// Text of each top-level block, in order.
+fn is_image(node: &Value) -> bool {
+    node.get("type").and_then(Value::as_str) == Some("image")
+}
+
+/// Text of each top-level block, in order. Images are skipped: they add no text,
+/// not even a separator, so title, search text and snippets ignore them.
 fn block_texts(doc: &Value) -> Vec<String> {
     fn collect(node: &Value, out: &mut String) {
         match node.get("type").and_then(Value::as_str) {
@@ -432,7 +482,7 @@ fn block_texts(doc: &Value) -> Vec<String> {
             _ => {}
         }
         if let Some(children) = node.get("content").and_then(Value::as_array) {
-            for (i, child) in children.iter().enumerate() {
+            for (i, child) in children.iter().filter(|c| !is_image(c)).enumerate() {
                 // Separate nested blocks (list items, task items) with a space.
                 if i > 0 && child.get("type").and_then(Value::as_str) != Some("text") {
                     out.push(' ');
@@ -446,6 +496,7 @@ fn block_texts(doc: &Value) -> Vec<String> {
         .map(|blocks| {
             blocks
                 .iter()
+                .filter(|b| !is_image(b))
                 .map(|b| {
                     let mut s = String::new();
                     collect(b, &mut s);
@@ -509,6 +560,27 @@ pub fn derive_search_text(doc: &Value) -> String {
     block_texts(doc).join("\n").to_lowercase()
 }
 
+/// The distinct image ids of a document, in document order. Meant for a document
+/// that passed [`validate_doc`], which bounds its depth.
+pub fn image_ids(doc: &Value) -> Vec<String> {
+    fn walk(node: &Value, out: &mut Vec<String>) {
+        if node.get("type").and_then(Value::as_str) == Some("image")
+            && let Some(id) = node.pointer("/attrs/id").and_then(Value::as_str)
+            && !out.iter().any(|seen| seen == id)
+        {
+            out.push(id.to_string());
+        }
+        if let Some(children) = node.get("content").and_then(Value::as_array) {
+            for child in children {
+                walk(child, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc, &mut out);
+    out
+}
+
 /// A copy of `doc` with every `taskItem` unticked (`attrs.checked = false`), however
 /// deeply nested, or `None` when no item was ticked (so there is nothing to save).
 /// Everything else in the document is copied unchanged.
@@ -550,6 +622,138 @@ mod tests {
     fn shared_fixture_is_valid() {
         let doc = parse_content(FIXTURE).expect("fixture produced by the editor must validate");
         assert_eq!(derive_title(&doc), "Groceries for Saturday");
+    }
+
+    fn image_node(attrs: Value) -> Value {
+        json!({"type":"image","attrs":attrs})
+    }
+
+    fn doc_of(blocks: Vec<Value>) -> Value {
+        json!({"type":"doc","content":blocks})
+    }
+
+    fn good_id() -> String {
+        "a".repeat(64)
+    }
+
+    #[test]
+    fn image_node_rules() {
+        let ok = |attrs: Value| validate_doc(&doc_of(vec![image_node(attrs)])).is_ok();
+        assert!(ok(json!({"id": good_id(), "width": 50})));
+        assert!(ok(json!({"id": good_id(), "width": null})));
+        assert!(ok(json!({"id": good_id(), "width": 10})));
+        assert!(ok(json!({"id": good_id(), "width": 100})));
+        assert!(
+            ok(json!({"id": "0123456789abcdef".repeat(4)})),
+            "width is optional"
+        );
+
+        // The id must be 64 lowercase hex characters.
+        assert!(!ok(json!({"width": 50})));
+        assert!(!ok(json!({"id": null})));
+        assert!(!ok(json!({"id": 7})));
+        assert!(!ok(json!({"id": "a".repeat(63)})));
+        assert!(!ok(json!({"id": "a".repeat(65)})));
+        assert!(!ok(json!({"id": "A".repeat(64)})));
+        assert!(!ok(json!({"id": "g".repeat(64)})));
+        assert!(!ok(json!({"id": format!("../{}", "a".repeat(61))})));
+
+        // Width: an integer from 10 to 100, or null.
+        assert!(!ok(json!({"id": good_id(), "width": 9})));
+        assert!(!ok(json!({"id": good_id(), "width": 101})));
+        assert!(!ok(json!({"id": good_id(), "width": -50})));
+        assert!(!ok(json!({"id": good_id(), "width": 50.5})));
+        assert!(!ok(json!({"id": good_id(), "width": "50"})));
+
+        // Any other attribute is refused.
+        assert!(!ok(json!({"id": good_id(), "width": 50, "src": "x"})));
+        assert!(!ok(json!({"id": good_id(), "textAlign": "center"})));
+        assert!(!ok(json!({"id": good_id(), "alt": null})));
+
+        // No attrs at all means no id.
+        assert!(validate_doc(&doc_of(vec![json!({"type":"image"})])).is_err());
+        // An image has no children and no marks.
+        let with_child =
+            json!({"type":"image","attrs":{"id":good_id()},"content":[{"type":"paragraph"}]});
+        assert!(validate_doc(&doc_of(vec![with_child])).is_err());
+    }
+
+    #[test]
+    fn image_is_allowed_only_in_block_containers() {
+        let img = || image_node(json!({"id": good_id(), "width": null}));
+        let para = || json!({"type":"paragraph"});
+        let in_list_item = json!({"type":"bulletList","content":[
+            {"type":"listItem","content":[para(), img()]}]});
+        let in_ordered = json!({"type":"orderedList","content":[
+            {"type":"listItem","content":[img()]}]});
+        let in_task = json!({"type":"taskList","content":[
+            {"type":"taskItem","attrs":{"checked":false},"content":[para(), img()]}]});
+        let in_quote = json!({"type":"blockquote","content":[img()]});
+        for good in [in_list_item, in_ordered, in_task, in_quote, img()] {
+            assert!(validate_doc(&doc_of(vec![good.clone()])).is_ok(), "{good}");
+        }
+
+        let in_paragraph = json!({"type":"paragraph","content":[img()]});
+        let in_heading = json!({"type":"heading","attrs":{"level":1},"content":[img()]});
+        let in_code = json!({"type":"codeBlock","content":[img()]});
+        let in_bullet_list = json!({"type":"bulletList","content":[img()]});
+        let in_task_list = json!({"type":"taskList","content":[img()]});
+        for bad in [
+            in_paragraph,
+            in_heading,
+            in_code,
+            in_bullet_list,
+            in_task_list,
+        ] {
+            assert!(validate_doc(&doc_of(vec![bad.clone()])).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn images_add_no_text() {
+        let text = json!({"type":"paragraph","content":[{"type":"text","text":"Hello World"}]});
+        let img = image_node(json!({"id": good_id(), "width": 50}));
+        let plain = doc_of(vec![text.clone()]);
+        let with_image = doc_of(vec![text.clone(), img.clone()]);
+        assert_eq!(derive_title(&plain), derive_title(&with_image));
+        assert_eq!(derive_search_text(&plain), derive_search_text(&with_image));
+        assert_eq!(
+            derive_snippet(&plain, "world"),
+            derive_snippet(&with_image, "world")
+        );
+        // Nested too: no separator is added next to an image.
+        let nested = doc_of(vec![
+            json!({"type":"blockquote","content":[text.clone(), img.clone()]}),
+        ]);
+        let nested_plain = doc_of(vec![json!({"type":"blockquote","content":[text.clone()]})]);
+        assert_eq!(
+            derive_search_text(&nested),
+            derive_search_text(&nested_plain)
+        );
+        // A note with only an image gets the usual empty-note title.
+        let only = doc_of(vec![img]);
+        assert_eq!(derive_title(&only), "");
+        assert_eq!(derive_search_text(&only), "");
+    }
+
+    #[test]
+    fn image_ids_are_distinct_and_in_document_order() {
+        let a = "a".repeat(64);
+        let b = "b".repeat(64);
+        let img = |id: &str| image_node(json!({"id": id, "width": null}));
+        let doc = doc_of(vec![
+            img(&b),
+            json!({"type":"blockquote","content":[img(&a), img(&b)]}),
+            json!({"type":"bulletList","content":[{"type":"listItem","content":[img(&a)]}]}),
+        ]);
+        assert_eq!(image_ids(&doc), vec![b, a]);
+        assert!(image_ids(&empty_doc()).is_empty());
+    }
+
+    #[test]
+    fn shared_fixture_has_an_image() {
+        let doc = parse_content(FIXTURE).unwrap();
+        assert_eq!(image_ids(&doc), vec![good_id()]);
     }
 
     #[test]

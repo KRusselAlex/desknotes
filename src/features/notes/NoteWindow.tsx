@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import type { Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { noteDateLabel } from "../../app/time";
@@ -10,6 +10,7 @@ import { commands } from "../../ipc/commands";
 import {
   onAutomationsChanged,
   onChecklistReset,
+  onImagesDropped,
   onSaveAllRequest,
   onNoteAction,
   onNotesChanged,
@@ -39,6 +40,17 @@ import { ColorPopover } from "./ColorPopover";
 import { DoneStrip } from "./DoneStrip";
 import { createExtensions, serializeDoc } from "./extensions";
 import { FormatBar } from "./FormatBar";
+import {
+  addImageFiles,
+  imageFilesIn,
+  insertDropped,
+  pasteFromClipboard,
+  pastePoint,
+  pasteSource,
+  problemOf,
+  type ImageProblem,
+} from "./imageInput";
+import { ImageMessage } from "./ImageMessage";
 import { LinkEditor } from "./LinkEditor";
 import { LinkHint } from "./LinkHint";
 import { isSafeLink } from "./links";
@@ -393,6 +405,15 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
   /** Set when stored content could not be loaded: never autosave over it. */
   const contentBroken = useRef(false);
   const [contentError, setContentError] = useState(false);
+  /** Why the last image was not added; `n` remounts the message, so a new one replaces it. */
+  const [imageProblem, setImageProblem] = useState<{ problem: ImageProblem; n: number } | null>(null);
+  const showImageProblem = useCallback(
+    (problem: ImageProblem) => setImageProblem((old) => ({ problem, n: (old?.n ?? 0) + 1 })),
+    [],
+  );
+  const closeImageProblem = useCallback(() => setImageProblem(null), []);
+  /** For the paste and drop handlers, which the editor holds from before it exists. */
+  const editorRef = useRef<Editor | null>(null);
   const { width, height } = useWindowSize();
   const narrow = width < NARROW;
 
@@ -452,8 +473,43 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         }
         return false;
       },
+      // Image files are pasted when the clipboard's HTML holds nothing but images (a browser's
+      // "Copy Image"); an office paste, whose HTML comes with a picture of it, stays text.
+      // WebKitGTK shows the page no clipboard image at all, so a paste with nothing usable
+      // and no plain text is read in Rust. The images go where the paste was, whatever is
+      // typed or selected meanwhile. File drops never reach the webview: Tauri's handler
+      // gives them to Rust (`images-dropped` below); moving text stays the editor's.
+      handlePaste: (view: EditorView, event: ClipboardEvent) => {
+        const data = event.clipboardData;
+        const files = imageFilesIn(data?.files);
+        const source = pasteSource(Array.from(data?.types ?? []), data?.getData("text/html") ?? "", files);
+        if (source === "default") return false;
+        if (source === "files") {
+          const at = pastePoint(view, files);
+          if (editorRef.current) void addImageFiles(editorRef.current, note.id, files, showImageProblem, at);
+          return true;
+        }
+        // Nothing is known to be inserted yet, so a text selection is kept.
+        const at = pastePoint(view, []);
+        if (editorRef.current) void pasteFromClipboard(editorRef.current, note.id, showImageProblem, at);
+        return true;
+      },
     },
   });
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  // Files and links dropped on the window, read (and the images stored) by Rust. Only a
+  // drop meant for this note is taken.
+  useEffect(() => {
+    const unlisten = onImagesDropped(({ noteId, images, texts, problem, x, y }) => {
+      if (noteId !== note.id) return;
+      if (editorRef.current) insertDropped(editorRef.current, images, texts, x, y);
+      if (problem) showImageProblem(problemOf({ code: problem }));
+    });
+    return () => void unlisten.then((f) => f());
+  }, [note.id, showImageProblem]);
 
   /** Save, then hide the window. Stays open if the save failed. */
   /** Save first; run `action` only if everything is saved. Returns false otherwise. */
@@ -1199,10 +1255,18 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
           onUnlock={saveRefusedByLock ? () => setUnlocking(true) : undefined}
         />
       )}
+      {imageProblem && <ImageMessage key={imageProblem.n} problem={imageProblem.problem} onDismiss={closeImageProblem} />}
       {showBar && editor && (
-        <FormatBar editor={editor} narrow={narrow} appearance={shown} onLink={() => openPopover("link")} />
+        <FormatBar
+          editor={editor}
+          narrow={narrow}
+          appearance={shown}
+          onLink={() => openPopover("link")}
+          noteId={note.id}
+          onImageProblem={showImageProblem}
+        />
       )}
-      {!showBar && saveState !== "error" && !refusal && (
+      {!showBar && saveState !== "error" && !refusal && !imageProblem && (
         <span className="dn-resize-mark" aria-hidden="true">
           <Icon name="resize" size={12} />
         </span>

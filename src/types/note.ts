@@ -156,6 +156,21 @@ export interface Automations {
   purgeOffByRestore: boolean;
 }
 
+/** A stored image, as the editor needs it to place the image. */
+export interface ImageInfo {
+  /** 64 lowercase hex characters (SHA-256 of the stored bytes). */
+  id: string;
+  width: number;
+  height: number;
+}
+
+/** What `paste_image` found on the system clipboard (read in Rust; WebKitGTK gives the page none). */
+export type PastedImage =
+  | { kind: "image"; image: ImageInfo }
+  /** No image but text: pasted as plain text, never as HTML. */
+  | { kind: "text"; text: string }
+  | { kind: "nothing" };
+
 export interface ExportResult {
   path: string;
   count: number;

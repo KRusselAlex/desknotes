@@ -1,5 +1,6 @@
 //! Operating-system specifics. Everything Linux-only lives here (ADR-0002).
 
+pub mod clipboard;
 pub mod fonts;
 #[cfg(target_os = "linux")]
 pub mod gnome_shortcut;

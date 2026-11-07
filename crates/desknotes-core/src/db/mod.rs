@@ -2,6 +2,7 @@
 
 mod automation;
 mod backup;
+mod images;
 mod migrations;
 mod notes;
 mod privacy;
@@ -19,6 +20,7 @@ use crate::error::{CoreError, CoreResult};
 
 pub use automation::{Automations, PURGE_TRASH_DAYS_RANGE, cutoff_ms};
 pub use backup::{Export, LAST_BACKUP_AT};
+pub use images::ImageInfo;
 pub use migrations::LATEST_VERSION;
 pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};
 pub use settings::FIRST_RUN_DONE;
@@ -386,5 +388,45 @@ mod tests {
         assert!(!note.private);
         assert_eq!(note.private_label, "");
         assert!(!note.locked);
+    }
+
+    #[test]
+    fn migration_v8_adds_image_tables_and_keeps_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let backups = dir.path().join("backups");
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply_until(&mut conn, 0, 7).unwrap();
+            conn.execute_batch(
+                "INSERT INTO notes (id, title, content_json, color, created_at, updated_at)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 'v7 note',
+                         '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"}]}',
+                         '#fff4a3', 1, 1);
+                 INSERT INTO note_windows (note_id, width, height)
+                 VALUES ('2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d', 300, 280);",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path, &backups).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 8);
+        assert_eq!(
+            db.get_note("2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d")
+                .unwrap()
+                .title,
+            "v7 note"
+        );
+        for table in ["images", "note_images"] {
+            let rows: i64 = db
+                .conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(rows, 0, "{table} starts empty");
+        }
+        let copies: Vec<_> = std::fs::read_dir(&backups).unwrap().collect();
+        assert_eq!(copies.len(), 1, "exactly one pre-migration backup");
+        let name = copies[0].as_ref().unwrap().file_name();
+        assert!(name.to_str().unwrap().starts_with("pre-migration-v7-"));
     }
 }

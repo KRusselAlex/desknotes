@@ -9,6 +9,7 @@ import {
   APP_APPEARANCE_CHANGED,
   AUTOMATIONS_CHANGED,
   CHECKLIST_RESET,
+  IMAGES_DROPPED,
   NOTE_ACTION,
   NOTE_RESIZED,
   NOTE_SETTINGS_NOTE,
@@ -18,6 +19,7 @@ import {
   onAppAppearanceChanged,
   onAutomationsChanged,
   onChecklistReset,
+  onImagesDropped,
   onNoteAction,
   onNoteResized,
   onNoteSettingsNote,
@@ -81,6 +83,26 @@ describe("onRemindersChanged", () => {
   });
 });
 
+describe("onImagesDropped", () => {
+  beforeEach(() => {
+    listen.mockReset();
+    listen.mockResolvedValue(() => {});
+  });
+
+  it("listens for this window only, so a drop on one note never reaches another", async () => {
+    expect(IMAGES_DROPPED).toBe("images-dropped");
+    const handler = vi.fn();
+    await onImagesDropped(handler);
+    expect(listen).toHaveBeenCalledTimes(1);
+    const [name, callback, options] = listen.mock.calls[0] as [string, (e: { payload: unknown }) => void, unknown];
+    expect(name).toBe("images-dropped");
+    expect(options).toEqual({ target: { kind: "WebviewWindow", label: "note-abc" } });
+    const payload = { noteId: "n", images: [], texts: [], problem: null, x: 1, y: 2 };
+    callback({ payload });
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+});
+
 describe("onAutomationsChanged", () => {
   beforeEach(() => {
     listen.mockReset();
@@ -124,6 +146,7 @@ describe("events sent to one window", () => {
     [NOTE_RESIZED, "note-resized", onNoteResized, { id: "n", width: 300, height: 200 }],
     [NOTE_SETTINGS_NOTE, "note-settings-note", onNoteSettingsNote, "n"],
     [CHECKLIST_RESET, "checklist-reset", onChecklistReset, { noteId: "abc" }],
+    [IMAGES_DROPPED, "images-dropped", onImagesDropped, { noteId: "n", images: [], texts: [], problem: null, x: 1, y: 2 }],
   ] as [string, string, (h: (p: unknown) => void) => Promise<unknown>, unknown][])(
     "%s listens for this window only and passes the payload on",
     async (constant, name, subscribe, payload) => {

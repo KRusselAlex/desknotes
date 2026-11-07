@@ -2,14 +2,15 @@
 //! Windows are only ever created here, never from the webview.
 
 pub mod geometry;
+mod image_drop;
 pub mod note_settings;
 
 use desknotes_core::geometry::{Rect, keep_on_screen};
 use desknotes_core::{COLLAPSED_HEIGHT, Note, NoteSize};
 use serde::Serialize;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder,
-    Window, WindowEvent,
+    AppHandle, DragDropEvent, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindowBuilder, Window, WindowEvent,
 };
 
 use crate::platform::window_positioning_supported;
@@ -414,6 +415,9 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
                 // removing its decorations, so Mutter first frames it with a 37 px
                 // title bar and the note keeps that extra height, growing on every
                 // restart. Mapping only after it is undecorated avoids this.
+                // Tauri's own drag-drop handler stays on: WebKitGTK gives the page no
+                // dropped files, so Rust reads them (`image_drop`) and the webview
+                // never opens a dropped file in place of the note.
                 .visible(false);
         if transparent {
             builder = builder.transparent(true);
@@ -702,6 +706,11 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                         }
                     }
                 }
+            }
+        }
+        WindowEvent::DragDrop(DragDropEvent::Drop { paths, position }) => {
+            if let Some(id) = note_id_from_label(window.label()) {
+                image_drop::on_drop(window, id, paths, *position);
             }
         }
         WindowEvent::Destroyed => {

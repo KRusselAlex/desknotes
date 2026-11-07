@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
 // @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
 import { readFileSync } from "node:fs";
-import type { ChecklistReset, NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
+import type { ChecklistReset, ImagesDropped, NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import {
   APP_APPEARANCE_DEFAULTS,
   type AppAppearance,
@@ -22,6 +22,7 @@ const handlers: {
   privacy?: (e: PrivacyChanged) => void;
   notesChanged?: (e: NotesChanged) => void;
   reminders?: (e: RemindersChanged) => void;
+  imagesDropped?: (e: ImagesDropped) => void;
   automations?: (a: Automations) => void;
   checklistReset?: (e: ChecklistReset) => void;
 } = {};
@@ -48,6 +49,10 @@ vi.mock("../../ipc/events", () => ({
   },
   onRemindersChanged: (h: (e: RemindersChanged) => void) => {
     handlers.reminders = h;
+    return Promise.resolve(() => undefined);
+  },
+  onImagesDropped: (h: (e: ImagesDropped) => void) => {
+    handlers.imagesDropped = h;
     return Promise.resolve(() => undefined);
   },
   onAutomationsChanged: (h: (a: Automations) => void) => {
@@ -93,13 +98,20 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     getReminder: vi.fn().mockResolvedValue(null),
     setReminder: vi.fn(),
     removeReminder: vi.fn().mockResolvedValue(undefined),
+    addImage: vi.fn(),
+    pickImage: vi.fn(),
+    pasteImage: vi.fn(),
     getSettings: vi.fn(),
     claimChecklistReset: vi.fn().mockResolvedValue(false),
   },
 }));
 
 import { CommandError, commands } from "../../ipc/commands";
+import { setImageUrlResolver } from "../../ipc/images";
 import { NoteWindow } from "./NoteWindow";
+
+// jsdom has no native scheme; any address will do.
+setImageUrlResolver((id) => `desknotes-image://localhost/${id}`);
 
 const ID = "2f1c8f0e-6a8b-4c51-9d4e-2b8f5f1a9c3d";
 const note = (over: Partial<Note> = {}): Note => ({
@@ -1857,6 +1869,246 @@ describe("NoteWindow", () => {
       expect(rule![1]).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
       expect(rule![1]).toMatch(/position:\s*absolute/);
       expect(css).toMatch(/\.dn-note\.is-high-contrast \.dn-done-strip[^{]*\{[^}]*var\(--dn-hc-line\)/);
+    });
+  });
+  describe("images", () => {
+    const IMG = "d".repeat(64);
+    const png = () => new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+    const editorEl = (container: HTMLElement) => container.querySelector(".tiptap") as HTMLElement;
+    const imageNodes = (container: HTMLElement) =>
+      JSON.stringify(
+        (editorEl(container) as HTMLElement & { editor: { getJSON: () => unknown } }).editor.getJSON(),
+      ).split(`"id":"${IMG}"`).length - 1;
+    /** A paste whose clipboard has both pixels and HTML, as a browser's "Copy Image" gives. */
+    const pasteWith = (el: HTMLElement, files: File[], html = `<img src="https://example.com/a.png">`) =>
+      fireEvent.paste(el, {
+        clipboardData: {
+          files,
+          types: ["Files", "text/html"],
+          getData: (type: string) => (type === "text/html" ? html : ""),
+        },
+      });
+
+    it("opens the shared fixture with its image", async () => {
+      const { container } = await openNote();
+      expect(container.querySelector(`.dn-image img[src="desknotes-image://localhost/${"a".repeat(64)}"]`)).not.toBeNull();
+    });
+
+    it("pasting a PNG with HTML inserts one image node and calls addImage once", async () => {
+      vi.mocked(commands.addImage).mockResolvedValue({ id: IMG, width: 800, height: 450 });
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [png()]);
+      await waitFor(() => expect(imageNodes(container)).toBe(1));
+      expect(commands.addImage).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(commands.addImage).mock.calls[0]![0]).toBe(ID);
+      // The pixels win: nothing from the HTML (no foreign image, no extra text).
+      expect(container.querySelector('img[src^="https:"]')).toBeNull();
+      await waitFor(() => expect(commands.saveNoteContent).toHaveBeenCalled());
+      expect(vi.mocked(commands.saveNoteContent).mock.calls.at(-1)![1]).toContain(`"id":"${IMG}"`);
+    });
+
+    it("a refused paste shows the message strip, and nothing is added", async () => {
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [new File(["<svg/>"], "a.svg", { type: "image/svg+xml" })]);
+      expect(await screen.findByRole("alert")).toHaveTextContent("DeskNotes can add PNG, JPEG, GIF or WebP images.");
+      expect(commands.addImage).not.toHaveBeenCalled();
+      // A new problem replaces the old one.
+      vi.mocked(commands.addImage).mockRejectedValue(new CommandError("image_too_large", "x"));
+      pasteWith(editorEl(container), [png()]);
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent("That image is too large. Images can be up to 5 MB."),
+      );
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("html_with_text_and_bitmap_pastes_as_text", async () => {
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [png()], "<p>Hello office</p><table><tr><td>1</td></tr></table>");
+      await waitFor(() => expect(editorEl(container)).toHaveTextContent("Hello office"));
+      expect(commands.addImage).not.toHaveBeenCalled();
+      expect(container.querySelectorAll(".dn-image")).toHaveLength(1); // the fixture's own
+    });
+
+    it("an image lands where it was pasted; a word selected meanwhile survives", async () => {
+      const para = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+      const { container } = await openNote({ content: { type: "doc", content: [para("Groceries for Saturday"), para("alpha beta")] } });
+      const ed = (editorEl(container) as HTMLElement & { editor: import("@tiptap/core").Editor }).editor;
+      let finish!: (i: { id: string; width: number; height: number }) => void;
+      vi.mocked(commands.addImage).mockReturnValue(new Promise((r) => (finish = r)));
+      // The cursor after "alpha" (the second line starts at 25).
+      await act(async () => ed.commands.setTextSelection(30));
+      pasteWith(editorEl(container), [png()]);
+      await waitFor(() => expect(commands.addImage).toHaveBeenCalledTimes(1));
+      // While it uploads: text typed at the top, then the word "beta" selected.
+      await act(async () => {
+        ed.commands.insertContentAt(1, "My ");
+        ed.commands.setTextSelection({ from: 34, to: 38 });
+      });
+      expect(ed.state.doc.textBetween(34, 38)).toBe("beta");
+      await act(async () => finish({ id: IMG, width: 800, height: 450 }));
+      const blocks = (ed.getJSON().content ?? []).map((n) => (n.type === "image" ? `image:${n.attrs!.id}` : ed.schema.nodeFromJSON(n).textContent));
+      expect(blocks).toEqual(["My Groceries for Saturday", "alpha", `image:${IMG}`, " beta"]);
+    });
+
+    it("a paste without image files is left to the editor", async () => {
+      const { container } = await openNote();
+      pasteWith(editorEl(container), [], "<p>plain words</p>");
+      await waitFor(() => expect(editorEl(container)).toHaveTextContent("plain words"));
+      expect(commands.addImage).not.toHaveBeenCalled();
+    });
+
+    it("does not add images to a read-only note", async () => {
+      const { container } = await openNote({ editLocked: true });
+      pasteWith(editorEl(container), [png()]);
+      fireEvent.paste(editorEl(container), { clipboardData: { files: [], types: [], getData: () => "" } });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(commands.addImage).not.toHaveBeenCalled();
+      expect(commands.pasteImage).not.toHaveBeenCalled();
+    });
+
+    describe("read natively (WebKitGTK gives the page no clipboard images or dropped files)", () => {
+      const IMG2 = "e".repeat(64);
+      const para = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+      type Ed = import("@tiptap/core").Editor;
+      async function openTwoLines() {
+        const view = await openNote({ content: { type: "doc", content: [para("Groceries for Saturday"), para("alpha beta")] } });
+        const ed = (editorEl(view.container) as HTMLElement & { editor: Ed }).editor;
+        return { ...view, ed };
+      }
+      const blocks = (ed: Ed) =>
+        (ed.getJSON().content ?? []).map((n) =>
+          n.type === "image" ? `image:${n.attrs!.id}` : ed.schema.nodeFromJSON(n).textContent,
+        );
+      /** What WebKitGTK gives the page for a screenshot on the clipboard: nothing at all. */
+      const pasteEmpty = (el: HTMLElement) =>
+        fireEvent.paste(el, { clipboardData: { files: [], types: [], getData: () => "" } });
+
+      it("an empty paste asks the core for the clipboard once and inserts its image at the paste point", async () => {
+        vi.mocked(commands.pasteImage).mockResolvedValue({ kind: "image", image: { id: IMG, width: 800, height: 450 } });
+        const { container, ed } = await openTwoLines();
+        // The cursor after "alpha" (the second line starts at 25).
+        await act(async () => ed.commands.setTextSelection(30));
+        pasteEmpty(editorEl(container));
+        await waitFor(() => expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha", `image:${IMG}`, " beta"]));
+        expect(commands.pasteImage).toHaveBeenCalledTimes(1);
+        expect(commands.pasteImage).toHaveBeenCalledWith(ID);
+        expect(commands.addImage).not.toHaveBeenCalled();
+      });
+
+      it("text from the clipboard is inserted as plain text at the paste point, never as HTML", async () => {
+        vi.mocked(commands.pasteImage).mockResolvedValue({ kind: "text", text: "<b>bold</b>\nnext" });
+        const { container, ed } = await openTwoLines();
+        await act(async () => ed.commands.setTextSelection(30));
+        pasteEmpty(editorEl(container));
+        await waitFor(() => expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha<b>bold</b>", "next beta"]));
+        expect(container.querySelector(".tiptap b, .tiptap strong")).toBeNull();
+      });
+
+      it("an empty clipboard inserts nothing, and a selection is not deleted at paste time", async () => {
+        vi.mocked(commands.pasteImage).mockResolvedValue({ kind: "nothing" });
+        const { container, ed } = await openTwoLines();
+        await act(async () => ed.commands.setTextSelection({ from: 31, to: 35 }));
+        pasteEmpty(editorEl(container));
+        await waitFor(() => expect(commands.pasteImage).toHaveBeenCalledTimes(1));
+        await new Promise((r) => setTimeout(r, 20));
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha beta"]);
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+
+      it("a refused clipboard image shows its message", async () => {
+        vi.mocked(commands.pasteImage).mockRejectedValue(new CommandError("image_too_large", "x"));
+        const { container, ed } = await openTwoLines();
+        pasteEmpty(editorEl(container));
+        expect(await screen.findByRole("alert")).toHaveTextContent("That image is too large. Images can be up to 5 MB.");
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha beta"]);
+      });
+
+      it("plain text on the clipboard stays the editor's paste", async () => {
+        const { container } = await openTwoLines();
+        fireEvent.paste(editorEl(container), {
+          clipboardData: { files: [], types: ["text/plain"], getData: (t: string) => (t === "text/plain" ? "words" : "") },
+        });
+        await new Promise((r) => setTimeout(r, 20));
+        expect(commands.pasteImage).not.toHaveBeenCalled();
+      });
+
+      it("dropped images go in order where they were dropped", async () => {
+        const { ed } = await openTwoLines();
+        const at = vi.spyOn(ed.view, "posAtCoords").mockReturnValue({ pos: 30, inside: -1 });
+        await act(async () =>
+          handlers.imagesDropped!({
+            noteId: ID,
+            texts: [],
+            images: [
+              { id: IMG, width: 800, height: 450 },
+              { id: IMG2, width: 10, height: 10 },
+            ],
+            problem: null,
+            x: 12,
+            y: 34,
+          }),
+        );
+        expect(at).toHaveBeenCalledWith({ left: 12, top: 34 });
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha", `image:${IMG}`, `image:${IMG2}`, " beta"]);
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+
+      it("a drop meant for another note inserts nothing", async () => {
+        const { ed } = await openTwoLines();
+        vi.spyOn(ed.view, "posAtCoords").mockReturnValue({ pos: 30, inside: -1 });
+        await act(async () =>
+          handlers.imagesDropped!({
+            noteId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+            images: [{ id: IMG, width: 800, height: 450 }],
+            texts: ["https://example.com/"],
+            problem: "image_too_large",
+            x: 1,
+            y: 1,
+          }),
+        );
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha beta"]);
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+
+      it("a dropped link goes in as plain text where it was dropped, with no message", async () => {
+        const { ed } = await openTwoLines();
+        vi.spyOn(ed.view, "posAtCoords").mockReturnValue({ pos: 30, inside: -1 });
+        await act(async () =>
+          handlers.imagesDropped!({ noteId: ID, images: [], texts: ["https://example.com/<b>"], problem: null, x: 1, y: 1 }),
+        );
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alphahttps://example.com/<b> beta"]);
+        expect(screen.queryByRole("alert")).toBeNull();
+      });
+
+      it("an image copied from another note pastes as that image, without reading the clipboard", async () => {
+        const { container, ed } = await openTwoLines();
+        await act(async () => ed.commands.setTextSelection(30));
+        const html = `<meta charset="utf-8"><img src="desknotes-image://localhost/${IMG}" data-image-id="${IMG}">`;
+        fireEvent.paste(editorEl(container), {
+          clipboardData: { files: [], types: ["text/html"], getData: (t: string) => (t === "text/html" ? html : "") },
+        });
+        await waitFor(() => expect(blocks(ed)).toContain(`image:${IMG}`));
+        expect(commands.pasteImage).not.toHaveBeenCalled();
+      });
+
+      it("a drop outside the text adds the images at the end, and its problem is shown", async () => {
+        const { ed } = await openTwoLines();
+        vi.spyOn(ed.view, "posAtCoords").mockReturnValue(null);
+        await act(async () =>
+          handlers.imagesDropped!({
+            noteId: ID,
+            images: [{ id: IMG, width: 800, height: 450 }],
+            texts: [],
+            problem: "image_unsupported",
+            x: 0,
+            y: 0,
+          }),
+        );
+        expect(blocks(ed)).toEqual(["Groceries for Saturday", "alpha beta", `image:${IMG}`, ""]);
+        expect(await screen.findByRole("alert")).toHaveTextContent("DeskNotes can add PNG, JPEG, GIF or WebP images.");
+      });
     });
   });
 

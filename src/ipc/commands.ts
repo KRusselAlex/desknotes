@@ -7,11 +7,13 @@ import type {
   Appearance,
   Automations,
   ExportResult,
+  ImageInfo,
   Note,
   NoteCounts,
   NoteFilter,
   NoteSize,
   NoteSummary,
+  PastedImage,
   PinCheck,
   PrivacyStatus,
   RecoveryChange,
@@ -38,14 +40,31 @@ export class CommandError extends Error {
   }
 }
 
+function toCommandError(raw: unknown): CommandError {
+  if (raw && typeof raw === "object" && "code" in raw && "message" in raw) {
+    return new CommandError(String(raw.code), String(raw.message));
+  }
+  return new CommandError("unknown", String(raw));
+}
+
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(command, args);
   } catch (raw) {
-    if (raw && typeof raw === "object" && "code" in raw && "message" in raw) {
-      throw new CommandError(String(raw.code), String(raw.message));
-    }
-    throw new CommandError("unknown", String(raw));
+    throw toCommandError(raw);
+  }
+}
+
+/** Like `call`, for a command that takes raw bytes as its body (no JSON, no base64). */
+async function callRaw<T>(
+  command: string,
+  bytes: Uint8Array,
+  headers: Record<string, string>,
+): Promise<T> {
+  try {
+    return await invoke<T>(command, bytes, { headers });
+  } catch (raw) {
+    throw toCommandError(raw);
   }
 }
 
@@ -130,6 +149,13 @@ export const commands = {
   cancelRestore: () => call<void>("cancel_restore"),
   /** Replaces every note with the chosen backup (after a safety copy). */
   restoreBackup: () => call<RestoreResult>("restore_backup"),
+  /** Checks, shrinks and stores an image for a note; the bytes travel as the raw IPC body. */
+  addImage: (noteId: string, bytes: Uint8Array) =>
+    callRaw<ImageInfo>("add_image", bytes, { "note-id": noteId }),
+  /** Opens the file picker in Rust and adds the chosen image; null when cancelled. */
+  pickImage: (noteId: string) => call<ImageInfo | null>("pick_image", { noteId }),
+  /** Reads the system clipboard in Rust: stores its image for the note, or gives back its text. */
+  pasteImage: (noteId: string) => call<PastedImage>("paste_image", { noteId }),
   /** Answer to save-all-notes: whether this window's text is saved. */
   quitReady: (saved: boolean) => call<void>("quit_ready", { saved }),
 

@@ -6,9 +6,14 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
-Database: migrations 4–7 (private notes, appearance, reminders, completed notes); backup format 5. A copy is made before upgrading.
+Database: migrations 4–8 (private notes, appearance, reminders, completed notes, images); backup format 6. A copy is made before upgrading.
 
 ### Added
+- Images in notes: paste a screenshot, drop an image file or use the new image button in
+  the format bar. PNG, JPEG, GIF and WebP; photos are scaled to 2000 px, location and other
+  metadata are removed, and no stored image is over 5 MB. Click an image and drag a corner to
+  resize it. Images stay on this computer, are hidden while a private note is locked, and are
+  included in backups (format 6; older backups still restore).
 - Automation rules (Settings → Automations), each off until you turn it on: mark a checklist
   done when every item is ticked (notes with a repeating reminder stay open); untick a checklist
   when its repeating reminder goes off; archive done notes after N days; empty old trash after N

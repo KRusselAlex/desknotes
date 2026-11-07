@@ -82,7 +82,7 @@ impl Database {
             "",
             &Appearance::default(),
         )?;
-        self.save_content(&id, &welcome_content().to_string())?;
+        self.save_content_in(&tx, &id, &welcome_content().to_string())?;
         self.set_setting(FIRST_RUN_DONE, "1")?;
         tx.commit()?;
         self.get_note(&id).map(Some)
