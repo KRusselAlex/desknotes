@@ -1,8 +1,8 @@
 # DeskNotes architecture and features
 
 How DeskNotes is built today, and what every feature does. This guide describes the code
-on `main` as of 2026-11-07 (version 0.2.0, schema version 7). Anything still in an open
-pull request is marked as such.
+on `main` as of 2026-11-07 (commit a946766: version 0.2.0, schema version 8, backup
+format 6).
 
 - The original Milestone 0 design, with the requirements and milestone plan, is
   [design.md](design.md). Its architecture and data model stop at migration 1.
@@ -28,6 +28,7 @@ this table are relative to `crates/desknotes-core/`.
 | `src/validation.rs` | Everything that crosses IPC: the Tiptap node and mark allowlist, link schemes, content limits, note ids, colours, per-note appearance. It also derives the title, search text and snippet from content. |
 | `src/geometry.rs` | Pure window-placement rules, such as `keep_on_screen`, in logical pixels. |
 | `src/backup.rs` | The portable backup file format: parse, validate and serialise. |
+| `src/image_prep.rs` | Pure image preparation: detect PNG, JPEG, GIF or WebP from the bytes, decode, scale, and re-encode without metadata. No SQL, no files. |
 | `src/privacy.rs` | Pure privacy-lock rules: the 6-digit PIN policy, Argon2id hashing, recovery codes and the wrong-PIN throttle. It uses no database and no clock. |
 | `src/reminders.rs` | Pure reminder time rules: wall-clock date and time, repeats, time zones, DST and snooze. Callers pass the clock. |
 | `src/error.rs` | `CoreError` and `CoreResult`. |
@@ -39,6 +40,8 @@ this table are relative to `crates/desknotes-core/`.
 | `src/db/reminders.rs` | Reminder storage, due and catch-up queries, and the Reminders list. |
 | `src/db/backup.rs` | Whole-collection export and restore. |
 | `src/db/welcome.rs` | The welcome note that a brand-new database gets once. |
+| `src/db/images.rs` | Image blobs keyed by SHA-256, which notes use which image, serving rules under the lock, and start-up clean-up. |
+| `src/db/automation.rs` | The automation rules' settings and the data changes they make (archive done notes, empty old trash, untick a checklist). |
 | `tests/` | Integration tests: privacy API and lock, and upgrades from released databases (`fixtures/release-0.2.0.*`). |
 
 ### `src-tauri/src`: the desktop shell (Tauri 2)
@@ -51,13 +54,15 @@ A thin adapter around the core: commands, windows, platform code.
 | `lib.rs` | Plugins, start-up order, the `generate_handler!` command list, and the final geometry flush on exit. |
 | `state.rs` | `AppState`: the `Database` behind a mutex, start-up errors, geometry writer, save-all coordinator, pending restore and activity time. The database file is `desknotes.db` in the app data folder, with safety copies in `backups/`. |
 | `error.rs` | `IpcError { code, message }`, the error shape every command returns. |
-| `commands/` | `#[tauri::command]` entry points, by area: `notes`, `note_settings`, `app`, `settings`, `backup`, `privacy`, `reminders`. Each validates its input and delegates to the core. |
+| `commands/` | `#[tauri::command]` entry points, by area: `notes`, `note_settings`, `app`, `settings`, `backup`, `privacy`, `reminders`, `images`. Each validates its input and delegates to the core. |
 | `windows/mod.rs` | Creates, shows, hides, places and closes every window. It also holds the event names and emitters, and the start-up restore. |
 | `windows/note_settings.rs` | The Note settings window and where it is placed. |
+| `windows/image_drop.rs` | Reads files dropped on a note window in Rust and stores the images. |
 | `windows/geometry.rs` | Debounced writer for window position and size: one thread, saves after 400 ms of stillness. |
 | `quit.rs` | The save-all handshake used before quit, export, restore, Hide all and lock. |
 | `privacy.rs` | Decides when the lock changes: save, then lock or unlock, then tell the windows. |
 | `reminders.rs` | The reminder scheduler thread and the notification button actions. |
+| `automation.rs` | When automation rules 3 and 4 run (start-up, hourly, after a change or an unlock), and rule 2 when a repeating reminder fires. |
 | `reset_pin.rs` | `desknotes --reset-pin`, run in a terminal before Tauri starts. |
 | `tray.rs` | The tray icon and its menu. |
 | `platform/` | Operating-system code, all of it Linux-only today (see below). |
@@ -71,6 +76,7 @@ A thin adapter around the core: commands, windows, platform code.
 | `single_instance.rs` | Detects whether DeskNotes is running, for `--reset-pin`. |
 | `gnome_shortcut.rs` | Adds DeskNotes' GNOME custom keyboard shortcut through GSettings. |
 | `fonts.rs` | Lists installed font families (`fc-list`). |
+| `clipboard.rs` | Reads a pasted image from the system clipboard, since WebKitGTK gives the page none. |
 
 Other shell files:
 
@@ -78,8 +84,9 @@ Other shell files:
   core window permissions, plus the opener limited to `http`, `https` and `mailto` links.
 - `capabilities/note-settings.json`: permissions for `note_settings`.
 - `polkit/`: the polkit policy used for the system-password check.
-- `tauri.conf.json`: bundle id `io.github.krusselalex.desknotes`, version, and the
-  `deb` and `appimage` targets.
+- `tauri.conf.json`: bundle id `io.github.krusselalex.desknotes`, version, the
+  `deb` and `appimage` targets, and the CSP. Its only non-`self` image source is the
+  local `desknotes-image:` scheme.
 
 ### `src`: the webview (React and TypeScript)
 
@@ -89,10 +96,11 @@ Other shell files:
 | `app/` | Activity reporting for the inactivity lock (`activity.ts`), theme, time formatting, window size. |
 | `ipc/commands.ts` | The **only** place that calls `invoke`; ESLint enforces this in `eslint.config.js`. Each function maps to one Rust command. |
 | `ipc/events.ts` | Event names and typed `listen` helpers. |
+| `ipc/images.ts` | Builds `desknotes-image` addresses for stored images, and reads the id back from one. |
 | `ipc/window.ts` | Thin wrappers over the Tauri window and opener APIs, such as `onCloseRequested` and `noteIdFromUrl`. |
-| `features/notes/` | The note window: editor, extensions, autosave, format bar, Aa popover, colour and reminder popovers, links, the "Marked done" strip. |
+| `features/notes/` | The note window: editor, extensions, autosave, format bar, Aa popover, colour and reminder popovers, links, images (`imageNode.ts`, `imageInput.ts`), checklist helpers for the automation rules, the "Marked done" strip. |
 | `features/manager/` | The manager window: tabs, search, rows, the Reminders list. |
-| `features/settings/` | The Settings window: panes for General, Appearance, Privacy, Backup and About, PIN setup, shortcut row. |
+| `features/settings/` | The Settings window: panes for General, Appearance, Automations, Privacy, Backup and About, PIN setup, shortcut row. |
 | `features/note-settings/` | The per-note settings window. |
 | `features/privacy/` | PIN pad, unlock dialog, private label dialog, forgotten PIN. |
 | `features/appearance/` | The colour presets and contrast helpers, plus the app-wide appearance hook. |
@@ -156,6 +164,8 @@ These rules hold everywhere:
    ADR: [0004](adr/0004-rich-text-as-validated-json.md).
 4. **No network.**
    - The app makes no requests and has no update check, telemetry or account.
+   - Images are served to the editor only through the local `desknotes-image` scheme.
+     The CSP allows no `http` or `https` images.
    - The only way out is the opener plugin. It opens a link in the system browser when
      the person clicks one. In a note this needs Ctrl+click. In About, the fixed links
      are named by id, never by URL (`open_external_link`).
@@ -194,6 +204,7 @@ Other ADRs: [0002 XWayland](adr/0002-xwayland-on-linux-wayland.md),
 - **Threads in the shell:**
   - the geometry writer;
   - the reminder scheduler;
+  - the automation rules (hourly);
   - D-Bus lock watchers and the inactivity ticker;
   - one notification listener;
   - short-lived threads for actions that wait on note windows (save-all).
@@ -202,8 +213,9 @@ Other ADRs: [0002 XWayland](adr/0002-xwayland-on-linux-wayland.md),
 
 1. `desknotes --reset-pin` is handled first. It runs in the terminal and exits without
    starting Tauri.
-2. `AppState::open` opens the database (migrating it if needed). The privacy lock starts
-   **on** whenever a PIN is set, before any window can ask for text.
+2. `AppState::open` opens the database (migrating it if needed) and removes images no
+   note uses, which happens only at start-up. The privacy lock starts **on** whenever a
+   PIN is set, before any window can ask for text.
 3. On a brand-new database the welcome note is created and centred on the primary screen.
 4. The **manager** is created. It is shown only when:
    - no note will open;
@@ -212,7 +224,8 @@ Other ADRs: [0002 XWayland](adr/0002-xwayland-on-linux-wayland.md),
 
    Otherwise it is created hidden.
 5. Each visible note's window opens.
-6. The tray icon is installed, the reminder scheduler starts, then the lock triggers start.
+6. The tray icon is installed. Automation rules 3 and 4 run once, then hourly on their
+   own thread. The reminder scheduler starts, then the lock triggers start.
 
 ### The four kinds of window
 
@@ -222,7 +235,7 @@ All are created only in Rust (`windows/`), never from the webview.
 |---|---|---|---|
 | `manager` | Note lists, search, Reminders | 560 × 620 (min 400 × 360), centred | Created at start-up, hidden or shown. Closing it **hides** it while any note is open; with no notes open, closing it quits the app. |
 | `note-<id>` | One note | The saved size, at least the "Minimum note size". The saved position goes through `keep_on_screen`. A new note cascades from the top-left of the primary work area (64 px, plus 28 px per open note, 8 steps). | Undecorated and not maximisable. Created **hidden, then shown**, so Mutter does not add 37 px to its height. `transparent` only when opacity is below 100 %, so crossing 100 % reopens the window (`reopen_note`). Collapsed notes are pinned to a 32 px strip. `close_note` saves the geometry and destroys the window. |
-| `settings` | App settings | 680 × 520 (min 560 × 420), centred | One at a time. `?section=` picks the pane (`general`, `appearance`, `privacy`, `privacy-new-pin`, `backup`, `about`). An open window is focused and sent `settings-section`. |
+| `settings` | App settings | 680 × 520 (min 560 × 420), centred | One at a time. `?section=` picks the pane (`general`, `appearance`, `automations`, `privacy`, `privacy-new-pin`, `backup`, `about`). An open window is focused and sent `settings-section`. |
 | `note_settings` | Settings for one note | 400 wide. Height is min(640, work area − 48), min 360 × 400. | One at a time. Placed beside the note: 12 px to its right, else to its left, else centred (`place_beside`). `?note=<id>` gives the note. Switching notes sends `note-settings-note`. The label uses an underscore on purpose, so it never matches `note-`. |
 
 **Geometry.**
@@ -233,6 +246,10 @@ All are created only in Rust (`windows/`), never from the webview.
 - With several monitors, the work area that overlaps a note most is used (`best_area`).
   A note off every screen falls back to the primary one.
 
+**Files dropped on a note.** Tauri's own drag-and-drop handler stays on, because
+WebKitGTK gives the page no dropped files. `on_window_event` hands a drop on a note window
+to `windows/image_drop.rs`, which reads and stores the files in Rust.
+
 **After a note hides.** If no note window and no visible manager remain, the manager is
 shown, so DeskNotes always stays reachable (`after_note_hidden`).
 
@@ -240,7 +257,7 @@ shown, so DeskNotes always stays reachable (`after_note_hidden`).
 
 ## 4. Data model
 
-### Tables (schema version 7, `crates/desknotes-core/src/db/migrations.rs`)
+### Tables (schema version 8, `crates/desknotes-core/src/db/migrations.rs`)
 
 All times are Unix milliseconds in UTC. Booleans are `INTEGER` 0 or 1.
 
@@ -281,6 +298,21 @@ All times are Unix milliseconds in UTC. Booleans are `INTEGER` 0 or 1.
 | `due_at` | INTEGER | The next occurrence, in UTC |
 | `snoozed_until`, `fired_at` | INTEGER NULL | |
 
+**`images`** (v8)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PK | Lower-case hex SHA-256 of `bytes`, so the same image is stored once |
+| `mime` | TEXT | `image/png`, `image/jpeg`, `image/gif` or `image/webp` |
+| `width`, `height` | INTEGER | Pixels, after preparation |
+| `bytes` | BLOB | The re-encoded image (at most 5 MB) |
+| `created_at` | INTEGER | |
+
+**`note_images`** (v8): `note_id` (FK to `notes`, `ON DELETE CASCADE`), `image_id` (FK to
+`images`), primary key `(note_id, image_id)`, index on `image_id`. It is rewritten from a
+note's content each time the note is saved. Images that no note uses are deleted only at
+start-up, so Undo after removing an image always works.
+
 **`settings`**: `key TEXT PK`, `value TEXT`.
 
 **Migration history**
@@ -294,9 +326,7 @@ All times are Unix milliseconds in UTC. Booleans are `INTEGER` 0 or 1.
 | 5 | `notes.appearance` |
 | 6 | `reminders` table |
 | 7 | `notes.completed_at` |
-
-In an open PR: migration **v8**, which adds the `images` and `note_images` tables for
-images in notes ([PR #24](https://github.com/KRusselAlex/desknotes/pull/24)).
+| 8 | `images` and `note_images` tables |
 
 ### Settings keys
 
@@ -310,6 +340,11 @@ images in notes ([PR #24](https://github.com/KRusselAlex/desknotes/pull/24)).
 | `appearance_default_font` | A font name, or empty for the system default | `db/settings.rs` |
 | `appearance_default_size` | `"10"`–`"32"` px (default 15) | `db/settings.rs` |
 | `first_run_done` | `"1"` once the welcome note was created | `db/settings.rs` |
+| `auto_complete_checklists` | `"1"` or absent: automation rule 1 | `db/settings.rs` |
+| `reset_checklists_on_repeat` | `"1"` or absent: rule 2 | `db/settings.rs` |
+| `archive_done_enabled`, `archive_done_days` | `"1"` or absent; days 1–90 (default 7): rule 3 | `db/settings.rs` |
+| `purge_trash_enabled`, `purge_trash_days` | `"1"` or absent; days 7–365 (default 30): rule 4 | `db/settings.rs` |
+| `purge_trash_off_by_restore` | `"1"` when a backup restore switched rule 4 off | `db/settings.rs` |
 | `last_backup_at` | Time of the last successful export | `db/backup.rs` |
 | `pin_hash` | Argon2id hash of the PIN | `db/privacy.rs` |
 | `pin_recovery_hash` | Hash of the recovery code | `db/privacy.rs` |
@@ -319,7 +354,8 @@ images in notes ([PR #24](https://github.com/KRusselAlex/desknotes/pull/24)).
 | `recovery_method` | `"system"` or `"code"` | `db/privacy.rs` |
 
 Reading a bad stored value never fails: each typed accessor falls back to its default.
-"Launch at login" is not stored here. It is the presence of the autostart entry (§6.13).
+Each rule's days are kept while the rule is off, so turning it back on restores them.
+"Launch at login" is not stored here. It is the presence of the autostart entry (§6.15).
 
 ### Opening the database and safety copies (`db/mod.rs`, `db/backup.rs`)
 
@@ -336,19 +372,19 @@ Reading a bad stored value never fails: each typed accessor falls back to its de
 
 ### Backup format
 
-A backup is one JSON file, format `desknotes-backup`, **version 5** on `main`. It holds
-every note (active, archived, trash) with its window state, appearance, private flag,
-reminder and done date. It holds **no** settings, PIN or recovery code. Older versions
+A backup is one JSON file, format `desknotes-backup`, **version 6**. It holds every note
+(active, archived, trash) with its window state, appearance, private flag, reminder and
+done date. A top-level `images` list carries the pictures the notes use, as base64. The
+file may be at most 300 MiB. It holds **no** settings, PIN or recovery code. Formats 1–5
 still restore. Full specification: [backup-format.md](backup-format.md). Code:
-`crates/desknotes-core/src/backup.rs` and `db/backup.rs`. Format 6, which carries
-images, is in [PR #24](https://github.com/KRusselAlex/desknotes/pull/24).
+`crates/desknotes-core/src/backup.rs` and `db/backup.rs`.
 
 ---
 
 ## 5. IPC reference
 
 The webview calls commands through `src/ipc/commands.ts`, which uses the same names in
-camelCase. Errors arrive as `CommandError { code, message }`. There are 63 commands,
+camelCase. Errors arrive as `CommandError { code, message }`. There are 70 commands,
 registered in `src-tauri/src/lib.rs`.
 
 ### Commands
@@ -377,6 +413,7 @@ registered in `src-tauri/src/lib.rs`.
 | `hide_all_notes` | Saves all notes, hides them, and remembers which | Manager menu; tray and shortcut (Rust) |
 | `show_hidden_notes` | Shows those notes again | Manager menu; tray and shortcut (Rust) |
 | `hidden_note_count` | How many notes "Show hidden notes" would bring back | Manager |
+| `claim_checklist_reset` | Takes this note's pending checklist reset (automation rule 2). True means untick now, once per reset | Note window (on load and on `checklist-reset`) |
 
 **Note settings** (`commands/note_settings.rs`)
 
@@ -410,6 +447,21 @@ registered in `src-tauri/src/lib.rs`.
 | `get_toggle_shortcut` / `set_toggle_shortcut` / `remove_toggle_shortcut` | The GNOME "Show / hide all notes" shortcut | Settings › General (shortcut row) |
 | `open_data_folder` | Shows the data folder in the file manager | Settings |
 | `open_external_link` | Opens a fixed About link (`source`, `issues`, `more_tools`, `notices`, `license`) | Settings › About |
+| `set_automations` | Saves the automation rules, runs rules 3 and 4 once, emits `automations-changed`. It never turns rule 4 on. Settings window only | Settings › Automations |
+| `enable_purge_trash` | Turns "Empty old trash" on with its days (7–365), after its confirmation dialog: the only way to switch it on. Settings window only | Settings › Automations |
+| `count_purgeable` | How many notes "Empty old trash" would delete now with these days, for the dialog | Settings › Automations |
+
+**Images** (`commands/images.rs`)
+
+| Command | What it does | Called by |
+|---|---|---|
+| `add_image` | Checks, prepares and stores an image for a note. The bytes travel as the raw IPC body, and the `note-id` header names the note | Note window (`imageInput.ts`) |
+| `pick_image` | "Insert image…": opens the file dialog in Rust and adds the chosen image; null when cancelled | Note window (`imageInput.ts`) |
+| `paste_image` | Reads the system clipboard in Rust: stores its image for the note, or gives back its text | Note window (`imageInput.ts`), on a paste the page sees as empty |
+
+Stored images are served by the asynchronous `desknotes-image` URI scheme
+(`commands::images::handle_scheme`), not by a command. Only a 64-hex id is accepted.
+While the lock is on, an image used only by locked private notes gets an empty 404.
 
 **Backup** (`commands/backup.rs`)
 
@@ -469,13 +521,18 @@ and `ACTION_FAILED` are defined in `privacy.rs` and `tray.rs`).
 | `note-settings-note` | note id | `windows/note_settings.rs` | Window-scoped: `note_settings` | Note settings |
 | `app-appearance-changed` | `AppAppearance` | `windows::emit_app_appearance_changed` | App-wide | Every window (`useAppAppearance`) |
 | `reminders-changed` | `{ noteId \| null }`; never a title | `windows::emit_reminders_changed` | App-wide | Manager, Note window |
+| `images-dropped` | `{ noteId, images, texts, problem, x, y }` | `windows/image_drop.rs` | Window-scoped: that note | Note window: inserts at the drop point |
+| `automations-changed` | `Automations` (the saved rules) | `commands/settings.rs` | App-wide | Note window, Settings |
+| `checklist-reset` | `{ noteId }` | `src-tauri/src/automation.rs` (rule 2, when a repeating reminder fires) | Window-scoped: that note | Note window: claims it, then unticks |
 
-**Known issue on `main` (DES-41):** the webview listens with the global `listen()` for
-every event. So a window-scoped event also reaches the same listener in other windows.
-Example: Trash on one note's manager row could also trash another open note.
-[PR #25](https://github.com/KRusselAlex/desknotes/pull/25) (open) adds a `listenHere()`
-helper that listens with the window as target. It is used for `note-action`,
-`privacy-changed`, `settings-section`, `note-resized` and `note-settings-note`.
+**How the webview listens.** Tauri 2 delivers an `emit_to` event to plain `listen()`
+listeners in every window. So the helpers for window-scoped events use `listenHere()` in
+`src/ipc/events.ts`, which listens with the current webview window as target:
+`note-action`, `privacy-changed`, `settings-section`, `note-resized`,
+`note-settings-note`, `images-dropped` and `checklist-reset`. App-wide events use plain
+`listen()`. This fixed DES-41, where Trash on one note's manager row could also trash
+another open note ([PR #25](https://github.com/KRusselAlex/desknotes/pull/25),
+[check](testing/des-41-window-events-verification.md)).
 
 ---
 
@@ -524,12 +581,41 @@ real-app check are.
   [check](testing/m3-text-style-verification.md);
   [note menu spec](superpowers/specs/2026-11-05-note-menu-design.md) and
   [check](testing/note-menu-verification.md).
-- **In an open PR:** images in notes. Paste, drop or "Insert image…"; images are re-saved
-  in Rust and stored in the database
-  ([PR #24](https://github.com/KRusselAlex/desknotes/pull/24), branch
-  `feat/images-in-notes`).
 
-### 6.3 Colours and appearance
+### 6.3 Images in notes
+
+- **What the user sees:**
+  - Three ways to add an image: paste (Ctrl+V), drop an image file on the note, or the
+    **Insert image…** button in the format bar.
+  - PNG, JPEG, GIF and WebP are accepted, detected from the bytes. SVG and anything else
+    is refused, and a message strip says why.
+  - An image is its own block, with resize handles from 10 % to 100 % of the width.
+    It lands where it was pasted or dropped.
+  - A paste from Word or LibreOffice stays text.
+- **How it works:**
+  - WebKitGTK gives the page no clipboard images and no dropped files. So Rust reads
+    them: `paste_image` (`platform/clipboard.rs`), drops in `windows/image_drop.rs`
+    (sent back with `images-dropped`), and the picker in `pick_image`. No path crosses
+    the webview.
+  - Every image is decoded and re-encoded in `image_prep.rs`:
+    - photos larger than 2000 px on a side are scaled down;
+    - EXIF, GPS, comments and colour profiles are dropped;
+    - no stored image is over 5 MB;
+    - animated GIFs are never scaled.
+  - Images are stored in the database by SHA-256 (`images`, `note_images`). The editor
+    loads them through `desknotes-image://localhost/<id>` (`src/ipc/images.ts`).
+  - The `image` node is in the allowlist in `validation.rs`. It may only sit in the
+    document, a list item, a task item or a quote, with a width of 10–100.
+  - While the lock is on, an image used only by locked private notes is not served.
+  - Images no note uses are deleted only at start-up.
+  - Backups (format 6) carry the images.
+- **Code:** `src/features/notes/imageNode.ts`, `imageInput.ts`, `ImageMessage.tsx`,
+  `FormatBar.tsx`; `src-tauri/src/commands/images.rs`, `windows/image_drop.rs`,
+  `platform/clipboard.rs`; `crates/desknotes-core/src/image_prep.rs`, `db/images.rs`.
+- **Design and check:** [spec](superpowers/specs/2026-11-06-images-in-notes-design.md),
+  [check](testing/m3-images-verification.md).
+
+### 6.4 Colours and appearance
 
 - **What the user sees:**
   - Eight note colours: Lemon, Peach, Rose, Lilac, Sky, Mint, Sand, Paper.
@@ -552,7 +638,7 @@ real-app check are.
   [spec](superpowers/specs/2026-11-04-appearance-settings-design.md),
   [check](testing/m3-appearance-verification.md).
 
-### 6.4 Note settings
+### 6.5 Note settings
 
 - **What the user sees:** a 400 px window beside the note. It sets:
   - background colour;
@@ -578,7 +664,7 @@ real-app check are.
   [check](testing/m3-note-settings-verification.md). Always on top, collapse, edit lock
   and minimum size are checked in [m2-verification.md](testing/m2-verification.md).
 
-### 6.5 Manager lists and search
+### 6.6 Manager lists and search
 
 - **What the user sees:**
   - Tabs: Active · Completed · Reminders · Archived · Trash, with counts.
@@ -598,7 +684,7 @@ real-app check are.
 - **Design and check:** [design.md](design.md) §5 (Manager window),
   [m1-verification.md](testing/m1-verification.md).
 
-### 6.6 Archive, trash and completed
+### 6.7 Archive, trash and completed
 
 - **What the user sees:**
   - **Archive** hides a note and keeps it searchable under Archived.
@@ -608,6 +694,8 @@ real-app check are.
   - **Mark done** (Ctrl+D or the menu) shows a "Marked done" strip with undo (Ctrl+Z).
     Then the window closes and the note moves to Completed. Reopening it opens the window
     again.
+  - Automation rules can also archive done notes and empty old trash after some days
+    (§6.8).
 - **How it works:**
   - `set_archived`, `trash_note`, `restore_note`, `purge_note` and `set_completed` are in
     `db/notes.rs`.
@@ -621,7 +709,42 @@ real-app check are.
   [check](testing/m4-completed-verification.md). Archive and trash: [design.md](design.md)
   §5.
 
-### 6.7 Reminders
+### 6.8 Automation rules
+
+- **What the user sees:** Settings › Automations has four rules, all off by default:
+  1. **Mark a checklist done when every item is ticked.** Ticking the last item shows the
+     "Marked done" strip with Undo, as Mark done does. This rule skips a note with a
+     repeating reminder, so a routine stays open.
+  2. **Untick a checklist when its repeating reminder goes off.**
+     - An open note is unticked in the editor, as one undoable step, with a strip.
+     - A closed note is changed in the database.
+     - Locked, edit-locked, done, archived and trashed notes are skipped.
+     - It runs once per occurrence.
+  3. **Archive done notes after N days** (1–90, default 7).
+  4. **Empty old trash after N days** (7–365, default 30). This is the only rule that
+     deletes. Turning it on needs a confirmation dialog that says how many notes would go.
+     Restoring a backup switches it off, keeping its days, and Automations says why.
+- **How it works:**
+  - The core owns what each rule changes (`db/automation.rs`). Days are counted as
+    86 400 000 ms in UTC, never calendar days.
+  - The shell owns when rules run (`src-tauri/src/automation.rs`). Rules 3 and 4 run:
+    - once at start-up, before any window shows;
+    - then hourly;
+    - right after the settings change;
+    - after an unlock.
+  - Locked private notes are skipped.
+  - Rule 1 runs in the note window (`checklist.ts`).
+  - Rule 2 is triggered by the reminder scheduler. An open window gets `checklist-reset`,
+    then claims it with `claim_checklist_reset` so it unticks once.
+  - Only the Settings window may change the rules (`set_automations`,
+    `enable_purge_trash`). Every window hears `automations-changed`.
+- **Code:** `src/features/settings/AutomationsPane.tsx`, `src/features/notes/checklist.ts`,
+  `DoneStrip.tsx`; `src-tauri/src/automation.rs`, `commands/settings.rs`;
+  `crates/desknotes-core/src/db/automation.rs`.
+- **Design and check:** [spec](superpowers/specs/2026-11-06-automation-rules-design.md),
+  [check](testing/m4-automation-rules-verification.md).
+
+### 6.9 Reminders
 
 - **What the user sees:**
   - One reminder per note: a date, a time, and a repeat (none, daily, weekdays, weekly,
@@ -648,7 +771,7 @@ real-app check are.
 - **Design and check:** [spec](superpowers/specs/2026-11-04-reminders-design.md),
   [check](testing/m4-reminders-verification.md).
 
-### 6.8 Privacy lock and PIN reset
+### 6.10 Privacy lock and PIN reset
 
 - **What the user sees:**
   - Any note can be made private, with an optional neutral label ("Private note" when it
@@ -678,7 +801,7 @@ real-app check are.
 - **Design and check:** [spec](superpowers/specs/2026-11-02-privacy-lock-design.md)
   (D1–D14), [check](testing/m3-verification.md).
 
-### 6.9 Backup and restore
+### 6.11 Backup and restore
 
 - **What the user sees:**
   - Settings › Backup › Export saves `desknotes-YYYY-MM-DD.json` wherever the user
@@ -688,15 +811,17 @@ real-app check are.
     2. Confirm: every note is replaced and the visible ones reopen.
 - **How it works:**
   - Both export and restore first ask every open note to save.
-  - Export writes to a temporary file, then moves it into place.
+  - Export writes to a temporary file, then moves it into place. It includes the images
+    the notes use (format 6, at most 300 MiB).
   - Restore writes `backups/pre-restore-<ms>.db`, then replaces everything in one
-    transaction.
+    transaction. If "Empty old trash" was on, the same transaction switches it off
+    (`purge_trash_off_by_restore`), because restored notes keep their old trash dates.
 - **Code:** `src/features/settings/BackupPane.tsx`, `commands/backup.rs`,
   `crates/desknotes-core/src/backup.rs`, `db/backup.rs`.
 - **Format and check:** [backup-format.md](backup-format.md),
   [m2-verification.md](testing/m2-verification.md) (Backup and restore).
 
-### 6.10 Safe updates and releases
+### 6.12 Safe updates and releases
 
 - **What the user sees:**
   - New versions are downloaded by hand from GitHub Releases (`.deb` or AppImage). There
@@ -718,7 +843,7 @@ real-app check are.
   [upgrading.md](upgrading.md), [releasing.md](releasing.md),
   [check](testing/m5-safe-updates-verification.md).
 
-### 6.11 Welcome note and About
+### 6.13 Welcome note and About
 
 - **What the user sees:**
   - **Welcome note:** on the very first start, a brand-new database gets one welcome
@@ -737,7 +862,7 @@ real-app check are.
 - **Design and check:** [spec](superpowers/specs/2026-11-05-welcome-and-about-design.md),
   [check](testing/m5-welcome-about-verification.md).
 
-### 6.12 Tray and shortcuts
+### 6.14 Tray and shortcuts
 
 - **Tray icon** (AppIndicator; the menu opens on left click too):
   - New note;
@@ -767,7 +892,7 @@ real-app check are.
 - **Check:** [m2-verification.md](testing/m2-verification.md) (Tray icon, Hide all, Show
   hidden notes; Show / hide all shortcut).
 
-### 6.13 Launch at login
+### 6.15 Launch at login
 
 - **What the user sees:** the Settings › General switch "Launch at login".
 - **How it works:**
