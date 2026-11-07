@@ -231,6 +231,10 @@ mod tests {
             ..db.automations().unwrap()
         })
         .unwrap();
+        // `set_automations` never turns rule 4 on; its dialog's command does.
+        if purge {
+            db.enable_purge_trash(30).unwrap();
+        }
     }
 
     /// Notes as seen from a run 31 days from now (rules take `now` as given): one

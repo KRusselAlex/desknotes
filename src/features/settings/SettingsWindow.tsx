@@ -109,9 +109,9 @@ export function SettingsWindow() {
   }
 
   /** Save the automation rules; the saved object, or null if refused (the reason is shown). */
-  const saveAutomations = useCallback(async (next: Automations): Promise<Automations | null> => {
+  const keepAutomations = useCallback(async (run: () => Promise<Automations>): Promise<Automations | null> => {
     try {
-      const saved = await commands.setAutomations(next);
+      const saved = await run();
       setSettings((s) => (s ? { ...s, automations: saved } : s));
       setError(null);
       return saved;
@@ -120,6 +120,14 @@ export function SettingsWindow() {
       return null;
     }
   }, []);
+  const saveAutomations = useCallback(
+    (next: Automations) => keepAutomations(() => commands.setAutomations(next)),
+    [keepAutomations],
+  );
+  const enablePurgeTrash = useCallback(
+    (days: number) => keepAutomations(() => commands.enablePurgeTrash(days)),
+    [keepAutomations],
+  );
 
   // Appearance saves the whole value. The pane shows what was asked for at once; a change made
   // while a save runs waits (only the newest is kept) so saves never overlap. If one is refused,
@@ -238,6 +246,7 @@ export function SettingsWindow() {
             <AutomationsPane
               value={settings.automations}
               onSave={saveAutomations}
+              onEnablePurge={enablePurgeTrash}
               onError={(e) => setError(e.message)}
             />
           )}

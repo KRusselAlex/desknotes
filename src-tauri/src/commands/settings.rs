@@ -269,10 +269,32 @@ pub fn set_automations(
     automations_window(window.label())?;
     let saved = state.with_db(|db| db.set_automations(&automations))?;
     automation::run_soon(&app);
-    if let Err(e) = app.emit(AUTOMATIONS_CHANGED, &saved) {
+    emit_automations(&app, &saved);
+    Ok(saved)
+}
+
+/// Settings only. Turn "Empty old trash" on with `days` (7–365) after its dialog, the only
+/// way it is switched on: `set_automations` keeps it off. Saves, runs the rules once at
+/// once (on another thread) and tells every window. Out-of-range days are refused.
+#[tauri::command]
+pub fn enable_purge_trash(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    days: u32,
+) -> IpcResult<Automations> {
+    automations_window(window.label())?;
+    let saved = state.with_db(|db| db.enable_purge_trash(days))?;
+    automation::run_soon(&app);
+    emit_automations(&app, &saved);
+    Ok(saved)
+}
+
+/// Tell every window the rules as stored, so an open Settings window never keeps old ones.
+pub(crate) fn emit_automations(app: &AppHandle, automations: &Automations) {
+    if let Err(e) = app.emit(AUTOMATIONS_CHANGED, automations) {
         eprintln!("DeskNotes: could not notify windows of the automations: {e}");
     }
-    Ok(saved)
 }
 
 /// Only the Settings window changes the rules: turning on "Empty old trash" deletes
@@ -467,6 +489,24 @@ mod automation_tests {
             assert_eq!(refused.code, "not_allowed", "{other:?}");
             assert_eq!(
                 refused.message, "Automations can only be changed in Settings.",
+                "{other:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn enable_purge_trash_only_from_settings() {
+        // `enable_purge_trash` runs this check on its window's label before anything else.
+        assert!(automations_window("settings").is_ok());
+        for other in [
+            "manager",
+            "note-0b9d6f6e-3f0a-4b8e-9a51-2a4c1d7e8f90",
+            "note_settings",
+            "",
+        ] {
+            assert_eq!(
+                automations_window(other).unwrap_err().code,
+                "not_allowed",
                 "{other:?}"
             );
         }

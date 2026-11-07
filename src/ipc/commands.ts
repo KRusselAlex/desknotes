@@ -108,6 +108,9 @@ export const commands = {
    * and "Empty old trash" once and tells every window. Returns what was saved;
    * out-of-range days throw a validation error. */
   setAutomations: (automations: Automations) => call<Automations>("set_automations", { automations }),
+  /** Settings window only. Turns "Empty old trash" on with `days` (7–365) after its dialog: the
+   * only way it is switched on, since `setAutomations` keeps it off. Returns what was saved. */
+  enablePurgeTrash: (days: number) => call<Automations>("enable_purge_trash", { days }),
   /** How many notes "Empty old trash" would delete right now with `days` (7–365). */
   countPurgeable: (days: number) => call<number>("count_purgeable", { days }),
   /** Takes this note's pending checklist reset (sent with `checklist-reset`). True means

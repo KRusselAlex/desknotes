@@ -80,8 +80,12 @@ impl Database {
 
     /// Validate and store all rule settings in one transaction, and return what
     /// is now stored. Out-of-range days are refused (`Validation`, naming the
-    /// field) and nothing changes. Turning rule 4 on clears the "turned off by a
-    /// restore" note; `purge_off_by_restore` in the input is ignored.
+    /// field) and nothing changes. `purge_off_by_restore` in the input is ignored.
+    ///
+    /// This never turns rule 4 on: if it is stored off, it stays off whatever the
+    /// input says (a window that has not heard of a restore must not switch it back
+    /// on). Turning it off and changing its days work. [`Self::enable_purge_trash`]
+    /// is the only way on, and Settings asks first.
     pub fn set_automations(&self, a: &Automations) -> CoreResult<Automations> {
         if !ARCHIVE_DONE_DAYS_RANGE.contains(&a.archive_done_days) {
             return Err(CoreError::Validation(format!(
@@ -98,16 +102,14 @@ impl Database {
             )));
         }
         let tx = self.conn.unchecked_transaction()?;
+        let purge_was_on = self.get_setting(PURGE_TRASH_ENABLED)?.as_deref() == Some("1");
         for (key, on) in [
             (AUTO_COMPLETE_CHECKLISTS, a.auto_complete_checklists),
             (RESET_CHECKLISTS_ON_REPEAT, a.reset_checklists_on_repeat),
             (ARCHIVE_DONE_ENABLED, a.archive_done_enabled),
-            (PURGE_TRASH_ENABLED, a.purge_trash_enabled),
+            (PURGE_TRASH_ENABLED, a.purge_trash_enabled && purge_was_on),
         ] {
             put_flag(&tx, key, on)?;
-        }
-        if a.purge_trash_enabled {
-            put_flag(&tx, PURGE_TRASH_OFF_BY_RESTORE, false)?;
         }
         for (key, days) in [
             (ARCHIVE_DONE_DAYS, a.archive_done_days),
@@ -119,6 +121,29 @@ impl Database {
                 params![key, days.to_string()],
             )?;
         }
+        tx.commit()?;
+        self.automations()
+    }
+
+    /// Turn rule 4 on with `days` (7–365), the one way it is switched on. Out-of-range
+    /// days are refused (`Validation`) and nothing changes. Clears the "turned off by
+    /// a restore" note. Returns what is now stored.
+    pub fn enable_purge_trash(&self, days: u32) -> CoreResult<Automations> {
+        if !PURGE_TRASH_DAYS_RANGE.contains(&days) {
+            return Err(CoreError::Validation(format!(
+                "purgeTrashDays must be {}–{}",
+                PURGE_TRASH_DAYS_RANGE.start(),
+                PURGE_TRASH_DAYS_RANGE.end()
+            )));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        put_flag(&tx, PURGE_TRASH_ENABLED, true)?;
+        put_flag(&tx, PURGE_TRASH_OFF_BY_RESTORE, false)?;
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![PURGE_TRASH_DAYS, days.to_string()],
+        )?;
         tx.commit()?;
         self.automations()
     }
@@ -407,6 +432,7 @@ mod tests {
     #[test]
     fn set_automations_round_trips_and_ignores_the_restore_flag() {
         let db = db();
+        db.enable_purge_trash(30).unwrap();
         let saved = db
             .set_automations(&Automations {
                 purge_off_by_restore: true,
@@ -428,6 +454,84 @@ mod tests {
             .unwrap();
         assert!(!off.archive_done_enabled);
         assert_eq!(off.archive_done_days, 12);
+    }
+
+    #[test]
+    fn set_automations_never_turns_purge_on() {
+        // Stored off, input on: rule 4 stays off, the other fields are saved,
+        // and a restore note is not cleared.
+        let db = db();
+        db.set_setting(PURGE_TRASH_OFF_BY_RESTORE, "1").unwrap();
+        let saved = db
+            .set_automations(&Automations {
+                archive_done_days: 12,
+                purge_trash_days: 50,
+                ..on()
+            })
+            .unwrap();
+        assert!(!saved.purge_trash_enabled, "must stay off");
+        assert!(saved.purge_off_by_restore, "the note stays");
+        assert!(saved.auto_complete_checklists && saved.reset_checklists_on_repeat);
+        assert!(saved.archive_done_enabled);
+        assert_eq!((saved.archive_done_days, saved.purge_trash_days), (12, 50));
+        assert_eq!(db.automations().unwrap(), saved);
+
+        // Stored on, input on with new days: the days are saved, it stays on.
+        db.enable_purge_trash(30).unwrap();
+        let saved = db
+            .set_automations(&Automations {
+                purge_trash_days: 20,
+                ..on()
+            })
+            .unwrap();
+        assert!(saved.purge_trash_enabled);
+        assert_eq!(saved.purge_trash_days, 20);
+
+        // Turning it off still works.
+        let saved = db
+            .set_automations(&Automations {
+                purge_trash_enabled: false,
+                ..on()
+            })
+            .unwrap();
+        assert!(!saved.purge_trash_enabled);
+    }
+
+    #[test]
+    fn enable_purge_trash_turns_on_and_clears_restore_flag() {
+        let db = db();
+        db.set_setting(PURGE_TRASH_OFF_BY_RESTORE, "1").unwrap();
+        db.set_automations(&Automations {
+            archive_done_days: 9,
+            ..Automations {
+                auto_complete_checklists: false,
+                reset_checklists_on_repeat: false,
+                archive_done_enabled: false,
+                purge_trash_enabled: false,
+                ..on()
+            }
+        })
+        .unwrap();
+        let saved = db.enable_purge_trash(45).unwrap();
+        assert!(saved.purge_trash_enabled && !saved.purge_off_by_restore);
+        assert_eq!(saved.purge_trash_days, 45);
+        assert_eq!(saved.archive_done_days, 9, "other settings are untouched");
+        assert_eq!(db.automations().unwrap(), saved);
+
+        // Out of range: refused, nothing changes.
+        db.set_automations(&Automations {
+            purge_trash_enabled: false,
+            ..saved
+        })
+        .unwrap();
+        let before = db.automations().unwrap();
+        for days in [0, 6, 366, u32::MAX] {
+            let e = db.enable_purge_trash(days).unwrap_err();
+            assert_eq!(e.code(), "validation", "{days}");
+            assert!(e.to_string().contains("purgeTrashDays"), "{e}");
+        }
+        assert_eq!(db.automations().unwrap(), before);
+        assert!(!before.purge_trash_enabled);
     }
 
     #[test]

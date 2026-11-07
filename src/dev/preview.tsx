@@ -397,10 +397,20 @@ mockIPC(
         if (!inRange(next.purgeTrashDays, 7, 365)) {
           throw { code: "validation", message: "purgeTrashDays must be 7–365" };
         }
+        // As natively, saving never turns "Empty old trash" on: only enable_purge_trash does.
         automations = {
           ...next,
-          purgeOffByRestore: next.purgeTrashEnabled ? false : automations.purgeOffByRestore,
+          purgeTrashEnabled: next.purgeTrashEnabled && automations.purgeTrashEnabled,
+          purgeOffByRestore: automations.purgeOffByRestore,
         };
+        void emit("automations-changed", { ...automations });
+        return { ...automations };
+      }
+      case "enable_purge_trash": {
+        if (!inRange(a.days as number, 7, 365)) {
+          throw { code: "validation", message: "purgeTrashDays must be 7–365" };
+        }
+        automations = { ...automations, purgeTrashEnabled: true, purgeTrashDays: a.days as number, purgeOffByRestore: false };
         void emit("automations-changed", { ...automations });
         return { ...automations };
       }

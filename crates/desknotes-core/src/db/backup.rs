@@ -443,6 +443,7 @@ mod tests {
             purge_trash_days: 45,
             purge_off_by_restore: false,
         };
+        db.enable_purge_trash(45).unwrap();
         db.set_automations(&rules).unwrap();
         db.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
             .unwrap();
@@ -460,13 +461,17 @@ mod tests {
             rules
         );
 
-        // Turning it on again clears the note.
-        let again = db
+        // Saving the rules cannot turn it on again, and keeps the note.
+        let kept = db
             .set_automations(&Automations {
                 purge_trash_enabled: true,
                 ..rules.clone()
             })
             .unwrap();
+        assert!(!kept.purge_trash_enabled && kept.purge_off_by_restore);
+
+        // Turning it on through its own method clears the note.
+        let again = db.enable_purge_trash(45).unwrap();
         assert!(again.purge_trash_enabled && !again.purge_off_by_restore);
 
         // A restore while the rule is off leaves it as it is: no flag.

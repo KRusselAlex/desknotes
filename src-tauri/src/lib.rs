@@ -116,6 +116,7 @@ pub fn run() {
             commands::settings::get_app_appearance,
             commands::settings::set_app_appearance,
             commands::settings::set_automations,
+            commands::settings::enable_purge_trash,
             commands::settings::count_purgeable,
             commands::settings::open_data_folder,
             commands::settings::open_external_link,

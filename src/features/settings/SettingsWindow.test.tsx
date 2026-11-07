@@ -10,6 +10,7 @@ vi.mock("../../ipc/commands", () => ({
     setMinNoteSize: vi.fn(),
     setAppAppearance: vi.fn(),
     setAutomations: vi.fn(),
+    enablePurgeTrash: vi.fn(),
     countPurgeable: vi.fn(),
     listFonts: vi.fn().mockResolvedValue(["Atkinson Hyperlegible", "Fira Sans"]),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
@@ -248,6 +249,10 @@ describe("SettingsWindow", () => {
       return screen.findByRole("heading", { name: "Automations" });
     };
     /** `setAutomations` answers with what it was given, as the native side does for valid days. */
+    const enableEchoes = () =>
+      vi.mocked(commands.enablePurgeTrash).mockImplementation((days) =>
+        Promise.resolve({ ...rules, purgeTrashEnabled: true, purgeTrashDays: days }),
+      );
     const saveEchoes = () =>
       vi.mocked(commands.setAutomations).mockImplementation((a) => Promise.resolve({ ...a, purgeOffByRestore: false }));
 
@@ -366,15 +371,16 @@ describe("SettingsWindow", () => {
         expect(screen.getByRole("switch", { name: "Empty old trash" })).toHaveAttribute("aria-checked", "false");
       });
 
-      it("Turn on saves purgeTrashEnabled: true", async () => {
-        saveEchoes();
+      it("Turn on calls enablePurgeTrash(30), never setAutomations with the rule on", async () => {
+        enableEchoes();
         vi.mocked(commands.countPurgeable).mockResolvedValue(4);
         await openAutomations();
         await turnOn();
         const dialog = await screen.findByRole("alertdialog");
         await userEvent.click(within(dialog).getByRole("button", { name: "Turn on" }));
-        expect(commands.setAutomations).toHaveBeenCalledTimes(1);
-        expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashEnabled: true });
+        expect(commands.enablePurgeTrash).toHaveBeenCalledTimes(1);
+        expect(commands.enablePurgeTrash).toHaveBeenCalledWith(30);
+        expect(commands.setAutomations).not.toHaveBeenCalled();
         await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
         expect(screen.getByRole("switch", { name: "Empty old trash" })).toHaveAttribute("aria-checked", "true");
       });
@@ -419,6 +425,7 @@ describe("SettingsWindow", () => {
         expect(commands.setAutomations).not.toHaveBeenCalled();
         await userEvent.click(within(dialog).getByRole("button", { name: "Turn on" }));
         expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashEnabled: true, purgeTrashDays: 20 });
+        expect(commands.enablePurgeTrash).not.toHaveBeenCalled();
       });
 
       it("Cancel on the lowered days keeps the saved value", async () => {
@@ -474,6 +481,21 @@ describe("SettingsWindow", () => {
         expect(note).toHaveClass("dn-card-sub");
         expect(note).not.toHaveClass("is-danger");
         expect(screen.getByText("Deletes notes for good. Backups you made keep them.")).toHaveClass("is-danger");
+      });
+    });
+
+    it("after a restore turned rule 4 off, a later switch sends it off, not the old on", async () => {
+      saveEchoes();
+      await openAutomations({ purgeTrashEnabled: true });
+      await waitFor(() => expect(events.automations).not.toBeNull());
+      act(() => events.automations!({ ...rules, purgeTrashEnabled: false, purgeOffByRestore: true }));
+      expect(screen.getByRole("switch", { name: "Empty old trash" })).toHaveAttribute("aria-checked", "false");
+      await userEvent.click(screen.getByRole("switch", { name: "Mark a checklist done when every item is ticked" }));
+      expect(commands.setAutomations).toHaveBeenCalledWith({
+        ...rules,
+        autoCompleteChecklists: true,
+        purgeTrashEnabled: false,
+        purgeOffByRestore: true,
       });
     });
 

@@ -53,6 +53,21 @@ describe("automations", () => {
     expect(invoke).toHaveBeenCalledWith("set_automations", { automations });
   });
 
+  it("enablePurgeTrash calls enable_purge_trash with the days only", async () => {
+    const saved: Automations = {
+      autoCompleteChecklists: false,
+      resetChecklistsOnRepeat: false,
+      archiveDoneEnabled: false,
+      archiveDoneDays: 7,
+      purgeTrashEnabled: true,
+      purgeTrashDays: 30,
+      purgeOffByRestore: false,
+    };
+    invoke.mockResolvedValue(saved);
+    expect(await commands.enablePurgeTrash(30)).toEqual(saved);
+    expect(invoke).toHaveBeenCalledWith("enable_purge_trash", { days: 30 });
+  });
+
   it("countPurgeable calls count_purgeable with the days only", async () => {
     invoke.mockResolvedValue(4);
     expect(await commands.countPurgeable(30)).toBe(4);

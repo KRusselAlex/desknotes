@@ -7,6 +7,8 @@ import type { Automations } from "../../types/note";
 interface PurgeQuestion {
   days: number;
   count: number;
+  /** True when the rule is being switched on; false when its days change while it is on. */
+  enabling: boolean;
   /** Resolves the day field's save: true if the answer was "Turn on" and it was saved. */
   answer: (saved: boolean) => void;
 }
@@ -68,15 +70,19 @@ function DaysField({
 /**
  * Settings → Automations: four rules, each off until turned on. It shows `value` and asks
  * `onSave` to save the whole object with one field changed (null if it was refused, in which
- * case the window shows why). Only "Empty old trash", which deletes for good, asks first.
+ * case the window shows why). Only "Empty old trash", which deletes for good, asks first, and
+ * only its dialog turns it on (`onEnablePurge`): a save never does, even from stale rules.
  */
 export function AutomationsPane({
   value,
   onSave,
+  onEnablePurge,
   onError,
 }: {
   value: Automations;
   onSave: (next: Automations) => Promise<Automations | null>;
+  /** Turn "Empty old trash" on with these days, after the dialog; null if refused. */
+  onEnablePurge: (days: number) => Promise<Automations | null>;
   onError: (e: Error) => void;
 }) {
   // Saves run one after another, each on top of the last saved object, so two quick changes
@@ -96,12 +102,23 @@ export function AutomationsPane({
     return run;
   }
 
+  /** "Turn on" in the dialog: the only way rule 4 is switched on (`onSave` never sends it on). */
+  function enable(days: number): Promise<boolean> {
+    const run = queue.current.then(async () => {
+      const saved = await onEnablePurge(days);
+      if (saved) latest.current = saved;
+      return saved !== null;
+    });
+    queue.current = run.catch(() => undefined);
+    return run;
+  }
+
   const [question, setQuestion] = useState<PurgeQuestion | null>(null);
   const asking = useRef(false); // a count or the dialog is under way
 
-  function ask(days: number, count: number): Promise<boolean> {
+  function ask(days: number, count: number, enabling: boolean): Promise<boolean> {
     return new Promise((resolve) => {
-      setQuestion({ days, count, answer: resolve });
+      setQuestion({ days, count, enabling, answer: resolve });
     });
   }
 
@@ -109,7 +126,8 @@ export function AutomationsPane({
     const q = question;
     if (!q) return;
     setQuestion(null);
-    const saved = turnOn ? await save({ purgeTrashEnabled: true, purgeTrashDays: q.days }) : false;
+    // Switching on goes through its own command; new days for a rule already on are an ordinary save.
+    const saved = !turnOn ? false : q.enabling ? await enable(q.days) : await save({ purgeTrashDays: q.days });
     asking.current = false;
     q.answer(saved);
   }
@@ -127,7 +145,7 @@ export function AutomationsPane({
         asking.current = false;
         return save({ purgeTrashDays: days });
       }
-      return await ask(days, count); // `answer` ends the hold
+      return await ask(days, count, previous === null); // `answer` ends the hold
     } catch (e) {
       asking.current = false;
       onError(e as Error);
@@ -199,9 +217,7 @@ export function AutomationsPane({
           <div className="dn-card-text">
             <div className="dn-card-label">Empty old trash</div>
             <div className="dn-card-sub is-danger">Deletes notes for good. Backups you made keep them.</div>
-            {value.purgeOffByRestore && (
-              <div className="dn-card-sub">Turned off when a backup was restored.</div>
-            )}
+            {value.purgeOffByRestore && <div className="dn-card-sub">Turned off when a backup was restored.</div>}
           </div>
           <DaysField
             label="Empty old trash after (days)"
@@ -230,7 +246,13 @@ function PurgeDialog({ question, onAnswer }: { question: PurgeQuestion; onAnswer
   const { days, count } = question;
   return (
     <div className="dn-modal-backdrop" onKeyDown={(e) => e.key === "Escape" && onAnswer(false)}>
-      <div className="dn-modal" role="alertdialog" aria-modal="true" aria-labelledby="purge-title" aria-describedby="purge-text">
+      <div
+        className="dn-modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="purge-title"
+        aria-describedby="purge-text"
+      >
         <div id="purge-title" className="dn-modal-title">
           Empty old trash?
         </div>
