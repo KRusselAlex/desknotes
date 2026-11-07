@@ -56,6 +56,8 @@ test checks that subscribing outside Tauri rejects instead of throwing, which th
 Note settings windows rely on. `npm test` (675), `npm run lint` and `npm run typecheck` pass.
 No Rust code changed.
 
-The real-app checks ran before the review made the helper `async`. That change only turns a
-synchronous throw into a rejection. Inside the app the same `listen()` call is made with the same
-target.
+F1–F5 ran before the review made the helper `async`. On 2026-11-07, F1 and F2 were repeated on
+the final commit (a78a105) on fresh data, under the same isolation. Note A was created with the
+manager's New note button while Welcome was open. Trash on A, then Archive on a new note C, each
+changed only that note. Welcome kept `deleted_at` and `archived_at` NULL and stayed visible, with
+its window open.
