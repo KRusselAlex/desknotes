@@ -22,8 +22,10 @@ SQLite. Free, open source (MIT), offline, no account, no telemetry.
 - Reminders with local desktop notifications.
 - Backup and restore. All data stays on your computer.
 
-See [docs/design.md](docs/design.md) for the full design and milestone plan, and
-[docs/adr/](docs/adr/) for architecture decisions.
+How DeskNotes is built today, and what every feature does, is in
+[docs/architecture.md](docs/architecture.md). The original Milestone 0 design and
+milestone plan are in [docs/design.md](docs/design.md), and the architecture decisions
+are in [docs/adr/](docs/adr/).
 
 ## Where your data lives
 
