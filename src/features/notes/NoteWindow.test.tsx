@@ -3,8 +3,15 @@ import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
 // @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
 import { readFileSync } from "node:fs";
-import type { NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
-import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Note, type PrivacyStatus } from "../../types/note";
+import type { ChecklistReset, NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
+import {
+  APP_APPEARANCE_DEFAULTS,
+  type AppAppearance,
+  type Automations,
+  type Note,
+  type PrivacyStatus,
+  type SettingsView,
+} from "../../types/note";
 import type { RemindersChanged, ReminderView } from "../../types/reminder";
 import { appearanceStyle } from "../appearance/appearance";
 
@@ -15,6 +22,8 @@ const handlers: {
   privacy?: (e: PrivacyChanged) => void;
   notesChanged?: (e: NotesChanged) => void;
   reminders?: (e: RemindersChanged) => void;
+  automations?: (a: Automations) => void;
+  checklistReset?: (e: ChecklistReset) => void;
 } = {};
 vi.mock("../../ipc/events", () => ({
   onNotesChanged: (h: (e: NotesChanged) => void) => {
@@ -39,6 +48,14 @@ vi.mock("../../ipc/events", () => ({
   },
   onRemindersChanged: (h: (e: RemindersChanged) => void) => {
     handlers.reminders = h;
+    return Promise.resolve(() => undefined);
+  },
+  onAutomationsChanged: (h: (a: Automations) => void) => {
+    handlers.automations = h;
+    return Promise.resolve(() => undefined);
+  },
+  onChecklistReset: (h: (e: ChecklistReset) => void) => {
+    handlers.checklistReset = h;
     return Promise.resolve(() => undefined);
   },
 }));
@@ -76,6 +93,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
     getReminder: vi.fn().mockResolvedValue(null),
     setReminder: vi.fn(),
     removeReminder: vi.fn().mockResolvedValue(undefined),
+    getSettings: vi.fn(),
+    claimChecklistReset: vi.fn().mockResolvedValue(false),
   },
 }));
 
@@ -124,6 +143,19 @@ const status = (over: Partial<PrivacyStatus> = {}): PrivacyStatus => ({
   ...over,
 });
 
+const RULES_OFF: Automations = {
+  autoCompleteChecklists: false,
+  resetChecklistsOnRepeat: false,
+  archiveDoneEnabled: false,
+  archiveDoneDays: 7,
+  purgeTrashEnabled: false,
+  purgeTrashDays: 30,
+  purgeOffByRestore: false,
+};
+/** What get_settings returns, with these automation rules; the note window reads only `automations`. */
+const settingsWith = (rules: Partial<Automations> = {}) =>
+  ({ automations: { ...RULES_OFF, ...rules } }) as SettingsView;
+
 const editorBox = () => screen.queryByRole("textbox", { name: "Note text" });
 
 async function openNote(over: Partial<Note> = {}) {
@@ -158,6 +190,8 @@ describe("NoteWindow", () => {
     vi.clearAllMocks();
     vi.mocked(commands.getAppAppearance).mockResolvedValue({ ...APP_APPEARANCE_DEFAULTS });
     vi.mocked(commands.getReminder).mockResolvedValue(null);
+    vi.mocked(commands.getSettings).mockResolvedValue(settingsWith());
+    vi.mocked(commands.claimChecklistReset).mockResolvedValue(false);
     // Like the core: the title is derived from the first line of the note.
     vi.mocked(commands.saveNoteContent).mockResolvedValue({ title: "Groceries for Saturday", updatedAt: Date.now() });
   });
@@ -1823,6 +1857,323 @@ describe("NoteWindow", () => {
       expect(rule![1]).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i);
       expect(rule![1]).toMatch(/position:\s*absolute/);
       expect(css).toMatch(/\.dn-note\.is-high-contrast \.dn-done-strip[^{]*\{[^}]*var\(--dn-hc-line\)/);
+    });
+  });
+
+  describe("automation rules (DES-42)", () => {
+    const STRIP_MS = 5_000;
+    const AUTO_DONE = "Marked done · every item is ticked";
+    const RESET = "Checklist reset for this reminder";
+    const task = (text: string, checked: boolean) => ({
+      type: "taskItem",
+      attrs: { checked },
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    });
+    /** A note titled like the others, with one checklist of these ticks. */
+    const checklist = (...ticks: boolean[]) => ({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Groceries for Saturday" }] },
+        { type: "taskList", content: ticks.map((t, i) => task(`item ${i + 1}`, t)) },
+      ],
+    });
+    const boxes = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll<HTMLInputElement>('.tiptap input[type="checkbox"]'));
+    const ticks = (container: HTMLElement) => boxes(container).map((b) => b.checked);
+    /** A click on the checkbox, as the person ticks it (TaskItem's change handler). */
+    const tickBox = (container: HTMLElement, n: number) => act(() => void fireEvent.click(boxes(container)[n]!));
+    /** Let the settings, the reminder and the start-up claim arrive. */
+    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+    const fakeTimers = () => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const advance = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
+    const ctrl = (key: string) =>
+      act(() => void fireEvent.keyDown(window, { key, ctrlKey: true, bubbles: true, cancelable: true }));
+    const reminder = (repeat: ReminderView["repeat"]): ReminderView => ({
+      date: "2026-11-08",
+      time: "09:00",
+      repeat,
+      dueAt: Date.now() + 86_400_000,
+      overdue: false,
+    });
+    /** Like the shell: a reset is pending until one claim takes it. */
+    let pending = false;
+    /** Microtasks only, so it also runs under fake timers: the claim answers, then the editor unticks. */
+    const flush = async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+    /** The shell's checklist-reset for this note (or another): pending first, then the event. */
+    const sendReset = (noteId = ID) => {
+      pending = noteId === ID ? true : pending;
+      return act(async () => {
+        handlers.checklistReset?.({ noteId });
+        await flush();
+      });
+    };
+    beforeEach(() => {
+      pending = false;
+      // Earlier tests leave a refused or endless completion behind (clearAllMocks keeps implementations).
+      vi.mocked(commands.setNoteCompleted).mockResolvedValue(undefined);
+      vi.mocked(commands.claimChecklistReset).mockImplementation(() => {
+        const had = pending;
+        pending = false;
+        return Promise.resolve(had);
+      });
+    });
+    afterEach(() => vi.useRealTimers());
+
+    describe("auto_complete_only_on_a_users_last_tick", () => {
+      it("ticking the last item shows the reason in the strip, and the note is done after 5 s", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        const { container } = await openNote({ content: checklist(false, false) });
+        await settle();
+        await tickBox(container, 0);
+        expect(screen.queryByRole("status")).toBeNull();
+        fakeTimers();
+        await tickBox(container, 1);
+        expect(screen.getByRole("status")).toHaveTextContent(AUTO_DONE);
+        expect(screen.getByRole("button", { name: "Undo" })).toHaveAccessibleDescription(AUTO_DONE);
+        expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+        await advance(STRIP_MS + 100);
+        expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true);
+        // The tick was saved before the note was marked done.
+        expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder.at(-1)!).toBeLessThan(
+          vi.mocked(commands.setNoteCompleted).mock.invocationCallOrder[0]!,
+        );
+      });
+
+      it("opening a fully ticked note does nothing", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        await openNote({ content: checklist(true, true) });
+        await settle();
+        fakeTimers();
+        await advance(STRIP_MS + 100);
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      });
+
+      it("Undo keeps the note open and ticked, and nothing more happens", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        const { container } = await openNote({ content: checklist(true, false) });
+        await settle();
+        fakeTimers();
+        await tickBox(container, 1);
+        await act(async () => void fireEvent.click(screen.getByRole("button", { name: "Undo" })));
+        await advance(STRIP_MS * 2);
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+        expect(ticks(container)).toEqual([true, true]);
+      });
+
+      it("the editor's undo of the last tick does not start it again", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        const { container } = await openNote({ content: checklist(true, false) });
+        await settle();
+        await tickBox(container, 1);
+        await act(async () => void fireEvent.click(screen.getByRole("button", { name: "Undo" })));
+        const el = container.querySelector(".tiptap") as HTMLElement & {
+          editor?: { commands: { undo: () => void; redo: () => void } };
+        };
+        await act(async () => void el.editor!.commands.undo());
+        expect(ticks(container)).toEqual([true, false]);
+        await act(async () => void el.editor!.commands.redo());
+        expect(ticks(container)).toEqual([true, true]);
+        expect(screen.queryByRole("status")).toBeNull();
+      });
+
+      it("does nothing while the rule is off, and follows the setting when it changes", async () => {
+        const { container } = await openNote({ content: checklist(false, false, false) });
+        await settle();
+        await tickBox(container, 0);
+        await tickBox(container, 1);
+        await tickBox(container, 2);
+        expect(screen.queryByRole("status")).toBeNull();
+        await act(async () => handlers.automations?.({ ...RULES_OFF, autoCompleteChecklists: true }));
+        // Untick one and tick it again: now the rule is on.
+        await act(async () => void fireEvent.click(boxes(container)[2]!));
+        await tickBox(container, 2);
+        expect(screen.getByRole("status")).toHaveTextContent(AUTO_DONE);
+      });
+
+      it.each([["daily"], ["weekly"]] as const)("does nothing for a note with a %s reminder", async (repeat) => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        vi.mocked(commands.getReminder).mockResolvedValue(reminder(repeat));
+        const { container } = await openNote({ content: checklist(true, false) });
+        await settle();
+        fakeTimers();
+        await tickBox(container, 1);
+        await advance(STRIP_MS + 100);
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      });
+
+      it("still works for a note with a one-time reminder", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        vi.mocked(commands.getReminder).mockResolvedValue(reminder("none"));
+        const { container } = await openNote({ content: checklist(true, false) });
+        await settle();
+        await tickBox(container, 1);
+        expect(screen.getByRole("status")).toHaveTextContent(AUTO_DONE);
+      });
+
+      it("does nothing for a note that is already done", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        const { container } = await openNote({ content: checklist(true, false), completedAt: Date.now() - 1000 });
+        await settle();
+        fakeTimers();
+        await tickBox(container, 1);
+        await advance(STRIP_MS + 100);
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(commands.setNoteCompleted).not.toHaveBeenCalled();
+      });
+
+      it("Ctrl+D still says just Marked done", async () => {
+        vi.mocked(commands.getSettings).mockResolvedValue(settingsWith({ autoCompleteChecklists: true }));
+        await openNote({ content: checklist(true, false) });
+        await settle();
+        await ctrl("d");
+        expect(screen.getByRole("status").textContent).toBe("Marked done");
+      });
+    });
+
+    describe("reset_event_unticks_in_the_editor_with_undo", () => {
+      it("an event for this note unticks every item, shows the strip, and Undo re-ticks exactly them", async () => {
+        const { container } = await openNote({ content: checklist(true, false, true, true) });
+        await settle();
+        await sendReset();
+        expect(ticks(container)).toEqual([false, false, false, false]);
+        expect(screen.getByRole("status")).toHaveTextContent(RESET);
+        await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+        expect(ticks(container)).toEqual([true, false, true, true]);
+        expect(screen.queryByRole("status")).toBeNull();
+      });
+
+      it("the reset is saved by autosave, and the strip goes after 5 s", async () => {
+        const { container } = await openNote({ content: checklist(true, true, true) });
+        await settle();
+        fakeTimers();
+        await sendReset();
+        expect(ticks(container)).toEqual([false, false, false]);
+        await advance(STRIP_MS + 100);
+        expect(screen.queryByRole("status")).toBeNull();
+        // Saved like any edit: some save holds the three items, all unticked.
+        const saves = vi.mocked(commands.saveNoteContent).mock.calls.map(([, content]) => content);
+        expect(saves.some((c) => c.includes("item 3") && !c.includes('"checked":true'))).toBe(true);
+        expect(ticks(container)).toEqual([false, false, false]);
+      });
+
+      it("does not take focus from the text being typed", async () => {
+        const { container } = await openNote({ content: checklist(true) });
+        await settle();
+        await act(async () => (container.querySelector(".tiptap") as HTMLElement).focus());
+        await sendReset();
+        expect(screen.getByRole("status")).toHaveTextContent(RESET);
+        expect(editorBox()).toHaveFocus();
+      });
+
+      it("the editor's undo takes the reset back as one step", async () => {
+        const { container } = await openNote({ content: checklist(true, false, true) });
+        await settle();
+        await sendReset();
+        const el = container.querySelector(".tiptap") as HTMLElement & { editor?: { commands: { undo: () => void } } };
+        await act(async () => void el.editor!.commands.undo());
+        expect(ticks(container)).toEqual([true, false, true]);
+      });
+
+      it("an event for another note does nothing", async () => {
+        const { container } = await openNote({ content: checklist(true, true) });
+        await settle();
+        vi.mocked(commands.claimChecklistReset).mockClear();
+        await sendReset("0b5d3f7a-1c2e-4d6f-8a9b-0c1d2e3f4a5b");
+        expect(commands.claimChecklistReset).not.toHaveBeenCalled();
+        expect(ticks(container)).toEqual([true, true]);
+        expect(screen.queryByRole("status")).toBeNull();
+      });
+
+      it("an event while the note is read-only unticks nothing, and the reset is not kept for later", async () => {
+        const { container } = await openNote({ content: checklist(true, true), editLocked: true });
+        await settle();
+        await sendReset();
+        expect(ticks(container)).toEqual([true, true]);
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(pending).toBe(false);
+      });
+
+      it("a claim that returns false unticks nothing", async () => {
+        const { container } = await openNote({ content: checklist(true, true) });
+        await settle();
+        await act(async () => {
+          handlers.checklistReset?.({ noteId: ID }); // pending stays false: already claimed elsewhere
+          await flush();
+        });
+        expect(commands.claimChecklistReset).toHaveBeenCalledWith(ID);
+        expect(ticks(container)).toEqual([true, true]);
+        expect(screen.queryByRole("status")).toBeNull();
+      });
+
+      it("claims a reset left pending before the window listened, when it loads", async () => {
+        pending = true;
+        const { container } = await openNote({ content: checklist(true, false) });
+        await settle();
+        expect(commands.claimChecklistReset).toHaveBeenCalledWith(ID);
+        expect(ticks(container)).toEqual([false, false]);
+        expect(screen.getByRole("status")).toHaveTextContent(RESET);
+      });
+
+      it("two events for one pending reset untick once", async () => {
+        const { container } = await openNote({ content: checklist(true, true) });
+        await settle();
+        pending = true;
+        await act(async () => {
+          handlers.checklistReset?.({ noteId: ID });
+          handlers.checklistReset?.({ noteId: ID });
+          await flush();
+        });
+        expect(ticks(container)).toEqual([false, false]);
+        // Ticked again by hand: a second event for the same reset changes nothing.
+        await tickBox(container, 0);
+        await act(async () => {
+          handlers.checklistReset?.({ noteId: ID });
+          await flush();
+        });
+        expect(ticks(container)).toEqual([true, false]);
+      });
+
+      it("is ignored while Marked done shows; after Undo the note is reset", async () => {
+        const { container } = await openNote({ content: checklist(true, true) });
+        await settle();
+        await ctrl("d");
+        vi.mocked(commands.claimChecklistReset).mockClear();
+        await sendReset();
+        expect(commands.claimChecklistReset).not.toHaveBeenCalled();
+        expect(ticks(container)).toEqual([true, true]);
+        expect(screen.getByRole("status").textContent).toBe("Marked done");
+        await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+        await settle();
+        expect(ticks(container)).toEqual([false, false]);
+        expect(screen.getByRole("status")).toHaveTextContent(RESET);
+      });
+
+      it("a reset left waiting under Marked done is claimed and dropped when the note is done", async () => {
+        const { container } = await openNote({ content: checklist(true, true) });
+        await settle();
+        fakeTimers();
+        await ctrl("d");
+        await sendReset();
+        await advance(STRIP_MS + 100);
+        expect(commands.setNoteCompleted).toHaveBeenCalledWith(ID, true);
+        expect(commands.claimChecklistReset).toHaveBeenLastCalledWith(ID);
+        expect(pending).toBe(false);
+        expect(ticks(container)).toEqual([true, true]);
+      });
+
+      it("Mark as done during the reset strip replaces it", async () => {
+        await openNote({ content: checklist(true, true) });
+        await settle();
+        await sendReset();
+        await ctrl("d");
+        expect(screen.getAllByRole("status")).toHaveLength(1);
+        expect(screen.getByRole("status").textContent).toBe("Marked done");
+      });
     });
   });
 });

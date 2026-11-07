@@ -9,6 +9,11 @@ All notable changes are documented here. The format follows
 Database: migrations 4–7 (private notes, appearance, reminders, completed notes); backup format 5. A copy is made before upgrading.
 
 ### Added
+- Automation rules (Settings → Automations), each off until you turn it on: mark a checklist
+  done when every item is ticked (notes with a repeating reminder stay open); untick a checklist
+  when its repeating reminder goes off; archive done notes after N days; empty old trash after N
+  days (asks first and says how many notes would go; a restore turns it off). Locked private notes
+  are never touched.
 - A welcome note on the very first launch (once, centred; delete it and it stays gone), and a
   fuller Settings → About: who made DeskNotes, what it is for, a Copy button for the version
   and system (for bug reports), links to the source code, issues and more free tools, and the

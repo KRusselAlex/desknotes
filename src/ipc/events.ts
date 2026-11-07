@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { AppAppearance } from "../types/note";
+import type { AppAppearance, Automations } from "../types/note";
 import type { RemindersChanged } from "../types/reminder";
 
 /** Emitted by Rust after any change. `id` is null when many notes changed.
@@ -106,4 +106,23 @@ export const REMINDERS_CHANGED = "reminders-changed";
 /** A reminder was set, removed, fired, snoozed or dismissed (sent to every window). */
 export function onRemindersChanged(handler: (e: RemindersChanged) => void): Promise<UnlistenFn> {
   return listen<RemindersChanged>(REMINDERS_CHANGED, (event) => handler(event.payload));
+}
+
+export const AUTOMATIONS_CHANGED = "automations-changed";
+
+/** The automation rules were saved in Settings (the saved value, sent to every window). */
+export function onAutomationsChanged(handler: (a: Automations) => void): Promise<UnlistenFn> {
+  return listen<Automations>(AUTOMATIONS_CHANGED, (event) => handler(event.payload));
+}
+
+export const CHECKLIST_RESET = "checklist-reset";
+
+/** This note's repeating reminder went off with "Untick a checklist when its repeating
+ * reminder goes off" on: untick its checklist in the editor (sent to that note's window only). */
+export interface ChecklistReset {
+  noteId: string;
+}
+
+export function onChecklistReset(handler: (e: ChecklistReset) => void): Promise<UnlistenFn> {
+  return listenHere(CHECKLIST_RESET, handler);
 }

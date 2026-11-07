@@ -25,4 +25,20 @@ describe("DoneStrip", () => {
     await userEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(onUndo).toHaveBeenCalledOnce();
   });
+
+  it("shows a custom text, and describes Undo by it", () => {
+    render(<DoneStrip text="Checklist reset for this reminder" onUndo={() => undefined} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Checklist reset for this reminder");
+    expect(screen.getByRole("button", { name: "Undo" })).toHaveAccessibleDescription("Checklist reset for this reminder");
+  });
+
+  it("says Marked done when no text is given", () => {
+    render(<DoneStrip onUndo={() => undefined} />);
+    expect(screen.getByRole("status").textContent).toBe("Marked done");
+  });
+
+  it("leaves focus where it is when asked not to take it", () => {
+    render(<DoneStrip text="Checklist reset for this reminder" takeFocus={false} onUndo={() => undefined} />);
+    expect(screen.getByRole("button", { name: "Undo" })).not.toHaveFocus();
+  });
 });

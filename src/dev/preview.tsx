@@ -41,6 +41,11 @@
 // The manager's Reminders tab (R2) lists them: click the tab; a1 shows as overdue, a2 and a3
 // fall under Today and Tomorrow (or Today only, near midnight), r1 under Later. With
 // ?w=manager&locked=private, a2 is private and locked, so its row reads "Private note".
+//
+// Automations (DES-42): ?w=settings&section=automations. Every rule starts off with the default days (7 and 30), and changes
+// emit automations-changed like the native side. "Empty old trash" always counts 4 notes.
+// In the console, previewChecklistReset() sends checklist-reset to this note window and
+// leaves one reset for claim_checklist_reset to hand out.
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -53,6 +58,7 @@ import {
   APP_APPEARANCE_DEFAULTS,
   PRIVATE_FALLBACK_LABEL,
   type AppAppearance,
+  type Automations,
   type Note,
   type NoteFilter,
   type PinCheck,
@@ -241,6 +247,20 @@ let appAppearance: AppAppearance = {
   defaultFont: params.get("font") || null,
 };
 
+// Settings → Automations, every rule off by default as natively.
+let automations: Automations = {
+  autoCompleteChecklists: false,
+  resetChecklistsOnRepeat: false,
+  archiveDoneEnabled: false,
+  archiveDoneDays: 7,
+  purgeTrashEnabled: false,
+  purgeTrashDays: 30,
+  purgeOffByRestore: params.get("restored") === "1", // &restored=1 shows the note after a backup restore
+};
+// A checklist reset sent to this note window, claimed once (claim_checklist_reset).
+let checklistResetPending = false;
+const inRange = (n: number, min: number, max: number) => Number.isInteger(n) && n >= min && n <= max;
+
 // Fake reminders, following the native rules loosely (crates/desknotes-core/src/reminders.rs).
 interface FakeReminder {
   date: string;
@@ -296,6 +316,10 @@ Object.assign(window, {
     r.dueAt = Date.now() - 1000;
     remindersChanged(id);
   },
+  previewChecklistReset: () => {
+    checklistResetPending = true;
+    void emit("checklist-reset", { noteId });
+  },
 });
 
 mockIPC(
@@ -350,7 +374,7 @@ mockIPC(
       case "hidden_note_count":
         return 0;
       case "get_settings":
-        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, appAppearance: { ...appAppearance }, version: "0.1.0", osName: "Ubuntu 24.04 LTS", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null };
+        return { launchAtLogin: false, newNoteColor: "#fff4a3", minNoteSize: { width: 180, height: 120 }, appAppearance: { ...appAppearance }, version: "0.1.0", osName: "Ubuntu 24.04 LTS", dataDir: "~/.local/share/io.github.krusselalex.desknotes", lastBackupAt: null, automations: { ...automations } };
       case "open_external_link":
         console.info("preview: would open link", a.id);
         return null;
@@ -364,6 +388,42 @@ mockIPC(
         appAppearance = { ...next, defaultFont: next.defaultFont?.trim() || null };
         void emit("app-appearance-changed", { ...appAppearance });
         return { ...appAppearance };
+      }
+      case "set_automations": {
+        const next = a.automations as Automations;
+        if (!inRange(next.archiveDoneDays, 1, 90)) {
+          throw { code: "validation", message: "archiveDoneDays must be 1–90" };
+        }
+        if (!inRange(next.purgeTrashDays, 7, 365)) {
+          throw { code: "validation", message: "purgeTrashDays must be 7–365" };
+        }
+        // As natively, saving never turns "Empty old trash" on: only enable_purge_trash does.
+        automations = {
+          ...next,
+          purgeTrashEnabled: next.purgeTrashEnabled && automations.purgeTrashEnabled,
+          purgeOffByRestore: automations.purgeOffByRestore,
+        };
+        void emit("automations-changed", { ...automations });
+        return { ...automations };
+      }
+      case "enable_purge_trash": {
+        if (!inRange(a.days as number, 7, 365)) {
+          throw { code: "validation", message: "purgeTrashDays must be 7–365" };
+        }
+        automations = { ...automations, purgeTrashEnabled: true, purgeTrashDays: a.days as number, purgeOffByRestore: false };
+        void emit("automations-changed", { ...automations });
+        return { ...automations };
+      }
+      case "claim_checklist_reset": {
+        const claimed = checklistResetPending && a.noteId === noteId;
+        if (claimed) checklistResetPending = false;
+        return claimed;
+      }
+      case "count_purgeable": {
+        if (!inRange(a.days as number, 7, 365)) {
+          throw { code: "validation", message: "purgeTrashDays must be 7–365" };
+        }
+        return 4;
       }
       case "get_toggle_shortcut":
         return { ...shortcut };

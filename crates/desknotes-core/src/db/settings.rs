@@ -25,6 +25,17 @@ pub const APPEARANCE_DEFAULT_SIZE: &str = "appearance_default_size";
 /// `"1"` once the welcome note has been created on a new database (DES-29).
 pub const FIRST_RUN_DONE: &str = "first_run_done";
 
+/// Automation rules (DES-42). The four switches hold `"1"` or are absent.
+pub const AUTO_COMPLETE_CHECKLISTS: &str = "auto_complete_checklists";
+pub const RESET_CHECKLISTS_ON_REPEAT: &str = "reset_checklists_on_repeat";
+pub const ARCHIVE_DONE_ENABLED: &str = "archive_done_enabled";
+pub const PURGE_TRASH_ENABLED: &str = "purge_trash_enabled";
+/// Days as decimal strings. Kept while the rule is off, so turning it back on restores it.
+pub const ARCHIVE_DONE_DAYS: &str = "archive_done_days";
+pub const PURGE_TRASH_DAYS: &str = "purge_trash_days";
+/// `"1"` when a restore switched "Empty old trash" off; absent otherwise.
+pub const PURGE_TRASH_OFF_BY_RESTORE: &str = "purge_trash_off_by_restore";
+
 impl Database {
     pub fn get_setting(&self, key: &str) -> CoreResult<Option<String>> {
         Ok(self
