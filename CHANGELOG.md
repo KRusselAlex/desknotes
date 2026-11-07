@@ -81,6 +81,10 @@ Database: migrations 4–8 (private notes, appearance, reminders, completed note
 - Archiving, trashing or hiding a note from the manager while several notes are open no longer
   does the same to every open note (DES-41).
 
+### Documentation
+- Performance baseline (memory, idle CPU, save time with 1, 10 and 30 notes) in
+  `docs/testing/m5-performance-baseline.md`.
+
 ## [0.2.0] — 2026-11-02 — Milestone 2: desktop reliability
 
 Database: migration 3 (collapsed notes); backup format 1.
