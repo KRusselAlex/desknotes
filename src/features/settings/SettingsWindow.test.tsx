@@ -9,6 +9,8 @@ vi.mock("../../ipc/commands", () => ({
     setNewNoteColor: vi.fn().mockResolvedValue(undefined),
     setMinNoteSize: vi.fn(),
     setAppAppearance: vi.fn(),
+    setAutomations: vi.fn(),
+    countPurgeable: vi.fn(),
     listFonts: vi.fn().mockResolvedValue(["Atkinson Hyperlegible", "Fira Sans"]),
     openDataFolder: vi.fn().mockResolvedValue(undefined),
     openExternalLink: vi.fn().mockResolvedValue(undefined),
@@ -24,9 +26,16 @@ vi.mock("../../ipc/commands", () => ({
     }),
   },
 }));
-const events = vi.hoisted(() => ({ section: null as ((name: string) => void) | null }));
+const events = vi.hoisted(() => ({
+  section: null as ((name: string) => void) | null,
+  automations: null as ((a: unknown) => void) | null,
+}));
 vi.mock("../../ipc/events", () => ({
   onPrivacyChanged: () => Promise.resolve(() => undefined),
+  onAutomationsChanged: (h: (a: unknown) => void) => {
+    events.automations = h;
+    return Promise.resolve(() => undefined);
+  },
   onSettingsSection: (h: (name: string) => void) => {
     events.section = h;
     return Promise.resolve(() => undefined);
@@ -158,12 +167,13 @@ describe("SettingsWindow", () => {
     expect(commands.openDataFolder).toHaveBeenCalled();
   });
 
-  it("lists General, Appearance, Privacy, Backup, About, with Privacy still opening its pane", async () => {
+  it("lists General, Appearance, Automations, Privacy, Backup, About, with Privacy still opening its pane", async () => {
     render(<SettingsWindow />);
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect([...nav.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
       "General",
       "Appearance",
+      "Automations",
       "Privacy",
       "Backup",
       "About",
@@ -177,6 +187,7 @@ describe("SettingsWindow", () => {
     expect(parseSection("privacy-new-pin")).toEqual({ section: "privacy", newPin: true });
     expect(parseSection("about")).toEqual({ section: "about", newPin: false });
     expect(parseSection("appearance")).toEqual({ section: "appearance", newPin: false });
+    expect(parseSection("automations")).toEqual({ section: "automations", newPin: false });
     for (const bad of [null, undefined, "", "Privacy", "lock", "privacy "]) expect(parseSection(bad)).toBeNull();
   });
 
@@ -225,6 +236,255 @@ describe("SettingsWindow", () => {
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "About" })).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByText("Save your recovery code")).toBeNull();
+  });
+
+  describe("Automations", () => {
+    const rules = settings.automations;
+    const openAutomations = async (automations: Partial<typeof rules> = {}) => {
+      vi.mocked(commands.getSettings).mockResolvedValue({ ...settings, automations: { ...rules, ...automations } });
+      window.history.replaceState(null, "", "/?section=automations");
+      render(<SettingsWindow />);
+      window.history.replaceState(null, "", "/");
+      return screen.findByRole("heading", { name: "Automations" });
+    };
+    /** `setAutomations` answers with what it was given, as the native side does for valid days. */
+    const saveEchoes = () =>
+      vi.mocked(commands.setAutomations).mockImplementation((a) => Promise.resolve({ ...a, purgeOffByRestore: false }));
+
+    it("opens at the section in the preview address, with the intro and the four rows in order, verbatim", async () => {
+      await openAutomations();
+      expect(screen.getByRole("button", { name: "Automations" })).toHaveAttribute("aria-current", "page");
+      const pane = document.querySelector(".dn-settings-pane") as HTMLElement;
+      const text = pane.textContent ?? "";
+      const order = [
+        "Automations",
+        "Small rules DeskNotes follows for you, on this computer only. Each one is off until you turn it on.",
+        "Mark a checklist done when every item is ticked",
+        "The note moves to Completed, with Undo for a few seconds. Notes with a repeating reminder stay open.",
+        "Untick a checklist when its repeating reminder goes off",
+        "Good for daily or weekly routines.",
+        "Archive done notes",
+        "Nothing is deleted; they stay in Archived.",
+        "Empty old trash",
+        "Deletes notes for good. Backups you made keep them.",
+      ];
+      let at = -1;
+      for (const part of order) {
+        const next = text.indexOf(part, at + 1);
+        expect(next, part).toBeGreaterThan(at);
+        at = next;
+      }
+      expect(screen.getAllByRole("switch").map((s) => s.getAttribute("aria-label"))).toEqual([
+        "Mark a checklist done when every item is ticked",
+        "Untick a checklist when its repeating reminder goes off",
+        "Archive done notes",
+        "Empty old trash",
+      ]);
+      const rows = pane.querySelectorAll(".dn-card-row");
+      expect(rows[2]).toHaveTextContent("afterdays");
+      expect(rows[3]).toHaveTextContent("afterdays");
+      expect(rows[0]).not.toHaveTextContent("afterdays");
+      expect(screen.getByRole("textbox", { name: "Archive done notes after (days)" })).toHaveValue("7");
+      expect(screen.getByRole("textbox", { name: "Empty old trash after (days)" })).toHaveValue("30");
+      expect(screen.queryByText("Turned off when a backup was restored.")).toBeNull();
+      expect(commands.countPurgeable).not.toHaveBeenCalled();
+    });
+
+    it("saves the whole object with only the first switch changed", async () => {
+      saveEchoes();
+      await openAutomations({ archiveDoneEnabled: true, archiveDoneDays: 14 });
+      const sw = screen.getByRole("switch", { name: "Mark a checklist done when every item is ticked" });
+      await userEvent.click(sw);
+      expect(commands.setAutomations).toHaveBeenCalledTimes(1);
+      expect(commands.setAutomations).toHaveBeenCalledWith({
+        ...rules,
+        autoCompleteChecklists: true,
+        archiveDoneEnabled: true,
+        archiveDoneDays: 14,
+      });
+      await waitFor(() => expect(sw).toHaveAttribute("aria-checked", "true"));
+    });
+
+    it("saves the archive days on Enter and on blur", async () => {
+      saveEchoes();
+      await openAutomations({ archiveDoneEnabled: true });
+      const days = screen.getByRole("textbox", { name: "Archive done notes after (days)" });
+      await userEvent.clear(days);
+      await userEvent.type(days, "14{Enter}");
+      expect(commands.setAutomations).toHaveBeenLastCalledWith({ ...rules, archiveDoneEnabled: true, archiveDoneDays: 14 });
+      await userEvent.clear(days);
+      await userEvent.type(days, "30");
+      await userEvent.tab();
+      expect(commands.setAutomations).toHaveBeenLastCalledWith({ ...rules, archiveDoneEnabled: true, archiveDoneDays: 30 });
+    });
+
+    it("greys the day count while its switch is off", async () => {
+      await openAutomations({ archiveDoneEnabled: true });
+      const fieldsOf = (name: string) => screen.getByRole("textbox", { name }).closest(".dn-days") as HTMLElement;
+      expect(fieldsOf("Archive done notes after (days)")).not.toHaveClass("is-off");
+      expect(fieldsOf("Empty old trash after (days)")).toHaveClass("is-off");
+    });
+
+    it("shows why archive days of 0 were refused and shows the saved value again", async () => {
+      vi.mocked(commands.setAutomations).mockRejectedValue(
+        Object.assign(new Error("archiveDoneDays must be 1–90"), { code: "validation" }),
+      );
+      await openAutomations({ archiveDoneEnabled: true });
+      const days = screen.getByRole("textbox", { name: "Archive done notes after (days)" });
+      await userEvent.clear(days);
+      await userEvent.type(days, "0{Enter}");
+      expect(await screen.findByRole("alert")).toHaveTextContent("1–90");
+      expect(days).toHaveValue("7");
+    });
+
+    it("never sends days that are not a number", async () => {
+      await openAutomations({ archiveDoneEnabled: true });
+      const days = screen.getByRole("textbox", { name: "Archive done notes after (days)" });
+      await userEvent.clear(days);
+      await userEvent.type(days, "abc{Enter}");
+      expect(commands.setAutomations).not.toHaveBeenCalled();
+      expect(days).toHaveValue("7");
+    });
+
+    describe("Empty old trash", () => {
+      const turnOn = () => userEvent.click(screen.getByRole("switch", { name: "Empty old trash" }));
+
+      it("counts first, then asks; Cancel saves nothing and leaves it off", async () => {
+        vi.mocked(commands.countPurgeable).mockResolvedValue(4);
+        await openAutomations();
+        await turnOn();
+        expect(commands.countPurgeable).toHaveBeenCalledWith(30);
+        const dialog = await screen.findByRole("alertdialog", { name: "Empty old trash?" });
+        expect(dialog).toHaveTextContent(
+          "Notes that have been in the trash for more than 30 days will be deleted for good, now and from then on. There are 4 such notes right now.",
+        );
+        expect(dialog).toHaveTextContent("This can't be undone. Backups you have already made still contain them.");
+        expect(commands.setAutomations).not.toHaveBeenCalled();
+        await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+        expect(screen.queryByRole("alertdialog")).toBeNull();
+        expect(commands.setAutomations).not.toHaveBeenCalled();
+        expect(screen.getByRole("switch", { name: "Empty old trash" })).toHaveAttribute("aria-checked", "false");
+      });
+
+      it("Turn on saves purgeTrashEnabled: true", async () => {
+        saveEchoes();
+        vi.mocked(commands.countPurgeable).mockResolvedValue(4);
+        await openAutomations();
+        await turnOn();
+        const dialog = await screen.findByRole("alertdialog");
+        await userEvent.click(within(dialog).getByRole("button", { name: "Turn on" }));
+        expect(commands.setAutomations).toHaveBeenCalledTimes(1);
+        expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashEnabled: true });
+        await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+        expect(screen.getByRole("switch", { name: "Empty old trash" })).toHaveAttribute("aria-checked", "true");
+      });
+
+      it("turning it off needs no dialog", async () => {
+        saveEchoes();
+        await openAutomations({ purgeTrashEnabled: true });
+        await turnOn();
+        expect(commands.countPurgeable).not.toHaveBeenCalled();
+        expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashEnabled: false });
+        expect(screen.queryByRole("alertdialog")).toBeNull();
+      });
+
+      it("says 'There is 1 such note right now.' for one note", async () => {
+        vi.mocked(commands.countPurgeable).mockResolvedValue(1);
+        await openAutomations();
+        await turnOn();
+        expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+          "for good, now and from then on. There is 1 such note right now.",
+        );
+      });
+
+      it("says 'There are no such notes right now.' for none", async () => {
+        vi.mocked(commands.countPurgeable).mockResolvedValue(0);
+        await openAutomations();
+        await turnOn();
+        expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+          "for good, now and from then on. There are no such notes right now.",
+        );
+      });
+
+      it("asks again when lowering the days 30 to 20 would delete more (4 to 6)", async () => {
+        saveEchoes();
+        vi.mocked(commands.countPurgeable).mockImplementation((d) => Promise.resolve(d === 20 ? 6 : 4));
+        await openAutomations({ purgeTrashEnabled: true });
+        const days = screen.getByRole("textbox", { name: "Empty old trash after (days)" });
+        await userEvent.clear(days);
+        await userEvent.type(days, "20{Enter}");
+        const dialog = await screen.findByRole("alertdialog", { name: "Empty old trash?" });
+        expect(dialog).toHaveTextContent("more than 20 days");
+        expect(dialog).toHaveTextContent("There are 6 such notes right now.");
+        expect(commands.setAutomations).not.toHaveBeenCalled();
+        await userEvent.click(within(dialog).getByRole("button", { name: "Turn on" }));
+        expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashEnabled: true, purgeTrashDays: 20 });
+      });
+
+      it("Cancel on the lowered days keeps the saved value", async () => {
+        vi.mocked(commands.countPurgeable).mockImplementation((d) => Promise.resolve(d === 20 ? 6 : 4));
+        await openAutomations({ purgeTrashEnabled: true });
+        const days = screen.getByRole("textbox", { name: "Empty old trash after (days)" });
+        await userEvent.clear(days);
+        await userEvent.type(days, "20{Enter}");
+        await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+        expect(commands.setAutomations).not.toHaveBeenCalled();
+        expect(days).toHaveValue("30");
+      });
+
+      it("saves without asking when raising the days 30 to 40", async () => {
+        saveEchoes();
+        vi.mocked(commands.countPurgeable).mockImplementation((d) => Promise.resolve(d === 40 ? 2 : 4));
+        await openAutomations({ purgeTrashEnabled: true });
+        const days = screen.getByRole("textbox", { name: "Empty old trash after (days)" });
+        await userEvent.clear(days);
+        await userEvent.type(days, "40{Enter}");
+        await waitFor(() =>
+          expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashEnabled: true, purgeTrashDays: 40 }),
+        );
+        expect(screen.queryByRole("alertdialog")).toBeNull();
+      });
+
+      it("saves the days without counting while the rule is off", async () => {
+        saveEchoes();
+        await openAutomations();
+        const days = screen.getByRole("textbox", { name: "Empty old trash after (days)" });
+        await userEvent.clear(days);
+        await userEvent.type(days, "20{Enter}");
+        await waitFor(() => expect(commands.setAutomations).toHaveBeenCalledWith({ ...rules, purgeTrashDays: 20 }));
+        expect(commands.countPurgeable).not.toHaveBeenCalled();
+      });
+
+      it("shows the range error and the saved days when the count is refused", async () => {
+        vi.mocked(commands.countPurgeable).mockRejectedValue(
+          Object.assign(new Error("purgeTrashDays must be 7–365"), { code: "validation" }),
+        );
+        await openAutomations({ purgeTrashEnabled: true });
+        const days = screen.getByRole("textbox", { name: "Empty old trash after (days)" });
+        await userEvent.clear(days);
+        await userEvent.type(days, "3{Enter}");
+        expect(await screen.findByRole("alert")).toHaveTextContent("7–365");
+        expect(days).toHaveValue("30");
+        expect(commands.setAutomations).not.toHaveBeenCalled();
+      });
+
+      it("shows the restore note under the row, in the muted style", async () => {
+        await openAutomations({ purgeOffByRestore: true });
+        const note = screen.getByText("Turned off when a backup was restored.");
+        expect(note).toHaveClass("dn-card-sub");
+        expect(note).not.toHaveClass("is-danger");
+        expect(screen.getByText("Deletes notes for good. Backups you made keep them.")).toHaveClass("is-danger");
+      });
+    });
+
+    it("follows automations-changed from the native side", async () => {
+      await openAutomations();
+      await waitFor(() => expect(events.automations).not.toBeNull());
+      act(() => events.automations!({ ...rules, archiveDoneEnabled: true, archiveDoneDays: 21, purgeOffByRestore: true }));
+      expect(screen.getByRole("switch", { name: "Archive done notes" })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByRole("textbox", { name: "Archive done notes after (days)" })).toHaveValue("21");
+      expect(screen.getByText("Turned off when a backup was restored.")).toBeInTheDocument();
+    });
   });
 
   describe("About", () => {

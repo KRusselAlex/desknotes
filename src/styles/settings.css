@@ -416,6 +416,34 @@
   font-size: 12.5px;
   color: var(--dn-app-muted);
 }
+.dn-card-sub.is-danger {
+  color: var(--dn-danger-ink);
+}
+
+/* Automations: one card of rules, each with its line, an optional "after N days" and a switch. */
+.dn-auto-intro {
+  margin: -6px 0 0;
+  font-size: 12.5px;
+  color: var(--dn-app-muted);
+}
+.dn-card-text > .dn-card-sub {
+  margin-top: 2px;
+  line-height: 1.35;
+}
+.dn-days {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+.dn-days.is-off {
+  opacity: 0.5;
+}
+.dn-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .dn-card-row.is-wrap {
   flex-wrap: wrap;
   row-gap: 10px;

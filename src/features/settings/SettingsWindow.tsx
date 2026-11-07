@@ -4,27 +4,29 @@ import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
 import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
-import { onSettingsSection } from "../../ipc/events";
-import type { AboutLink, AppAppearance, SettingsSection, SettingsView } from "../../types/note";
+import { onAutomationsChanged, onSettingsSection } from "../../ipc/events";
+import type { AboutLink, AppAppearance, Automations, SettingsSection, SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
 import { AppearancePane } from "./AppearancePane";
+import { AutomationsPane } from "./AutomationsPane";
 import { BackupPane } from "./BackupPane";
 import { MinNoteSize } from "./MinNoteSize";
 import { PrivacyPane } from "./PrivacyPane";
 import { SettingsHold } from "./hold";
 import { ShortcutRow } from "./ShortcutRow";
 
-type Section = "general" | "appearance" | "privacy" | "backup" | "about";
+type Section = "general" | "appearance" | "automations" | "privacy" | "backup" | "about";
 
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "general", label: "General", icon: "settings" },
   { id: "appearance", label: "Appearance", icon: "sun" },
+  { id: "automations", label: "Automations", icon: "clock" },
   { id: "privacy", label: "Privacy", icon: "lock" },
   { id: "backup", label: "Backup", icon: "download" },
   { id: "about", label: "About", icon: "info" },
 ];
 
-const SECTION_NAMES: readonly SettingsSection[] = ["general", "appearance", "privacy", "privacy-new-pin", "backup", "about"];
+const SECTION_NAMES: readonly SettingsSection[] = ["general", "appearance", "automations", "privacy", "privacy-new-pin", "backup", "about"];
 
 /** The section another window asked for (`open_settings(section)`), or null if unknown. */
 export function parseSection(name: string | null | undefined): { section: Section; newPin: boolean } | null {
@@ -85,6 +87,14 @@ export function SettingsWindow() {
     commands.getSettings().then(setSettings, (e: Error) => setError(e.message));
   }, []);
 
+  // The rules saved from anywhere (including this window) arrive here; outside the app there is nothing to hear.
+  useEffect(() => {
+    const unlisten = onAutomationsChanged((automations) =>
+      setSettings((s) => (s ? { ...s, automations } : s)),
+    ).catch(() => null);
+    return () => void unlisten.then((f) => f?.());
+  }, []);
+
   /** Run a change and merge its result. Returns false (and shows why) if it failed. */
   async function update(action: () => Promise<Partial<SettingsView>>): Promise<boolean> {
     try {
@@ -97,6 +107,19 @@ export function SettingsWindow() {
       return false;
     }
   }
+
+  /** Save the automation rules; the saved object, or null if refused (the reason is shown). */
+  const saveAutomations = useCallback(async (next: Automations): Promise<Automations | null> => {
+    try {
+      const saved = await commands.setAutomations(next);
+      setSettings((s) => (s ? { ...s, automations: saved } : s));
+      setError(null);
+      return saved;
+    } catch (e) {
+      setError((e as Error).message);
+      return null;
+    }
+  }, []);
 
   // Appearance saves the whole value. The pane shows what was asked for at once; a change made
   // while a save runs waits (only the newest is kept) so saves never overlap. If one is refused,
@@ -210,6 +233,13 @@ export function SettingsWindow() {
           )}
           {settings && section === "appearance" && (
             <AppearancePane value={asked ?? settings.appAppearance} onChange={(next) => void saveAppearance(next)} />
+          )}
+          {settings && section === "automations" && (
+            <AutomationsPane
+              value={settings.automations}
+              onSave={saveAutomations}
+              onError={(e) => setError(e.message)}
+            />
           )}
           {section === "privacy" && (
             <PrivacyPane key={newPinRequest} startNewPin={newPinPending} onNewPinStarted={newPinStarted} />

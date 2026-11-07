@@ -224,4 +224,4 @@ export type AboutLink = "source" | "issues" | "more_tools" | "notices" | "licens
 
 /** Settings sections another window may open Settings at (Rust `SETTINGS_SECTIONS`).
  * "privacy-new-pin" opens Privacy at "choose a new PIN", after a forgotten-PIN proof. */
-export type SettingsSection = "general" | "appearance" | "privacy" | "privacy-new-pin" | "backup" | "about";
+export type SettingsSection = "general" | "appearance" | "automations" | "privacy" | "privacy-new-pin" | "backup" | "about";

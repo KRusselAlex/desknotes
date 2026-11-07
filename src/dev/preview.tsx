@@ -42,7 +42,7 @@
 // fall under Today and Tomorrow (or Today only, near midnight), r1 under Later. With
 // ?w=manager&locked=private, a2 is private and locked, so its row reads "Private note".
 //
-// Automations (DES-42): every rule starts off with the default days (7 and 30), and changes
+// Automations (DES-42): ?w=settings&section=automations. Every rule starts off with the default days (7 and 30), and changes
 // emit automations-changed like the native side. "Empty old trash" always counts 4 notes.
 // In the console, previewChecklistReset() sends checklist-reset to this note window and
 // leaves one reset for claim_checklist_reset to hand out.
@@ -255,7 +255,7 @@ let automations: Automations = {
   archiveDoneDays: 7,
   purgeTrashEnabled: false,
   purgeTrashDays: 30,
-  purgeOffByRestore: false,
+  purgeOffByRestore: params.get("restored") === "1", // &restored=1 shows the note after a backup restore
 };
 // A checklist reset sent to this note window, claimed once (claim_checklist_reset).
 let checklistResetPending = false;

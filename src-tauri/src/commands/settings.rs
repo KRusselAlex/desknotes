@@ -29,8 +29,8 @@ pub struct SettingsView {
     pub automations: Automations,
 }
 
-/// Opens Settings, at `section` when given ("general", "privacy",
-/// "privacy-new-pin", "backup" or "about"; anything else is refused).
+/// Opens Settings, at `section` when given ("general", "appearance", "automations",
+/// "privacy", "privacy-new-pin", "backup" or "about"; anything else is refused).
 #[tauri::command]
 pub async fn open_settings(app: AppHandle, section: Option<String>) -> IpcResult<()> {
     let section = parse_section(section.as_deref())?;
@@ -381,6 +381,10 @@ mod section_tests {
     fn open_settings_accepts_known_sections_only() {
         assert_eq!(parse_section(None).unwrap(), None);
         assert_eq!(parse_section(Some("privacy")).unwrap(), Some("privacy"));
+        assert_eq!(
+            parse_section(Some("automations")).unwrap(),
+            Some("automations")
+        );
         assert_eq!(
             parse_section(Some("privacy-new-pin")).unwrap(),
             Some("privacy-new-pin")
