@@ -116,6 +116,19 @@ export function AutomationsPane({
   const [question, setQuestion] = useState<PurgeQuestion | null>(null);
   const asking = useRef(false); // a count or the dialog is under way
 
+  // A restore turns rule 4 off: an open "Empty old trash?" dialog is closed as Cancel would,
+  // so "Turn on" can't act on a count taken before the restore.
+  const restoreFlag = useRef(value.purgeOffByRestore);
+  useEffect(() => {
+    const restored = value.purgeOffByRestore && !restoreFlag.current;
+    restoreFlag.current = value.purgeOffByRestore;
+    if (restored && question) {
+      setQuestion(null);
+      asking.current = false;
+      question.answer(false);
+    }
+  }, [value.purgeOffByRestore, question]);
+
   function ask(days: number, count: number, enabling: boolean): Promise<boolean> {
     return new Promise((resolve) => {
       setQuestion({ days, count, enabling, answer: resolve });
@@ -168,7 +181,7 @@ export function AutomationsPane({
       <p className="dn-auto-intro">
         Small rules DeskNotes follows for you, on this computer only. Each one is off until you turn it on.
       </p>
-      <div className="dn-card">
+      <div className="dn-card dn-auto">
         <div className="dn-card-row">
           <div className="dn-card-text">
             <div className="dn-card-label">Mark a checklist done when every item is ticked</div>

@@ -499,6 +499,33 @@ describe("SettingsWindow", () => {
       });
     });
 
+    it("closes an open 'Empty old trash?' dialog when a restore turns rule 4 off, saving nothing", async () => {
+      vi.mocked(commands.countPurgeable).mockResolvedValue(4);
+      await openAutomations();
+      await waitFor(() => expect(events.automations).not.toBeNull());
+      await userEvent.click(screen.getByRole("switch", { name: "Empty old trash" }));
+      await screen.findByRole("alertdialog", { name: "Empty old trash?" });
+      act(() => events.automations!({ ...rules, purgeTrashEnabled: false, purgeOffByRestore: true }));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(commands.enablePurgeTrash).not.toHaveBeenCalled();
+      expect(commands.setAutomations).not.toHaveBeenCalled();
+      expect(screen.getByRole("switch", { name: "Empty old trash" })).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByText("Turned off when a backup was restored.")).toBeInTheDocument();
+      // The question is over, so the switch can ask again.
+      await userEvent.click(screen.getByRole("switch", { name: "Empty old trash" }));
+      expect(await screen.findByRole("alertdialog", { name: "Empty old trash?" })).toBeInTheDocument();
+    });
+
+    it("keeps the dialog open for an automations-changed that is not a restore", async () => {
+      vi.mocked(commands.countPurgeable).mockResolvedValue(4);
+      await openAutomations();
+      await waitFor(() => expect(events.automations).not.toBeNull());
+      await userEvent.click(screen.getByRole("switch", { name: "Empty old trash" }));
+      await screen.findByRole("alertdialog");
+      act(() => events.automations!({ ...rules, archiveDoneEnabled: true, purgeOffByRestore: false }));
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    });
+
     it("follows automations-changed from the native side", async () => {
       await openAutomations();
       await waitFor(() => expect(events.automations).not.toBeNull());
