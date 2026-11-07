@@ -6,6 +6,7 @@ use rusqlite::params;
 
 use super::Database;
 use super::notes::appearance_json;
+use super::settings::{PURGE_TRASH_ENABLED, PURGE_TRASH_OFF_BY_RESTORE};
 use crate::backup::{BACKUP_FORMAT, BACKUP_VERSION, Backup, BackupNote, BackupReminder};
 use crate::error::CoreResult;
 use crate::now_ms;
@@ -173,6 +174,17 @@ impl Database {
                     ],
                 )?;
             }
+        }
+        // A restore brings back notes with their old trash dates, so "Empty old trash"
+        // could delete them within the hour: switch it off (keeping its days) and say why.
+        // Same transaction, so the notes and the rule can never disagree.
+        if self.get_setting(PURGE_TRASH_ENABLED)?.as_deref() == Some("1") {
+            tx.execute("DELETE FROM settings WHERE key = ?1", [PURGE_TRASH_ENABLED])?;
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, '1')
+                 ON CONFLICT(key) DO UPDATE SET value = '1'",
+                [PURGE_TRASH_OFF_BY_RESTORE],
+            )?;
         }
         tx.commit()?;
         // Notes kept open across a lock belonged to the replaced collection.
@@ -410,6 +422,63 @@ mod tests {
         let done = dst.list_notes(NoteFilter::Completed, None).unwrap();
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].id, a);
+    }
+
+    #[test]
+    fn restore_turns_purge_off_and_keeps_days() {
+        use crate::db::automation::Automations;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = Database::open_in_memory().unwrap();
+        sample(&src);
+        let text = serde_json::to_string(&src.export_backup("0.5.0").unwrap().backup).unwrap();
+
+        let db = Database::open(&dir.path().join("d.db"), dir.path()).unwrap();
+        let rules = Automations {
+            auto_complete_checklists: true,
+            reset_checklists_on_repeat: true,
+            archive_done_enabled: true,
+            archive_done_days: 14,
+            purge_trash_enabled: true,
+            purge_trash_days: 45,
+            purge_off_by_restore: false,
+        };
+        db.set_automations(&rules).unwrap();
+        db.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups"))
+            .unwrap();
+        let after = db.automations().unwrap();
+        assert!(!after.purge_trash_enabled);
+        assert_eq!(after.purge_trash_days, 45);
+        assert!(after.purge_off_by_restore);
+        // The other rules are untouched.
+        assert_eq!(
+            Automations {
+                purge_trash_enabled: true,
+                purge_off_by_restore: false,
+                ..after
+            },
+            rules
+        );
+
+        // Turning it on again clears the note.
+        let again = db
+            .set_automations(&Automations {
+                purge_trash_enabled: true,
+                ..rules.clone()
+            })
+            .unwrap();
+        assert!(again.purge_trash_enabled && !again.purge_off_by_restore);
+
+        // A restore while the rule is off leaves it as it is: no flag.
+        db.set_automations(&Automations {
+            purge_trash_enabled: false,
+            ..rules
+        })
+        .unwrap();
+        db.restore_backup(&parse_backup(&text).unwrap(), &dir.path().join("backups2"))
+            .unwrap();
+        let after = db.automations().unwrap();
+        assert!(!after.purge_trash_enabled && !after.purge_off_by_restore);
     }
 
     #[test]

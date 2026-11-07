@@ -1,5 +1,6 @@
 //! SQLite persistence (docs/adr/0003). All SQL in DeskNotes lives under this module.
 
+mod automation;
 mod backup;
 mod migrations;
 mod notes;
@@ -16,6 +17,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{CoreError, CoreResult};
 
+pub use automation::Automations;
 pub use backup::{Export, LAST_BACKUP_AT};
 pub use migrations::LATEST_VERSION;
 pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};
