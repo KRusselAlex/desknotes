@@ -68,6 +68,8 @@ Database: migrations 4–7 (private notes, appearance, reminders, completed note
   (which could shift the note sideways on a click); the date gives way first, then the
   "Read-only" word, so the reminder time stays whole.
 - A database from a newer DeskNotes is no longer modified when it is refused.
+- Archiving, trashing or hiding a note from the manager while several notes are open no longer
+  does the same to every open note (DES-41).
 
 ## [0.2.0] — 2026-11-02 — Milestone 2: desktop reliability
 
