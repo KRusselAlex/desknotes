@@ -31,12 +31,34 @@ Design: `docs/superpowers/specs/2026-11-05-completed-notes-design.md` (option A,
 
 On 2026-11-05 the owner installed the .deb built from `main` (built 18:21, installed 18:32 per `/var/log/dpkg.log`) and confirmed "is ok". Their database is at schema 7 and has one note marked done. Only metadata was read, read-only.
 
+## Hardening checks (DES-40, 2026-11-08)
+
+Release binary of `fix/des-40-hardening`. **Isolation:**
+- a hidden screen: an `Xvfb` display with no window manager;
+- a private D-Bus daemon;
+- a scratch `HOME`.
+
+The owner's DeskNotes and desktop were untouched. **Method:**
+- keyboard focus with libxdo (`xdo_focus_window`), then synthetic keys and clicks;
+- window screenshots;
+- the database read with Python `sqlite3`.
+
+There was no tray (no StatusNotifier host on the private bus). Hide-all and show-hidden came from `desknotes --toggle-notes`, the command the GNOME shortcut runs. Quit came from the manager's ⋯ menu.
+
+| Check | Result |
+|---|---|
+| Ctrl+D | The "Marked done" strip shows, with Undo |
+| Ctrl+Z while the strip shows | The strip goes. 7 s later the note is open and active, and its text is unchanged. |
+| Undo button | Worked in 2 of 3 tries: the strip goes, the cursor is back in the text, and 6 s later the note is open and active. It worked with and without the button's focus ring. In the first try the click didn't register and the note was marked done after 5 s. This didn't happen again; most likely the synthetic click was lost, but that isn't proven. |
+| Hide-all while the strip shows | The strip's note was marked done and is not in the hide-all list. The three other notes were hidden and remembered. Show-hidden brought back those three, not the done one. |
+| Quit while the strip shows | Quit was clicked 2.3 s after Ctrl+D. The app exited about 1 s later, and the note is marked done. |
+| Restart afterwards | Only the two active notes opened; the three done notes stayed closed. No errors in the log. |
+
 ## Not checked in the real app
 
 | Item | Why |
 |---|---|
-| Ctrl+D, and Ctrl+Z / Undo on the strip | Synthetic keys don't reach the windows under Wayland. Unit tests cover them. |
-| Quit, lock, hide-all and export while the strip shows | Not run. Rust and unit tests cover the round being answered before the window closes. |
+| Lock and export while the strip shows | Not run: lock needs a PIN set up, and export needs the file chooser. They use the same note-window round as quit and hide-all (`onSaveAllRequest`), which was checked above. |
 | Move to trash from the Completed tab, then restore | Unit-tested |
 | A destroy failure after the database write (the note stays open but is marked done) | Very unlikely; recorded here as known (final review M6) |
 
