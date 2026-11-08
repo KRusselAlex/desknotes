@@ -996,7 +996,10 @@ mod tests {
         // A hidden active note, then a stale Reopen click from a list drawn before.
         db.set_visible(&id, false).unwrap();
         let before = db.get_note(&id).unwrap();
-        assert!(!db.set_completed(&id, false, 6_000).unwrap(), "reports no change");
+        assert!(
+            !db.set_completed(&id, false, 6_000).unwrap(),
+            "reports no change"
+        );
         assert_eq!(db.get_note(&id).unwrap(), before, "it stays hidden");
     }
 
