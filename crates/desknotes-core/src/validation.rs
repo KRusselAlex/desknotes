@@ -392,12 +392,14 @@ fn hides_or_reorders(c: char) -> bool {
     )
 }
 
-/// A private note's neutral label: trimmed, at most `PRIVATE_LABEL_MAX_CHARS`
-/// characters, no control characters and nothing that hides or reorders text,
-/// since it stands in for the note's text while locked. Empty is allowed (the
-/// fallback label is used for display).
+/// A private note's neutral label, which stands in for the note's text while
+/// locked: characters that hide or reorder text are removed (not refused: some
+/// keyboards type them, and labels saved before this rule must still save),
+/// then trimmed, at most `PRIVATE_LABEL_MAX_CHARS` characters and no control
+/// characters. Empty is allowed (the fallback label is used for display).
 pub fn validate_private_label(label: &str) -> CoreResult<String> {
-    let label = label.trim();
+    let kept: String = label.chars().filter(|&c| !hides_or_reorders(c)).collect();
+    let label = kept.trim();
     if label.chars().count() > PRIVATE_LABEL_MAX_CHARS {
         return Err(invalid(format!(
             "label must be at most {PRIVATE_LABEL_MAX_CHARS} characters"
@@ -406,20 +408,7 @@ pub fn validate_private_label(label: &str) -> CoreResult<String> {
     if label.chars().any(char::is_control) {
         return Err(invalid("label must not contain control characters"));
     }
-    if label.chars().any(hides_or_reorders) {
-        return Err(invalid(
-            "label must not contain invisible or text-direction characters",
-        ));
-    }
     Ok(label.to_string())
-}
-
-/// A label from a backup: the characters [`validate_private_label`] refuses
-/// for new labels are removed rather than refused, so a backup made before
-/// that rule still restores. Otherwise the same checks.
-pub fn clean_private_label(label: &str) -> CoreResult<String> {
-    let kept: String = label.chars().filter(|&c| !hides_or_reorders(c)).collect();
-    validate_private_label(&kept)
 }
 
 /// A font family name for a note: trimmed, at most `FONT_NAME_MAX_CHARS`
@@ -1046,40 +1035,34 @@ mod tests {
     }
 
     #[test]
-    fn private_label_refuses_hidden_and_reordering_characters() {
+    fn private_label_loses_hidden_and_reordering_characters() {
         // A label shown in place of a note's text must read as it is stored (DES-30).
-        for label in [
-            "Bank\u{202E}cod.exe",
-            "\u{200B}Bank",
-            "Ba\u{2066}nk\u{2069}",
-            "\u{FEFF}Bank",
-            "Ba\u{2060}nk",
-            "Ba\u{00AD}nk",
-            "Ba\u{202A}nk",
+        // Removed, not refused: some keyboards type them (Khmer types U+200B on the
+        // space bar), and labels saved before the rule must still save.
+        for (label, kept) in [
+            ("Bank\u{202E}cod.exe", "Bankcod.exe"),
+            ("\u{200B}Bank", "Bank"),
+            ("Ba\u{2066}nk\u{2069}", "Bank"),
+            ("\u{FEFF}Bank", "Bank"),
+            ("Ba\u{2060}nk", "Bank"),
+            ("Ba\u{00AD}nk", "Bank"),
+            ("Ba\u{202A}nk", "Bank"),
+            (" \u{FEFF} ", ""),
         ] {
-            assert_eq!(
-                validate_private_label(label).unwrap_err().code(),
-                "validation",
-                "{label:?}"
-            );
+            assert_eq!(validate_private_label(label).unwrap(), kept, "{label:?}");
         }
         // Joiners that scripts and emoji need, and the direction marks, are kept.
         for label in ["می\u{200C}خواهم", "👩\u{200D}💻 work", "بنك", "A\u{200F}B"] {
             assert_eq!(validate_private_label(label).unwrap(), label);
         }
-    }
-
-    #[test]
-    fn a_label_from_a_backup_loses_hidden_characters_instead_of_failing() {
+        // The other checks still refuse.
+        assert!(validate_private_label("a\u{200B}\nb").is_err());
+        assert!(validate_private_label(&format!("{}\u{200B}", "x".repeat(41))).is_err());
         assert_eq!(
-            clean_private_label("\u{200B}Ba\u{00AD}nk\u{202E}").unwrap(),
-            "Bank"
+            validate_private_label(&format!("{}\u{200B}", "x".repeat(40))).unwrap(),
+            "x".repeat(40),
+            "removed characters do not count towards the limit"
         );
-        assert_eq!(clean_private_label(" \u{FEFF} ").unwrap(), "");
-        assert_eq!(clean_private_label("👩\u{200D}💻").unwrap(), "👩\u{200D}💻");
-        // Everything else is checked as for a new label.
-        assert!(clean_private_label("a\nb").is_err());
-        assert!(clean_private_label(&"x".repeat(41)).is_err());
     }
 
     #[test]

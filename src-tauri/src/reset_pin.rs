@@ -59,6 +59,17 @@ fn running_message() -> String {
     )
 }
 
+/// Take DeskNotes' single-instance name, or say why the reset cannot go on.
+fn claim_name() -> Result<single_instance::Claim, String> {
+    match single_instance::claim(APP_IDENTIFIER) {
+        Ok(Some(claim)) => Ok(claim),
+        Ok(None) => Err(running_message()),
+        Err(e) => Err(format!(
+            "Could not check whether DeskNotes is running ({e}). {NOTHING_CHANGED}"
+        )),
+    }
+}
+
 fn database_path() -> Result<(PathBuf, PathBuf), String> {
     let dir = user_data_dir()
         .ok_or_else(|| format!("No data folder was found for this user. {NOTHING_CHANGED}"))?
@@ -68,17 +79,9 @@ fn database_path() -> Result<(PathBuf, PathBuf), String> {
 
 fn reset() -> Result<String, String> {
     // Hold DeskNotes' single-instance name from the start, so it cannot start
-    // while the database is opened (which may migrate it), the password is
-    // asked for or the reset is written. A running DeskNotes owns it already.
-    let _claim = match single_instance::claim(APP_IDENTIFIER) {
-        Ok(Some(claim)) => claim,
-        Ok(None) => return Err(running_message()),
-        Err(e) => {
-            return Err(format!(
-                "Could not check whether DeskNotes is running ({e}). {NOTHING_CHANGED}"
-            ));
-        }
-    };
+    // while the database is opened (which may migrate it) or the reset is
+    // written. A running DeskNotes owns it already.
+    let mut claim = Some(claim_name()?);
 
     let (db_path, backup_dir) = database_path()?;
     // Opening would create an empty database; there is nothing to reset then.
@@ -97,6 +100,10 @@ fn reset() -> Result<String, String> {
     }
 
     if system_auth_available() {
+        // Not held during the prompt: a DeskNotes started meanwhile would wait on
+        // this name for an answer that never comes, then fail to start. It is
+        // taken again below; if DeskNotes started, the reset is refused.
+        claim = None;
         println!("Enter your Ubuntu password in the window that opens.");
         if !ask_system_password() {
             return Err(format!(
@@ -104,6 +111,10 @@ fn reset() -> Result<String, String> {
             ));
         }
     }
+    let _claim = match claim {
+        Some(held) => held,
+        None => claim_name()?,
+    };
 
     // The notice and the removal in one write: never a reset nobody is told
     // about, nor a notice for a PIN that was kept.

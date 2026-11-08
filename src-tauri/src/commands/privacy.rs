@@ -168,9 +168,10 @@ fn replace_forgotten_pin(
     }
     if !issue_code {
         // The Ubuntu password is the way back: a recovery code kept from a PIN set
-        // before D14 stops working too. Removed first, so a failure below leaves
-        // the old PIN with the Ubuntu password still able to replace it.
-        db.clear_recovery_code()?;
+        // before D14 stops working too, and the method is stored, so Settings shows
+        // it. One transaction, done first: a failure below leaves the old PIN with
+        // the Ubuntu password still able to replace it.
+        db.switch_recovery_method(RecoveryMethod::System)?;
     }
     store_pin_with_code(db, pin, issue_code)
 }
@@ -605,6 +606,11 @@ mod tests {
             CoreError::NotAllowed(_)
         ));
         assert_eq!(db.check_pin("730518", 0).unwrap(), PinCheck::Ok);
+        assert_eq!(
+            db.recovery_method().unwrap(),
+            Some(RecoveryMethod::System),
+            "the way back is now stored, as Settings shows it"
+        );
     }
 
     #[test]
