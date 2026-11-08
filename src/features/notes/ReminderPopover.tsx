@@ -5,6 +5,7 @@ import { commands } from "../../ipc/commands";
 import type { ReminderView, Repeat } from "../../types/reminder";
 import { refusalText } from "../privacy/refusal";
 import { defaultReminder } from "./reminderText";
+import { parseTime } from "./timeInput";
 
 const REPEATS: { value: Repeat; label: string }[] = [
   { value: "none", label: "None" },
@@ -34,7 +35,9 @@ export function ReminderPopover({
   const dateRef = useRef<HTMLInputElement>(null);
   const [start] = useState(() => initial ?? { ...defaultReminder(new Date()), repeat: "none" as Repeat });
   const [date, setDate] = useState(start.date);
-  const [time, setTime] = useState(start.time);
+  // What is typed in the time field; `time` is what it reads as, or null.
+  const [timeText, setTimeText] = useState(start.time);
+  const time = parseTime(timeText);
   const [repeat, setRepeat] = useState<Repeat>(start.repeat);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -76,7 +79,7 @@ export function ReminderPopover({
     onClose();
   }
 
-  const complete = date !== "" && time !== "";
+  const complete = date !== "" && time !== null;
 
   return (
     <div ref={ref} className="dn-popover dn-reminder" role="dialog" aria-label="Reminder">
@@ -92,15 +95,21 @@ export function ReminderPopover({
             setError(null);
           }}
         />
+        {/* A text field, not type="time": WebKitGTK's never moves on from the hour (see timeInput.ts). */}
         <input
-          type="time"
-          step={60}
+          type="text"
           aria-label="Time"
+          aria-invalid={time === null && timeText.trim() !== ""}
           className="dn-reminder-time"
-          value={time}
+          value={timeText}
+          autoComplete="off"
+          spellCheck={false}
           onChange={(e) => {
-            setTime(e.target.value);
+            setTimeText(e.target.value);
             setError(null);
+          }}
+          onBlur={() => {
+            if (time !== null) setTimeText(time);
           }}
         />
       </div>
@@ -124,7 +133,9 @@ export function ReminderPopover({
           type="button"
           className="dn-pill-ink"
           disabled={busy || !complete}
-          onClick={() => void run(() => commands.setReminder(noteId, date, time, repeat))}
+          onClick={() => {
+            if (time !== null) void run(() => commands.setReminder(noteId, date, time, repeat));
+          }}
         >
           Save
         </button>

@@ -1103,10 +1103,13 @@ html.dn-see-through #root {
 .dn-reminder-date {
   flex: 1 1 120px;
 }
-/* Wide enough for "02:00 PM" where the system shows a 12-hour clock (R1 draws 76 px for "14:00"). */
+/* A typed time (R1 draws 76 px for "14:00"); wide enough for a 12-hour "09:30 pm" as typed. */
 .dn-reminder-time {
   width: 118px;
   flex: none;
+}
+.dn-reminder-time[aria-invalid="true"] {
+  border-color: var(--dn-danger);
 }
 .dn-reminder-error {
   padding-left: 0;

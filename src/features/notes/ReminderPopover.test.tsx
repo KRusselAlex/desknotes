@@ -67,9 +67,53 @@ describe("ReminderPopover", () => {
     expect(timeInput()).toHaveValue("09:00");
   });
 
-  it("asks for the time by the minute", () => {
+  // WebKitGTK's native time field never moves on from the hour: typing "0930" there left
+  // "12:00". A text field reads the time the way people type it.
+  it("reads the time as it is typed, in one go", async () => {
     renderPopover();
-    expect(timeInput()).toHaveAttribute("step", "60");
+    expect(timeInput()).toHaveAttribute("type", "text");
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "0930");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(commands.setReminder).toHaveBeenCalledWith(ID, "2026-11-10", "09:30", "weekly");
+  });
+
+  it("reads a 12-hour time too", async () => {
+    renderPopover();
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "9:30 pm");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(commands.setReminder).toHaveBeenCalledWith(ID, "2026-11-10", "21:30", "weekly");
+  });
+
+  it("shows the time it read once the field is left", async () => {
+    renderPopover();
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "930");
+    expect(timeInput()).toHaveValue("930");
+    await userEvent.tab();
+    expect(timeInput()).toHaveValue("09:30");
+  });
+
+  it("marks a time it cannot read, keeps it for correcting, and does not save", async () => {
+    renderPopover();
+    expect(timeInput()).not.toHaveAttribute("aria-invalid", "true");
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "25:00");
+    await userEvent.tab();
+    expect(timeInput()).toHaveAttribute("aria-invalid", "true");
+    expect(timeInput()).toHaveValue("25:00");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "14:45");
+    expect(timeInput()).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("does not save without a time", async () => {
+    renderPopover();
+    await userEvent.clear(timeInput());
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
   it("saves the date, time and repeat that were picked, then closes", async () => {
