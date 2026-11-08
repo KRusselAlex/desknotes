@@ -565,7 +565,9 @@
   bottom: 42px;
   box-sizing: border-box;
   width: min(304px, calc(100% - 16px));
-  max-height: calc(100vh - var(--dn-bar-h) - 14px); /* 6 px above the bar, 8 px below the top */
+  /* 6 px above the bar, 8 px below the top. The viewport is the note window, and the
+     popover's positioned parent is the format bar, so 100vh (not 100%) is the note's height. */
+  max-height: calc(100vh - var(--dn-bar-h) - 14px);
   padding: 12px;
   border-radius: 16px;
   display: flex;

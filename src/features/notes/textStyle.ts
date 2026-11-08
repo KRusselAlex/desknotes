@@ -128,15 +128,17 @@ export interface TextStyleState {
    * (the title line and headings are larger than the note's size), shown within 10–32.
    */
   fontSize: number;
-  /** The selection's own weight, else the list entry nearest the weight its block is drawn at. */
-  fontWeight: FontWeightValue;
+  /** The selection's own weight, else the list entry nearest the weight its block is drawn
+   * at, or `DRAWN_BOLD` for a bold title line or heading. */
+  fontWeight: FontWeightValue | typeof DRAWN_BOLD;
   /** The weight the text has without its own weight: 700 on the title line and headings, else 400. */
   blockWeight: number;
   /** Lower-case hex: the own colour at the start of the selection, else the note's colour. */
   color: string;
   /** Own highlight colour at the start of the selection, or null. */
   highlight: string | null;
-  align: TextAlignment;
+  /** Null when the selected blocks are aligned differently. */
+  align: TextAlignment | null;
   canUndo: boolean;
   canRedo: boolean;
   /** True when the selection is not a collapsed cursor. */
@@ -165,16 +167,40 @@ function ownStyle(marks: readonly Mark[]): OwnStyle {
   };
 }
 
-/** The runs a selection covers, in order; for a cursor, the marks typed next. */
-function selectedRuns(editor: Editor): OwnStyle[] {
+/** What the popover needs from the runs a selection covers: the first run's own style, and
+ * the fonts and weights seen. For a cursor, the marks typed next. */
+interface RunSummary {
+  first: OwnStyle;
+  families: Set<string | null>;
+  weights: Set<string | null>;
+}
+
+function summarize(runs: OwnStyle[]): RunSummary {
+  return {
+    first: runs[0]!,
+    families: new Set(runs.map((r) => r.fontFamily)),
+    weights: new Set(runs.map((r) => r.fontWeight)),
+  };
+}
+
+function selectedRuns(editor: Editor): RunSummary {
   const { state } = editor;
   const { from, to, empty, $from } = state.selection;
-  if (empty) return [ownStyle(state.storedMarks ?? $from.marks())];
-  const runs: OwnStyle[] = [];
+  if (empty) return summarize([ownStyle(state.storedMarks ?? $from.marks())]);
+  let summary: RunSummary | null = null;
   state.doc.nodesBetween(from, to, (node) => {
-    if (node.isText) runs.push(ownStyle(node.marks));
+    // Once both are known to be mixed, nothing more can change what is shown.
+    if (summary && summary.families.size > 1 && summary.weights.size > 1) return false;
+    if (!node.isText) return true;
+    const run = ownStyle(node.marks);
+    if (!summary) summary = summarize([run]);
+    else {
+      summary.families.add(run.fontFamily);
+      summary.weights.add(run.fontWeight);
+    }
+    return false;
   });
-  return runs.length > 0 ? runs : [ownStyle($from.marks())];
+  return summary ?? summarize([ownStyle($from.marks())]);
 }
 
 /**
@@ -288,6 +314,10 @@ function drawnBlockWeight(editor: Editor, block: { pos: number } | null): number
   }
 }
 
+/** The value the Weight list shows for text drawn bold without its own weight (the title
+ * line, headings): not one of the four choices, so choosing Semibold there is a change. */
+export const DRAWN_BOLD = "700";
+
 function nearestWeight(weight: number): FontWeightValue {
   let best = FONT_WEIGHTS[0]!;
   for (const w of FONT_WEIGHTS) {
@@ -296,11 +326,25 @@ function nearestWeight(weight: number): FontWeightValue {
   return best.value;
 }
 
+/**
+ * The alignment of the paragraphs and headings a selection touches: their own, else
+ * their default. Null when they differ, so no alignment shows as chosen.
+ */
+function selectionAlign(editor: Editor, appearance: Appearance): TextAlignment | null {
+  const { from, to } = editor.state.selection;
+  const seen = new Set<TextAlignment>();
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (seen.size > 1) return false;
+    if (!node.isTextblock) return true;
+    seen.add(normalizeAlign(node.attrs.textAlign) ?? defaultAlign(node, appearance));
+    return false;
+  });
+  if (seen.size === 0) return defaultAlign(null, appearance);
+  return seen.size === 1 ? [...seen][0]! : null;
+}
+
 export function textStyleState(editor: Editor, appearance: Appearance): TextStyleState {
-  const runs = selectedRuns(editor);
-  const first = runs[0]!;
-  const families = new Set(runs.map((r) => r.fontFamily));
-  const weights = new Set(runs.map((r) => r.fontWeight));
+  const { first, families, weights } = selectedRuns(editor);
   const weight = weights.size === 1 ? [...weights][0] : null;
   const block = startBlock(editor);
   const blockWeight = drawnBlockWeight(editor, block) ?? 400;
@@ -309,15 +353,24 @@ export function textStyleState(editor: Editor, appearance: Appearance): TextStyl
   return {
     fontFamily: families.size === 1 ? first.fontFamily : null,
     fontSize: first.fontSize ?? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, drawnSize)),
-    fontWeight: (weight ?? nearestWeight(blockWeight)) as FontWeightValue,
+    fontWeight: (weight ?? (blockWeight >= 650 ? DRAWN_BOLD : nearestWeight(blockWeight))) as FontWeightValue | typeof DRAWN_BOLD,
     blockWeight,
     color: first.color ?? noteTextColor(appearance),
     highlight: first.highlight,
-    align: normalizeAlign(block?.node.attrs.textAlign) ?? defaultAlign(block?.node ?? null, appearance),
+    align: selectionAlign(editor, appearance),
     canUndo: editor.can().undo(),
     canRedo: editor.can().redo(),
     hasSelection: !editor.state.selection.empty,
   };
+}
+
+/** Whether `a` and `b` are the same text except where one has σ and the other ς. */
+function onlySigmaDiffers(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i] && !("σς".includes(a[i]!) && "σς".includes(b[i]!))) return false;
+  }
+  return true;
 }
 
 /**
@@ -329,16 +382,35 @@ export function changeCase(editor: Editor, to: "upper" | "lower"): boolean {
   const { state } = editor;
   const { from, to: end, empty } = state.selection;
   if (empty) return false;
+  const convert = (t: string) => (to === "upper" ? t.toLocaleUpperCase() : t.toLocaleLowerCase());
   const edits: { start: number; stop: number; node: PMNode; text: string }[] = [];
-  state.doc.nodesBetween(from, end, (node, pos) => {
-    if (!node.isText || !node.text) return;
-    const start = Math.max(pos, from);
-    const stop = Math.min(pos + node.nodeSize, end);
-    const old = node.text.slice(start - pos, stop - pos);
-    const text = to === "upper" ? old.toLocaleUpperCase() : old.toLocaleLowerCase();
-    if (text !== old) edits.push({ start, stop, node, text });
+  state.doc.nodesBetween(from, end, (block, blockPos) => {
+    if (!block.isTextblock) return true;
+    // Each run is converted on its own, except for one thing only the whole word can
+    // decide: whether a Greek capital sigma becomes the final ς. The block is converted
+    // as a whole too (one character per position: an image or line break counts as
+    // one), and its slice for the run is taken only when it is the run's own result
+    // with nothing but σ/ς differing. A conversion that changes lengths anywhere in the
+    // block (ß → SS, a dropped accent) can never move letters between runs that way.
+    const original = block.textBetween(0, block.content.size, undefined, "\uFFFC");
+    const whole = convert(original);
+    const sameLength = whole.length === original.length;
+    block.forEach((node, offset) => {
+      if (!node.isText || !node.text) return;
+      const pos = blockPos + 1 + offset;
+      const start = Math.max(pos, from);
+      const stop = Math.min(pos + node.nodeSize, end);
+      if (start >= stop) return;
+      const old = node.text.slice(start - pos, stop - pos);
+      const own = convert(old);
+      const inWord = sameLength ? whole.slice(start - blockPos - 1, stop - blockPos - 1) : own;
+      const text = onlySigmaDiffers(inWord, own) ? inWord : own;
+      if (text !== old) edits.push({ start, stop, node, text });
+    });
+    return false;
   });
-  if (edits.length === 0) return true;
+  // Already in that case: nothing to do, and nothing was done.
+  if (edits.length === 0) return false;
   const tr = state.tr;
   for (const { start, stop, node, text } of edits) {
     // Positions are mapped through the edits already made in this transaction.

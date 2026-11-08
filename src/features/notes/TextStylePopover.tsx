@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { Icon } from "../../components/Icon";
 import type { IconName } from "../../components/icons";
+import { moveAmongRadios, tabStop } from "../../components/radioKeys";
 import { commands } from "../../ipc/commands";
 import type { Appearance } from "../../types/note";
 import {
+  DRAWN_BOLD,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   FONT_WEIGHTS,
@@ -80,20 +82,9 @@ interface Swatch {
 
 /** One row of swatches: a radiogroup where only the current one is in the Tab order (N8). */
 function SwatchGroup({ labelId, swatches }: { labelId: string; swatches: Swatch[] }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const current = Math.max(0, swatches.findIndex((s) => s.checked));
-
-  function onKeyDown(e: KeyboardEvent) {
-    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-    if (step === undefined) return;
-    const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []);
-    const i = nodes.indexOf(document.activeElement as HTMLElement);
-    nodes[(i + step + nodes.length) % nodes.length]?.focus();
-    e.preventDefault();
-  }
-
+  const current = tabStop(swatches.map((s) => s.checked));
   return (
-    <div ref={ref} className="dn-ts-swatches" role="radiogroup" aria-labelledby={labelId} onKeyDown={onKeyDown}>
+    <div className="dn-ts-swatches" role="radiogroup" aria-labelledby={labelId} onKeyDown={moveAmongRadios}>
       {swatches.map((s, i) => (
         <button
           key={s.key}
@@ -143,17 +134,25 @@ export function TextStylePopover({
     };
   }, []);
 
-  // Esc (from the popover or the editor) and a click outside close it. A click on a
-  // popover toggle (Aa itself) is left to that toggle.
+  // The latest onClose, so the document listeners below are added once, not on every render.
+  const closeRef = useRef(onClose);
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
+
+  // Esc (from the popover or the editor) and a click outside close it. The editor itself
+  // marks Esc as handled in WebKitGTK, so `defaultPrevented` cannot tell; the link editor
+  // stops its own Esc instead, so one press closes one thing. A click on a popover toggle
+  // (Aa itself) is left to that toggle.
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
-      onClose();
+      closeRef.current();
     };
     const onDown = (e: PointerEvent) => {
       const t = e.target as Element;
-      if (!ref.current?.contains(t) && !t.closest("[data-popover-toggle]")) onClose();
+      if (!ref.current?.contains(t) && !t.closest("[data-popover-toggle]")) closeRef.current();
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
@@ -161,7 +160,7 @@ export function TextStylePopover({
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onDown);
     };
-  }, [onClose]);
+  }, []);
 
   // A control used from the keyboard (or a select) has focus: keep it there so several
   // changes can be made in a row. A mouse press leaves focus in the text (keepEditorFocus).
@@ -242,6 +241,12 @@ export function TextStylePopover({
                   {w.label}
                 </option>
               ))}
+              {/* Shown for a bold title line or heading; not a choice of its own. */}
+              {s.fontWeight === DRAWN_BOLD && (
+                <option value={DRAWN_BOLD} hidden disabled>
+                  Bold
+                </option>
+              )}
             </select>
             <Icon name="chevdown" size={13} />
           </span>

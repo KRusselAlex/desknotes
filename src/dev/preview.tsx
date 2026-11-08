@@ -679,15 +679,23 @@ followSystemTheme();
 if (which === "note" && params.has("textStyle")) void openTextStyle();
 if (which === "note" && params.get("reminder") === "open") void openReminder();
 
+/** How long the preview's scripted clicks wait for what they click before giving up. */
+const WAIT_GIVE_UP_MS = 10_000;
+
+/** What `get` finds, checked every 50 ms; gives up (rejects) after 10 s. */
+async function waitFor<T>(what: string, get: () => T | null | undefined): Promise<T> {
+  const giveUp = Date.now() + WAIT_GIVE_UP_MS;
+  for (;;) {
+    const found = get();
+    if (found) return found;
+    if (Date.now() > giveUp) throw new Error(`preview: gave up waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 /** Clicks through to the Aa popover once the note is on screen, as a person would. */
 async function openTextStyle() {
-  const wait = async <T,>(get: () => T | null | undefined): Promise<T> => {
-    for (;;) {
-      const found = get();
-      if (found) return found;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  };
+  const wait = <T,>(get: () => T | null | undefined) => waitFor("the Text style popover", get);
   const editor = await wait(() => document.querySelector<HTMLElement>(".ProseMirror"));
   editor.focus();
   const line = await wait(() => editor.querySelectorAll("p")[1]?.firstChild);
@@ -704,11 +712,8 @@ async function openTextStyle() {
 
 /** Clicks the reminder chip once the note is on screen, as a person would. */
 async function openReminder() {
-  for (;;) {
-    const chip = document.querySelector<HTMLElement>(".dn-reminder-chip");
-    if (chip) return chip.click();
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  const chip = await waitFor("the reminder chip", () => document.querySelector<HTMLElement>(".dn-reminder-chip"));
+  chip.click();
 }
 
 createRoot(document.getElementById("root")!).render(

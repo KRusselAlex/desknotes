@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Editor } from "@tiptap/core";
 import type { Appearance } from "../../types/note";
@@ -8,6 +8,7 @@ vi.mock("../../ipc/commands", () => ({
   commands: { listFonts: vi.fn(() => Promise.resolve(["Amiri", "DejaVu Sans"])) },
 }));
 
+import { LinkEditor } from "./LinkEditor";
 import { TextStylePopover } from "./TextStylePopover";
 
 const editors: Editor[] = [];
@@ -185,8 +186,10 @@ describe("TextStylePopover", () => {
       select(editor, 1, 6);
       await renderPopover(editor);
       const weight = screen.getByRole("combobox", { name: "Weight" });
-      // 700 is not in the list; the nearest entry is shown.
-      expect(weight).toHaveValue("600");
+      // 700 is not one of the choices: it shows as Bold, which cannot be picked.
+      expect(weight).toHaveValue("700");
+      expect(weight).toHaveDisplayValue("Bold");
+      expect(weight.querySelector('option[value="700"]')).toBeDisabled();
       await user.selectOptions(weight, "Regular");
       expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontWeight: "400" }) }]);
       expect(weight).toHaveValue("400");
@@ -198,6 +201,63 @@ describe("TextStylePopover", () => {
       await renderPopover(editor);
       expect(screen.getByRole("combobox", { name: "Weight" })).toHaveValue("400");
     });
+  });
+
+  it("Semibold on a bold title is a change: it stores 600 (DES-33)", async () => {
+    const user = userEvent.setup();
+    const editor = makeEditor("<p>Title</p><p>Body</p>");
+    select(editor, 1, 6);
+    await renderPopover(editor);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Weight" }), "Semibold");
+    expect(firstMarks(editor)).toEqual([{ type: "textStyle", attrs: expect.objectContaining({ fontWeight: "600" }) }]);
+  });
+
+  it("with paragraphs aligned differently, no alignment shows as chosen (DES-33)", async () => {
+    const editor = makeEditor('<p style="text-align: center">One</p><p>Two</p>');
+    select(editor, 1, 9);
+    await renderPopover(editor);
+    for (const name of ["Align left", "Align centre", "Align right"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("aria-pressed", "false");
+    }
+    select(editor, 1, 3);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Align centre" })).toHaveAttribute("aria-pressed", "true"));
+  });
+
+  it("an Esc in the link editor closes only the link editor (DES-33)", async () => {
+    const editor = makeEditor();
+    const { onClose } = await renderPopover(editor);
+    const closeLink = vi.fn();
+    render(<LinkEditor editor={editor} onClose={closeLink} />);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Link address" }), { key: "Escape" });
+    expect(closeLink).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    // An Esc the editor has marked as handled (WebKitGTK does) still closes the popover.
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    editor.view.dom.addEventListener("keydown", (e) => e.preventDefault(), { once: true });
+    document.body.appendChild(editor.view.dom);
+    try {
+      editor.view.dom.dispatchEvent(esc);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      editor.view.dom.remove();
+    }
+  });
+
+  it("listens to the document once, not again on every render (DES-33)", async () => {
+    const add = vi.spyOn(document, "addEventListener");
+    try {
+      const editor = makeEditor();
+      const { rerender } = render(<TextStylePopover editor={editor} appearance={{}} onClose={vi.fn()} />);
+      const before = add.mock.calls.filter(([type]) => type === "keydown").length;
+      const onClose = vi.fn();
+      rerender(<TextStylePopover editor={editor} appearance={{}} onClose={onClose} />);
+      expect(add.mock.calls.filter(([type]) => type === "keydown").length).toBe(before);
+      // The newest onClose is the one called.
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      add.mockRestore();
+    }
   });
 
   describe("alignment in Automatic direction follows each paragraph's own direction", () => {
@@ -368,14 +428,16 @@ describe("TextStylePopover", () => {
     const toggle = document.createElement("button");
     toggle.setAttribute("data-popover-toggle", "");
     document.body.appendChild(toggle);
-    const { onClose } = await renderPopover(makeEditor());
-
-    fireEvent.pointerDown(screen.getByRole("radio", { name: "Blue text" }));
-    fireEvent.pointerDown(toggle);
-    expect(onClose).not.toHaveBeenCalled();
-    fireEvent.pointerDown(document.body);
-    expect(onClose).toHaveBeenCalledTimes(1);
-    toggle.remove();
+    try {
+      const { onClose } = await renderPopover(makeEditor());
+      fireEvent.pointerDown(screen.getByRole("radio", { name: "Blue text" }));
+      fireEvent.pointerDown(toggle);
+      expect(onClose).not.toHaveBeenCalled();
+      fireEvent.pointerDown(document.body);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      toggle.remove(); // even when an expectation fails
+    }
   });
 
   it("keeps the popover open after a choice", async () => {

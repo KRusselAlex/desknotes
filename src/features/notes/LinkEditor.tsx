@@ -34,6 +34,8 @@ export function LinkEditor({ editor, onClose }: { editor: Editor; onClose: () =>
       apply();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      // This Esc closes the link editor only, not also an open Text style popover.
+      e.stopPropagation();
       editor.commands.focus();
       onClose();
     }
