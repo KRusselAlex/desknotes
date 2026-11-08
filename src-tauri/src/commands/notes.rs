@@ -294,7 +294,11 @@ pub async fn set_note_completed(
         return Ok(());
     }
     let now = desknotes_core::now_ms();
-    state.with_db(|db| db.set_completed(&id, done, now))?;
+    let changed = state.with_db(|db| db.set_completed(&id, done, now))?;
+    if !done && !changed {
+        // A stale Reopen click on a note that is not done: it may be hidden on purpose.
+        return Ok(());
+    }
     if done {
         // The window is destroyed below, so it can no longer answer a save-all round (quit,
         // export, restore, hide-all, lock). Its text was saved by the page before this call,
