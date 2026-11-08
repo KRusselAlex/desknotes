@@ -6,7 +6,7 @@ mod image_drop;
 pub mod note_settings;
 
 use desknotes_core::geometry::{Rect, keep_on_screen};
-use desknotes_core::{COLLAPSED_HEIGHT, Note, NoteSize};
+use desknotes_core::{Appearance, COLLAPSED_HEIGHT, Note, NoteSize};
 use serde::Serialize;
 use tauri::{
     AppHandle, DragDropEvent, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
@@ -236,11 +236,20 @@ type RelatedView = webkit2gtk::WebView;
 #[cfg(not(target_os = "linux"))]
 type RelatedView = ();
 
-fn report_window_error(app: &AppHandle, e: tauri::Error) {
-    report_window_problem(
-        app,
-        format!("A note window could not be opened (its content is safe): {e}"),
-    );
+/// What the manager says when a queued window could not be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Building {
+    Note,
+    Settings,
+    NoteSettings,
+}
+
+fn build_failure_message(what: Building, e: &dyn std::fmt::Display) -> String {
+    match what {
+        Building::Note => format!("A note window could not be opened (its content is safe): {e}"),
+        Building::Settings => format!("The Settings window could not be opened: {e}"),
+        Building::NoteSettings => format!("The Note settings window could not be opened: {e}"),
+    }
 }
 
 /// Tell the owner about a window that could not be (re)opened: the message goes
@@ -254,7 +263,7 @@ pub(crate) fn report_window_problem(app: &AppHandle, message: String) {
 /// "related view") instead of starting its own, which costs ~80 MiB per window
 /// (ADR-0006). On Linux `build` runs a moment later on the main thread and its
 /// errors are reported in the manager.
-fn build_sharing_process<F>(app: &AppHandle, build: F) -> tauri::Result<()>
+fn build_sharing_process<F>(app: &AppHandle, what: Building, build: F) -> tauri::Result<()>
 where
     F: FnOnce(Option<RelatedView>) -> tauri::Result<()> + Send + 'static,
 {
@@ -263,7 +272,7 @@ where
         let reporter = app.clone();
         return manager.with_webview(move |platform| {
             if let Err(e) = build(Some(platform.inner())) {
-                report_window_error(&reporter, e);
+                report_window_problem(&reporter, build_failure_message(what, &e));
             }
         });
     }
@@ -316,7 +325,7 @@ pub fn open_settings(app: &AppHandle, section: Option<&'static str>) -> tauri::R
         return existing.set_focus();
     }
     let handle = app.clone();
-    build_sharing_process(app, move |related| {
+    build_sharing_process(app, Building::Settings, move |related| {
         if let Some(existing) = handle.get_webview_window(SETTINGS) {
             if let Some(s) = section {
                 handle.emit_to(SETTINGS, SETTINGS_SECTION, s)?;
@@ -376,7 +385,7 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
     let collapsed = w.collapsed;
     // Transparency is a creation-time property of the window, so only a note
     // below 100 % opacity gets it; crossing 100 % reopens the window.
-    let transparent = note.appearance.opacity.unwrap_or(100) < 100;
+    let transparent = needs_transparency(&note.appearance);
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
@@ -435,6 +444,7 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
         #[cfg(not(target_os = "linux"))]
         let _ = related;
         let window = builder.build()?;
+        record_transparency(&handle, &note_id, transparent);
         // Record where and how big it opened (no resize event fires for that).
         // While collapsed, the core keeps the saved height.
         let position = positioning.then_some((rect.x, rect.y));
@@ -447,7 +457,7 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
         focus_after_show(&handle, &window, focus)
     };
 
-    build_sharing_process(app, build)
+    build_sharing_process(app, Building::Note, build)
 }
 
 /// After a note window is shown: focus it, or (`focus` false) give the focus
@@ -465,6 +475,33 @@ fn focus_after_show(
         Some(settings) => settings.set_focus(),
         None => Ok(()),
     }
+}
+
+/// Whether a note's window must be created transparent: its opacity is below
+/// 100 % (no opacity set means 100 %).
+pub fn needs_transparency(appearance: &Appearance) -> bool {
+    appearance.opacity.is_some_and(|o| o < 100)
+}
+
+/// Remember how the window of note `id` was created (its transparency cannot
+/// be read back from the window).
+fn record_transparency(app: &AppHandle, id: &str, transparent: bool) {
+    let state = app.state::<AppState>();
+    let mut see_through = state.see_through.lock().unwrap_or_else(|e| e.into_inner());
+    if transparent {
+        see_through.insert(id.to_owned());
+    } else {
+        see_through.remove(id);
+    }
+}
+
+/// Whether the open window of note `id` was created transparent; `None` when
+/// the note has no window.
+pub fn window_transparency(app: &AppHandle, id: &str) -> Option<bool> {
+    app.get_webview_window(&note_label(id))?;
+    let state = app.state::<AppState>();
+    let see_through = state.see_through.lock().unwrap_or_else(|e| e.into_inner());
+    Some(see_through.contains(id))
 }
 
 /// Roll a note window up to its header strip, or back to `height`.
@@ -530,8 +567,10 @@ pub fn apply_min_note_size(app: &AppHandle, min: NoteSize) {
     }
 }
 
-/// Widest a collapsed strip may be stretched.
-const COLLAPSED_MAX_WIDTH: f64 = 4096.0;
+/// Widest a collapsed strip may be stretched: the largest X11 window width, so
+/// a strip is never narrower than the note's saved width (its resize event
+/// would save the narrower width as the note's).
+const COLLAPSED_MAX_WIDTH: f64 = 32_767.0;
 
 /// Save the window's final geometry and destroy it. No-op if not open.
 pub fn close_note(app: &AppHandle, note_id: &str) -> tauri::Result<()> {
@@ -666,7 +705,7 @@ pub fn restore_on_startup(app: &AppHandle) {
     }
     for note in &notes {
         if let Err(e) = open_note(app, note) {
-            report_window_error(app, e);
+            report_window_problem(app, build_failure_message(Building::Note, &e));
         }
     }
 }
@@ -717,6 +756,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
             // A note kept open at the last lock no longer has an editor that
             // could save it: lock it now (design §4.3).
             if let Some(id) = note_id_from_label(window.label()) {
+                record_transparency(window.app_handle(), id, false);
                 crate::privacy::release_kept_open(window.app_handle(), id);
             }
         }
@@ -749,6 +789,27 @@ mod tests {
             .expect("SETTINGS_SECTIONS in src/types/note.ts");
         let names: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
         assert_eq!(names, SETTINGS_SECTIONS);
+    }
+
+    #[test]
+    fn only_an_opacity_below_100_needs_a_transparent_window() {
+        let with = |opacity| Appearance {
+            opacity,
+            ..Appearance::default()
+        };
+        assert!(!needs_transparency(&with(None)));
+        assert!(!needs_transparency(&with(Some(100))));
+        assert!(needs_transparency(&with(Some(95))));
+        assert!(needs_transparency(&with(Some(80))));
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_built_is_named() {
+        let e = "no display";
+        assert!(build_failure_message(Building::Note, &e).starts_with("A note window"));
+        assert!(build_failure_message(Building::Settings, &e).starts_with("The Settings window"));
+        let m = build_failure_message(Building::NoteSettings, &e);
+        assert!(m.starts_with("The Note settings window") && m.ends_with("no display"));
     }
 
     #[test]

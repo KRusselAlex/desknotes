@@ -34,16 +34,18 @@ fn size_plan(open: bool, collapsed: bool) -> SizePlan {
     }
 }
 
-/// Whether a note window needs transparency: its opacity is below 100 %
-/// (no opacity set means 100 %).
-fn see_through(appearance: &Appearance) -> bool {
-    appearance.opacity.is_some_and(|o| o < 100)
+/// Whether an open note window must be recreated: it was created with a
+/// different transparency than its opacity now needs. `None`: no window.
+fn needs_reopen(window_transparent: Option<bool>, wanted: bool) -> bool {
+    window_transparent.is_some_and(|now| now != wanted)
 }
 
 /// Style a note. Saved by the core (which validates every field), then every
 /// window is told. A note window is created with transparency only when its
-/// opacity is below 100 %, so crossing 100 % in either direction asks the open
-/// note window to save and reopen itself (`reopen`, handled by the note).
+/// opacity is below 100 %, so when the open window's transparency no longer
+/// matches, it is asked to save and reopen itself (`reopen`, handled by the
+/// note). Compared with the window itself, not the opacity saved before: a
+/// reopen that did not happen is caught up by the next change.
 #[tauri::command]
 pub fn set_note_appearance(
     app: AppHandle,
@@ -53,11 +55,10 @@ pub fn set_note_appearance(
     appearance: Appearance,
 ) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
-    let was_see_through = see_through(&state.with_db(|db| db.get_note(&id))?.appearance);
     state.with_db(|db| db.set_appearance(&id, &appearance))?;
-    let is_see_through = see_through(&state.with_db(|db| db.get_note(&id))?.appearance);
+    let wanted = windows::needs_transparency(&state.with_db(|db| db.get_note(&id))?.appearance);
     emit_changed(&app, Some(&id), "other");
-    if was_see_through != is_see_through {
+    if needs_reopen(windows::window_transparency(&app, &id), wanted) {
         windows::delegate_to_note(&app, caller.label(), &id, "reopen");
     }
     Ok(())
@@ -101,8 +102,19 @@ pub fn set_note_size(
         plan => {
             // Saved first: the strip's own resize event then only repeats its width.
             state.with_db(|db| db.set_window_size(&id, w, h))?;
-            if let (SizePlan::SavedAndStrip, Some(window)) = (plan, &window) {
-                resize_in_place(&app, window, (w, COLLAPSED_HEIGHT), true)?;
+            if let (SizePlan::SavedAndStrip, Some(window)) = (plan, &window)
+                && let Err(e) = resize_in_place(&app, window, (w, COLLAPSED_HEIGHT), true)
+            {
+                // The strip kept its old width; its next move would save that
+                // width with the new height. Put the saved size back instead.
+                let (old_w, old_h) = (note.window.width, note.window.height);
+                if let Err(undo) = state.with_db(|db| db.set_window_size(&id, old_w, old_h)) {
+                    eprintln!(
+                        "DeskNotes: could not restore a note's saved size: {}",
+                        undo.message
+                    );
+                }
+                return Err(e);
             }
         }
     }
@@ -116,6 +128,8 @@ pub fn set_note_size(
 /// Resize an open note window, and move it back inside its screen when the new
 /// size would make it run off (only where positioning is supported). `strip`:
 /// the window is a collapsed note's header strip, which only moves sideways.
+/// Only a failed resize is an error: a failed move is logged, since the window
+/// has its new size either way.
 fn resize_in_place(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -130,8 +144,9 @@ fn resize_in_place(
     window.set_size(LogicalSize::new(size.0, size.1))?;
     if let (true, Some(current)) = (window_positioning_supported(), current)
         && let Some((x, y)) = moved_to_fit(current, size, strip, &windows::work_areas(app))
+        && let Err(e) = window.set_position(LogicalPosition::new(x, y))
     {
-        window.set_position(LogicalPosition::new(x, y))?;
+        eprintln!("DeskNotes: could not move a resized note back on screen: {e}");
     }
     Ok(())
 }
@@ -218,16 +233,20 @@ fn reopen_failure_message(e: &IpcError) -> String {
 
 async fn reopen(app: &AppHandle, id: &str) -> IpcResult<()> {
     let label = windows::note_label(id);
-    if app.get_webview_window(&label).is_none() {
+    let note = app.state::<AppState>().with_db(|db| db.get_note(id))?;
+    let wanted = windows::needs_transparency(&note.appearance);
+    // No window, or already right: two quick crossings of 100 % ask twice.
+    if !needs_reopen(windows::window_transparency(app, id), wanted) {
         return Ok(());
     }
     let id = id.to_owned();
-    windows::close_note(app, &id)?;
-    // `close_note` only asks for the window to be destroyed; it is gone once
-    // the main thread has handled that. Opening before then would just focus it.
-    // Off the async runtime's workers: this sleeps.
+    // Off the async runtime's workers: closing waits for the saved place to be
+    // written (up to 2 s), and waiting for the window to go sleeps.
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        windows::close_note(&handle, &id)?;
+        // `close_note` only asks for the window to be destroyed; it is gone once
+        // the main thread has handled that. Opening before then would just focus it.
         let deadline = Instant::now() + GONE_TIMEOUT;
         while handle.get_webview_window(&label).is_some() {
             if Instant::now() >= deadline {
@@ -283,15 +302,16 @@ mod tests {
     }
 
     #[test]
-    fn only_an_opacity_below_100_needs_a_see_through_window() {
-        let with = |opacity| Appearance {
-            opacity,
-            ..Appearance::default()
-        };
-        assert!(!see_through(&with(None)));
-        assert!(!see_through(&with(Some(100))));
-        assert!(see_through(&with(Some(95))));
-        assert!(see_through(&with(Some(80))));
+    fn a_window_is_reopened_only_when_its_transparency_is_wrong() {
+        // No window: nothing to reopen.
+        assert!(!needs_reopen(None, true));
+        assert!(!needs_reopen(None, false));
+        // Already right, e.g. the second of two quick crossings of 100 %.
+        assert!(!needs_reopen(Some(true), true));
+        assert!(!needs_reopen(Some(false), false));
+        // Wrong, including after an earlier reopen that did not happen.
+        assert!(needs_reopen(Some(false), true));
+        assert!(needs_reopen(Some(true), false));
     }
 
     #[test]

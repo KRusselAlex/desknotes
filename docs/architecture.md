@@ -75,7 +75,7 @@ A thin adapter around the core: commands, windows, platform code.
 | `system_auth.rs` | Proof of the Ubuntu password through polkit (`pkcheck`), for a forgotten PIN. |
 | `single_instance.rs` | Holds DeskNotes' single-instance name for `--reset-pin`, which refuses while DeskNotes runs. |
 | `gnome_shortcut.rs` | Adds DeskNotes' GNOME custom keyboard shortcut through GSettings. |
-| `fonts.rs` | Lists installed font families (`fc-list`). |
+| `fonts.rs` | Lists installed font families (`fc-list`, stopped after 5 s; a list read once is kept for the session). |
 | `clipboard.rs` | Reads a pasted image from the system clipboard, since WebKitGTK gives the page none. |
 
 Other shell files:
@@ -234,7 +234,7 @@ All are created only in Rust (`windows/`), never from the webview.
 | Label | What | Size and place | Created and closed |
 |---|---|---|---|
 | `manager` | Note lists, search, Reminders | 560 × 620 (min 400 × 360), centred | Created at start-up, hidden or shown. Closing it **hides** it while any note is open; with no notes open, closing it quits the app. |
-| `note-<id>` | One note | The saved size, at least the "Minimum note size". The saved position goes through `keep_on_screen`. A new note cascades from the top-left of the primary work area (64 px, plus 28 px per open note, 8 steps). | Undecorated and not maximisable. Created **hidden, then shown**, so Mutter does not add 37 px to its height. `transparent` only when opacity is below 100 %, so crossing 100 % reopens the window (`reopen_note`). Collapsed notes are pinned to a 32 px strip. `close_note` saves the geometry and destroys the window. |
+| `note-<id>` | One note | The saved size, at least the "Minimum note size". The saved position goes through `keep_on_screen`. A new note cascades from the top-left of the primary work area (64 px, plus 28 px per open note, 8 steps). | Undecorated and not maximisable. Created **hidden, then shown**, so Mutter does not add 37 px to its height. `transparent` only when opacity is below 100 % (`needs_transparency`), so crossing 100 % reopens the window (`reopen_note`); `AppState::see_through` remembers which open windows were created transparent. Collapsed notes are pinned to a 32 px strip. `close_note` saves the geometry and destroys the window. |
 | `settings` | App settings | 680 × 520 (min 560 × 420), centred | One at a time. `?section=` picks the pane (`general`, `appearance`, `automations`, `privacy`, `privacy-new-pin`, `backup`, `about`). An open window is focused and sent `settings-section`. |
 | `note_settings` | Settings for one note | 400 wide. Height is min(640, work area − 48), min 360 × 400. | One at a time. Placed beside the note: 12 px to its right, else to its left, else centred (`place_beside`). `?note=<id>` gives the note. Switching notes sends `note-settings-note`. The label uses an underscore on purpose, so it never matches `note-`. |
 
@@ -652,7 +652,10 @@ real-app check are.
 - **How it works:**
   - `set_note_appearance` stores the `appearance` JSON.
   - When opacity crosses 100 %, the note window is told to `reopen`, because
-    transparency is fixed when a window is created.
+    transparency is fixed when a window is created. The check compares the open
+    window's own transparency (recorded when it was built) with what the new opacity
+    needs, so a reopen that did not happen is caught up by the next change, and two
+    quick crossings reopen at most once each way.
   - While the window is open, the note's size follows through `note-resized`.
 - **Other note controls:**
   - **Always on top** and **read-only** (edit lock): the core refuses saves to a

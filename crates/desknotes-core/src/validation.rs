@@ -18,10 +18,12 @@ pub const TITLE_MAX_CHARS: usize = 80;
 pub const FONT_SIZES: RangeInclusive<u8> = 10..=32;
 /// The text colours the settings window offers (lower-case).
 pub const TEXT_COLORS: [&str; 4] = ["#201e1d", "#8c491a", "#56633f", "#1d4f91"];
-/// Line height in percent, in steps of 5.
+/// Line height in percent, in steps of `LINE_SPACING_STEP`.
 pub const LINE_SPACINGS: RangeInclusive<u16> = 100..=200;
-/// Window opacity in percent, in steps of 5.
+pub const LINE_SPACING_STEP: u16 = 5;
+/// Window opacity in percent, in steps of `OPACITY_STEP`.
 pub const OPACITIES: RangeInclusive<u8> = 80..=100;
+pub const OPACITY_STEP: u8 = 5;
 /// Longest font family name, in characters.
 pub const FONT_NAME_MAX_CHARS: usize = 100;
 
@@ -411,10 +413,12 @@ pub fn validate_private_label(label: &str) -> CoreResult<String> {
     Ok(label.to_string())
 }
 
-/// A font family name for a note: trimmed, at most `FONT_NAME_MAX_CHARS`
+/// A font family name for a note: characters that hide or reorder text are
+/// removed (as in a private label), then trimmed, at most `FONT_NAME_MAX_CHARS`
 /// characters, and free of anything that could break out of a CSS string
 /// (control characters, `"`, `\`, `;`). Empty means "system default" (`None`).
 pub fn validate_font_name(name: &str) -> CoreResult<Option<String>> {
+    let name: String = name.chars().filter(|&c| !hides_or_reorders(c)).collect();
     let name = name.trim();
     if name.is_empty() {
         return Ok(None);
@@ -456,19 +460,19 @@ pub fn validate_appearance(mut a: Appearance) -> CoreResult<Appearance> {
         a.text_color = Some(color);
     }
     if a.line_spacing
-        .is_some_and(|v| !LINE_SPACINGS.contains(&v) || v % 5 != 0)
+        .is_some_and(|v| !LINE_SPACINGS.contains(&v) || v % LINE_SPACING_STEP != 0)
     {
         return Err(invalid(format!(
-            "line spacing must be {} to {} in steps of 5",
+            "line spacing must be {} to {} in steps of {LINE_SPACING_STEP}",
             LINE_SPACINGS.start(),
             LINE_SPACINGS.end()
         )));
     }
     if a.opacity
-        .is_some_and(|v| !OPACITIES.contains(&v) || v % 5 != 0)
+        .is_some_and(|v| !OPACITIES.contains(&v) || v % OPACITY_STEP != 0)
     {
         return Err(invalid(format!(
-            "opacity must be {} to {} in steps of 5",
+            "opacity must be {} to {} in steps of {OPACITY_STEP}",
             OPACITIES.start(),
             OPACITIES.end()
         )));
@@ -1166,6 +1170,17 @@ mod tests {
         );
         assert_eq!(validate_font_name("  ").unwrap(), None);
         assert!(validate_font_name("a\"b").is_err());
+    }
+
+    #[test]
+    fn font_names_lose_characters_that_hide_or_reorder_text() {
+        assert_eq!(
+            validate_font_name("Noto\u{200B} Sans\u{202E}")
+                .unwrap()
+                .as_deref(),
+            Some("Noto Sans")
+        );
+        assert_eq!(validate_font_name("\u{FEFF}\u{2066}").unwrap(), None);
     }
 
     #[test]
