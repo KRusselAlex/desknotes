@@ -1,6 +1,4 @@
-import { useRef, type KeyboardEvent } from "react";
-
-const STEPS: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+import { moveAmongRadios, tabStop } from "./radioKeys";
 
 /**
  * Segmented control (design S1 "Lock after inactivity", S4 "Layout"): one choice of a few.
@@ -21,27 +19,10 @@ export function Segmented<T extends string | number>({
   onChange: (next: T) => void;
   disabled?: boolean;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const tabbable = Math.max(
-    0,
-    options.findIndex((o) => o.value === value),
-  );
-
-  function onKeyDown(e: KeyboardEvent) {
-    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
-    const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []);
-    const at = nodes.indexOf(document.activeElement as HTMLElement);
-    let next: number;
-    if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = nodes.length - 1;
-    else if (STEPS[e.key] !== undefined) next = (at + STEPS[e.key]! + nodes.length) % nodes.length;
-    else return;
-    nodes[next]?.focus();
-    e.preventDefault();
-  }
+  const tabbable = tabStop(options.map((o) => o.value === value));
 
   return (
-    <div ref={ref} className="dn-segmented" role="radiogroup" aria-label={label} onKeyDown={onKeyDown}>
+    <div className="dn-segmented" role="radiogroup" aria-label={label} onKeyDown={moveAmongRadios}>
       {options.map((o, i) => (
         <button
           key={String(o.value)}

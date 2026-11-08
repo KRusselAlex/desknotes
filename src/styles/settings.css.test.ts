@@ -1,6 +1,9 @@
 // The CSS is read from disk (tests run from the repo root): `?raw` on a .css file comes back empty under vitest's CSS handling.
-// @ts-expect-error @types/node is not installed; vitest runs this file in node.
-const { readFileSync } = (await import("node:fs")) as { readFileSync: (path: string, encoding: "utf8") => string };
+// vitest runs in Node and can read stylesheets from disk. The module name is a variable
+// so type-checking needs no Node typings, with or without @types/node installed.
+const NODE_FS = "node:fs";
+export {}; // a module, so the top-level await is allowed
+const { readFileSync } = (await import(/* @vite-ignore */ NODE_FS)) as { readFileSync: (path: string, encoding: "utf8") => string };
 
 const css = readFileSync("src/styles/settings.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const selectorsWith = (property: string) =>

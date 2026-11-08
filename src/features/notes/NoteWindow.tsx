@@ -57,6 +57,7 @@ import { isSafeLink } from "./links";
 import { chipText } from "./reminderText";
 import { ReminderPopover } from "./ReminderPopover";
 import { NoteNotice, SaveError, SaveIndicator } from "./SaveStatus";
+import { firstFrameLook } from "./firstFrame";
 
 /** Below this width the date hides and the bar keeps only List, B, I, Link. */
 const NARROW = 260;
@@ -154,6 +155,14 @@ function noteLook(color: string, appearance: Appearance, app: AppAppearance) {
   return { classes: appClasses(app), style: appearanceStyle(color, effectiveAppearance(appearance, app)) };
 }
 
+/** What the window shows until its note has been read: the note's colour and opacity
+ * from the page URL (see `firstFrameLook`), never its text. */
+function FirstFrame() {
+  const [look] = useState(() => firstFrameLook(window.location.search));
+  useSeeThrough(look.appearance);
+  return <div className="dn-note" aria-busy="true" style={appearanceStyle(look.color, look.appearance)} />;
+}
+
 export function NoteWindow({ noteId }: { noteId: string }) {
   const [note, setNote] = useState<Note | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -164,9 +173,7 @@ export function NoteWindow({ noteId }: { noteId: string }) {
     commands.getNote(noteId).then(setNote, () => setLoadError(true));
   }, [noteId]);
 
-  if (!app || (!note && !loadError)) {
-    return <div className="dn-note" aria-busy="true" style={appearanceStyle("#fff4a3", NO_APPEARANCE)} />;
-  }
+  if (!app || (!note && !loadError)) return <FirstFrame />;
   if (!note) return <NoteLoadError noteId={noteId} color="#efe6d8" appearance={NO_APPEARANCE} app={app} />;
   // A locked private note never mounts the editor; its text never reached this window.
   if (note.locked) return <LockedNote note={note} onNote={setNote} app={app} />;

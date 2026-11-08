@@ -71,6 +71,7 @@ export function appearanceStyle(color: string, a: Appearance): CSSProperties {
   const see = opacity < 100;
   return {
     "--note-bg": see ? withAlpha(color, opacity / 100) : color,
+    "--note-bg-solid": color,
     "--note-hd": see ? withAlpha(header, opacity / 100) : header,
     "--note-ink": a.textColor ?? APPEARANCE_DEFAULTS.textColor,
     "--note-font-size": `${a.fontSize ?? APPEARANCE_DEFAULTS.fontSize}px`,

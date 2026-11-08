@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon } from "../../components/Icon";
+import { moveAmongRadios, tabStop } from "../../components/radioKeys";
 import { Segmented } from "../../components/Segmented";
 import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
@@ -53,6 +54,9 @@ function merged(current: Appearance, patch: Appearance, defaultSize: number): Ap
   return next as Appearance;
 }
 
+/** Which control a shown error belongs to: a later success of another control leaves it. */
+type ErrorSource = "appearance" | "color" | "size" | "editLocked" | "onTop";
+
 /** The settings window has nothing left to show: its note was hidden, archived, done or trashed. */
 function isGone(n: Note): boolean {
   return !n.window.visible || n.archivedAt !== null || n.deletedAt !== null || n.completedAt !== null;
@@ -75,7 +79,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const [fonts, setFonts] = useState<string[] | null>(null);
   /** Height / width kept while "Lock aspect ratio" is on. */
   const [aspect, setAspect] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ source: ErrorSource; message: string } | null>(null);
   /** Settings → Appearance: fills the font and size a note leaves unset (shown, never stored). */
   const app = useAppAppearance();
   const defaultSize = app ? (effectiveAppearance({}, app).fontSize ?? APPEARANCE_DEFAULTS.fontSize) : APPEARANCE_DEFAULTS.fontSize;
@@ -91,6 +95,13 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const appearanceRef = useRef<Appearance>({});
   /** Appearance changes to the shown note sent and not answered yet. */
   const inFlight = useRef(0);
+  /** Counts appearance sends. A read that started before the latest send may not hold it. */
+  const sends = useRef(0);
+  /** Counts reads; an answer older than the last one shown is ignored. */
+  const reads = useRef(0);
+  const lastRead = useRef(0);
+  /** The window's root, which keeps the focus while a switched note is being read. */
+  const rootRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
   const lastSend = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -116,9 +127,18 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const refresh = useCallback(
     (id: string, first: boolean) => {
       const gen = generation.current;
+      const read = ++reads.current;
+      const sendsAtStart = sends.current;
+      /** Whether this answer is for the shown note and not older than one already
+       * taken. A first read is always taken: nothing of the note shows until it lands. */
+      const current = () => {
+        if (generation.current !== gen || (!first && read < lastRead.current)) return false;
+        lastRead.current = Math.max(lastRead.current, read);
+        return true;
+      };
       commands.getNote(id).then(
         (n) => {
-          if (generation.current !== gen) return;
+          if (!current()) return;
           if (isGone(n)) {
             closeWindow();
             return;
@@ -126,19 +146,22 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
           // Until the note's first read has landed, the window shows nothing of it.
           if (!first && readGeneration.current !== gen) return;
           setColor(n.color);
-          // A slider being moved, or a change on its way, wins over what was saved before it.
-          if (first || (!dragging.current && !pending.current && inFlight.current === 0)) {
+          // A slider being moved, or a change on its way or sent after this read began,
+          // wins over what was saved before it.
+          const settled = !dragging.current && !pending.current && inFlight.current === 0;
+          if (first || (settled && sends.current === sendsAtStart)) {
             showAppearance(n.appearance);
           }
           setEditLocked(n.editLocked);
           setOnTop(n.window.alwaysOnTop);
           if (first) {
-            setSize({ width: n.window.width, height: n.window.height });
+            // A `note-resized` that came first is newer than the saved size, which can lag.
+            setSize((s) => s ?? { width: n.window.width, height: n.window.height });
             readGeneration.current = gen;
           }
         },
         () => {
-          if (generation.current === gen) closeWindow();
+          if (current()) closeWindow();
         },
       );
     },
@@ -148,15 +171,15 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   /** Run a change to the shown note; on refusal show why and read the note again.
    * The answer is ignored if another note is shown by then. */
   const run = useCallback(
-    (action: () => Promise<unknown>) => {
+    (source: ErrorSource, action: () => Promise<unknown>) => {
       const gen = generation.current;
       action().then(
         () => {
-          if (generation.current === gen) setError(null);
+          if (generation.current === gen) setError((e) => (e?.source === source ? null : e));
         },
         (e: Error) => {
           if (generation.current !== gen) return;
-          setError(e.message);
+          setError({ source, message: e.message });
           refresh(idRef.current, false);
         },
       );
@@ -173,7 +196,8 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     const value = appearanceRef.current;
     const gen = generation.current;
     inFlight.current += 1;
-    run(() =>
+    sends.current += 1;
+    run("appearance", () =>
       commands.setNoteAppearance(id, value).finally(() => {
         if (generation.current === gen) inFlight.current -= 1;
       }),
@@ -213,7 +237,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   function changeColor(next: string) {
     const id = idRef.current;
     setColor(next);
-    run(() => commands.setNoteColor(id, next));
+    run("color", () => commands.setNoteColor(id, next));
   }
 
   /** Resize the note and show the size that was applied (limited by the native side).
@@ -225,11 +249,11 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
       (applied) => {
         if (generation.current !== gen) return null;
         setSize(applied);
-        setError(null);
+        setError((e) => (e?.source === "size" ? null : e));
         return applied;
       },
       (e: Error) => {
-        if (generation.current === gen) setError(e.message);
+        if (generation.current === gen) setError({ source: "size", message: e.message });
         return null;
       },
     );
@@ -264,6 +288,9 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
       }),
       onNoteSettingsNote((id) => {
         flushAppearance(); // a slider value still waiting goes to the previous note
+        // The controls are about to go: keep the focus in this window, not on <body>.
+        const root = rootRef.current;
+        if (root && root.contains(document.activeElement)) root.focus();
         // From here on nothing of the previous note is shown or sent: answers for it are
         // ignored, and the controls stay hidden until the new note has been read.
         generation.current += 1;
@@ -292,6 +319,16 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
     return () => document.removeEventListener("keydown", onKey);
   }, [closeWindow]);
 
+  // Once a note's controls show (opened or switched), focus the first one unless the
+  // owner has already moved somewhere.
+  const fontRef = useRef<HTMLSelectElement>(null);
+  const shown = color !== null && size !== null && app !== null;
+  useEffect(() => {
+    if (!shown) return;
+    const at = document.activeElement;
+    if (at === null || at === document.body || at === rootRef.current) fontRef.current?.focus();
+  }, [shown, noteId]);
+
   // Closing: a slider value still waiting goes out.
   useEffect(() => () => flushAppearance(), [flushAppearance]);
 
@@ -303,18 +340,21 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   const opacity = appearance.opacity ?? APPEARANCE_DEFAULTS.opacity;
   const direction = appearance.direction ?? APPEARANCE_DEFAULTS.direction;
   const font = appearance.font ?? "";
-  const ready = color !== null && size !== null && app !== null;
+  const ready = shown;
   const isPreset = color !== null && COLOR_PRESETS.some((p) => p.value === color.toLowerCase());
 
   const sliderEvents = {
     onPointerDown: () => (dragging.current = true),
     onPointerUp: flushAppearance,
+    // A drag the system takes over (a touch scroll, the window losing the pointer)
+    // ends without pointerup.
+    onPointerCancel: flushAppearance,
     onKeyUp: flushAppearance,
     onBlur: flushAppearance,
   };
 
   return (
-    <div className="dn-ns">
+    <div className="dn-ns" ref={rootRef} tabIndex={-1}>
       <div className="dn-ns-scroll">
         {ready && (
           <div className="dn-ns-head">
@@ -324,7 +364,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
         {error && (
           <div className="dn-banner-error" role="alert">
             <Icon name="alert" size={18} />
-            <span>{error}</span>
+            <span>{error.message}</span>
           </div>
         )}
         {ready && (
@@ -334,6 +374,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
                 <label htmlFor="dn-ns-font">Font</label>
                 <span className="dn-ns-select">
                   <select
+                    ref={fontRef}
                     id="dn-ns-font"
                     value={font}
                     onChange={(e) => changeAppearance({ font: e.target.value || undefined })}
@@ -378,13 +419,19 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
               </div>
               <div className="dn-ns-row">
                 <span id="dn-ns-ink-label">Text colour</span>
-                <span className="dn-ns-inks" role="radiogroup" aria-labelledby="dn-ns-ink-label">
-                  {TEXT_COLORS.map((c) => (
+                <span
+                  className="dn-ns-inks"
+                  role="radiogroup"
+                  aria-labelledby="dn-ns-ink-label"
+                  onKeyDown={moveAmongRadios}
+                >
+                  {TEXT_COLORS.map((c, i) => (
                     <button
                       key={c}
                       type="button"
                       role="radio"
                       aria-checked={textColor === c}
+                      tabIndex={i === tabStop(TEXT_COLORS.map((t) => t === textColor)) ? 0 : -1}
                       aria-label={TEXT_COLOR_NAMES[c]}
                       style={{ backgroundColor: c }}
                       onClick={() => changeAppearance({ textColor: c })}
@@ -411,13 +458,19 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
             </Card>
 
             <Card title="Background">
-              <div className="dn-ns-swatches" role="radiogroup" aria-label="Background colour">
-                {COLOR_PRESETS.map((p) => (
+              <div
+                className="dn-ns-swatches"
+                role="radiogroup"
+                aria-label="Background colour"
+                onKeyDown={moveAmongRadios}
+              >
+                {COLOR_PRESETS.map((p, i) => (
                   <button
                     key={p.value}
                     type="button"
                     role="radio"
                     aria-checked={color.toLowerCase() === p.value}
+                    tabIndex={i === tabStop(COLOR_PRESETS.map((q) => q.value === color.toLowerCase())) ? 0 : -1}
                     aria-label={p.name}
                     style={{ backgroundColor: p.value }}
                     onClick={() => changeColor(p.value)}
@@ -481,7 +534,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
                   onChange={(on) => {
                     const id = idRef.current;
                     setEditLocked(on);
-                    run(() => commands.setEditLocked(id, on));
+                    run("editLocked", () => commands.setEditLocked(id, on));
                   }}
                 />
               </div>
@@ -493,7 +546,7 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
                   onChange={(on) => {
                     const id = idRef.current;
                     setOnTop(on);
-                    run(() => commands.setAlwaysOnTop(id, on));
+                    run("onTop", () => commands.setAlwaysOnTop(id, on));
                   }}
                 />
               </div>
@@ -529,6 +582,7 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
 interface SliderEvents {
   onPointerDown: () => void;
   onPointerUp: () => void;
+  onPointerCancel: () => void;
   onKeyUp: () => void;
   onBlur: () => void;
 }

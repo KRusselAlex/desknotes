@@ -70,3 +70,22 @@ Not checked in the real app: a strip resize that fails (cannot be caused from ou
 rollback is a few lines of code), a collapsed note wider than 4096 px (needs a screen that wide),
 and the font-list time limit itself (unit-tested with a slow command).
 
+## DES-31 batch 2: Note settings window and note look (2026-11-08)
+
+Debug build of `fix/des-31-note-settings-ui`, same hidden X display set-up as batch 1
+(fresh scratch HOME, welcome note only). Keys sent with `scripts/verify/x.py` after
+giving the window keyboard focus.
+
+| Check | Result |
+|---|---|
+| Note window page `index.html?color=…` | Opens and draws the note as before |
+| Note settings opens | Font has the focus ring at once |
+| Tab ×3, Right, Space on Text colour | Focus moved Black → Brown; Space chose it; `{"textColor":"#8c491a"}` saved |
+| Opacity 100 → 95 % | Note reopened `Depth: 32` with its brown text |
+| A checklist in that note | Box borders brown (the text colour, was the default ink); a ticked box is brown with a solid lemon tick at 95 % |
+| Direction RTL with a bullet list and a checklist | Bullets and boxes on the right, indent on the right |
+
+Not checked in the real app: the first frame's colour (it lasts one frame), focus while switching
+notes, and a cancelled slider drag (needs a touch screen or the system taking the pointer).
+These are unit-tested.
+
