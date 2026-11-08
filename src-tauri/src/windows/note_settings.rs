@@ -6,7 +6,7 @@ use desknotes_core::validation::parse_note_id;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use super::{
-    NOTE_SETTINGS, NOTE_SETTINGS_NOTE, build_sharing_process, geometry_of, note_label,
+    Building, NOTE_SETTINGS, NOTE_SETTINGS_NOTE, build_sharing_process, geometry_of, note_label,
     work_area_for,
 };
 use crate::error::{IpcError, IpcResult};
@@ -29,9 +29,10 @@ fn note_settings_url(id: &str) -> IpcResult<String> {
     Ok(format!("index.html?note={id}"))
 }
 
-/// Inner height of the window on a screen with this work area height.
+/// Inner height of the window on a screen with this work area height: never
+/// below the window's own minimum, even on a very small screen.
 fn window_height(area_height: f64) -> f64 {
-    MAX_HEIGHT.min(area_height - SCREEN_MARGIN)
+    MAX_HEIGHT.min(area_height - SCREEN_MARGIN).max(MIN_SIZE.1)
 }
 
 /// Where the window of `size` goes (top-left): right of the note, with a gap,
@@ -74,9 +75,10 @@ fn note_rect(app: &AppHandle, id: &str) -> IpcResult<Rect> {
 
 /// Open the Note settings window for a note, or switch the open one to that
 /// note and focus it. A new window is created hidden and shown once built (see
-/// `open_note`), and shares the manager's web process (ADR-0006).
+/// `open_note`), and shares the manager's web process (ADR-0006). `id` has been
+/// checked by the command; the URL is built from it only after its own check.
 pub fn open_note_settings(app: &AppHandle, id: &str) -> IpcResult<()> {
-    let id = parse_note_id(id)?;
+    let id = id.to_owned();
     if let Some(existing) = app.get_webview_window(NOTE_SETTINGS) {
         switch_to(app, &id)?;
         existing.show()?;
@@ -92,7 +94,7 @@ pub fn open_note_settings(app: &AppHandle, id: &str) -> IpcResult<()> {
     let positioning = window_positioning_supported();
 
     let handle = app.clone();
-    build_sharing_process(app, move |related| {
+    build_sharing_process(app, Building::NoteSettings, move |related| {
         // Requests are queued; a second one just switches the window.
         if let Some(existing) = handle.get_webview_window(NOTE_SETTINGS) {
             handle.emit_to(NOTE_SETTINGS, NOTE_SETTINGS_NOTE, &id)?;
@@ -182,9 +184,11 @@ mod tests {
     }
 
     #[test]
-    fn the_window_is_at_most_640_high_and_fits_the_screen() {
+    fn the_window_is_at_most_640_high_and_fits_the_screen_down_to_its_minimum() {
         assert_eq!(window_height(1040.0), 640.0);
         assert_eq!(window_height(600.0), 552.0);
+        // A tiny screen: the window keeps its minimum height.
+        assert_eq!(window_height(300.0), MIN_SIZE.1);
     }
 
     /// The window may close itself and nothing more: no link opening (default.json

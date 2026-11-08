@@ -172,12 +172,29 @@ pub(crate) fn decode_backup_image(img: &BackupImage) -> CoreResult<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Read each note's appearance on its own, so a key this version does not know
+/// names the note it is in (read with the whole file, it would only give a line
+/// and column).
+fn check_appearances(file: &serde_json::Value) -> CoreResult<()> {
+    let notes = file.get("notes").and_then(serde_json::Value::as_array);
+    for (i, note) in notes.into_iter().flatten().enumerate() {
+        if let Some(appearance) = note.get("appearance") {
+            Appearance::deserialize(appearance)
+                .map_err(|e| invalid(format!("note {}: appearance: {e}", i + 1)))?;
+        }
+    }
+    Ok(())
+}
+
 /// Parse and fully validate a backup file. Nothing is changed on failure.
 pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
     if raw.len() > MAX_BACKUP_BYTES {
         return Err(invalid("this backup file is too large"));
     }
-    let mut backup: Backup = serde_json::from_str(raw)
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|e| invalid(format!("this is not a DeskNotes backup file ({e})")))?;
+    check_appearances(&value)?;
+    let mut backup: Backup = serde_json::from_value(value)
         .map_err(|e| invalid(format!("this is not a DeskNotes backup file ({e})")))?;
     if backup.format != BACKUP_FORMAT {
         return Err(invalid("this is not a DeskNotes backup file"));
@@ -346,8 +363,9 @@ mod tests {
 
         let mut unknown = note(A);
         unknown["appearance"] = json!({"css": "x"});
-        let err = parse_backup(&file_v3(vec![unknown])).unwrap_err();
+        let err = parse_backup(&file_v3(vec![note(B), unknown])).unwrap_err();
         assert!(err.to_string().contains("unknown field"), "{err}");
+        assert!(err.to_string().contains("note 2"), "names the note: {err}");
     }
 
     fn file_v4(notes: Vec<serde_json::Value>) -> String {

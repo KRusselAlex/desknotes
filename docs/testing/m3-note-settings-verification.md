@@ -49,3 +49,24 @@ Design: `docs/superpowers/specs/2026-11-03-note-settings-design.md`
 `cargo test --workspace` (core 100 + 16 + 1, desktop 60), 274 frontend tests, `cargo clippy -D warnings`,
 `npm run lint`, `npm run typecheck`: all pass. Each task was reviewed separately, then the whole branch;
 findings fixed and re-reviewed.
+
+## DES-31 batch 1: shell and core fixes (2026-11-08)
+
+Debug build of `fix/des-31-note-settings` on a hidden X display (Xvfb `:78`, no window
+manager, private D-Bus, scratch HOME with only the welcome note). Driven with
+`scripts/verify/x.py`; the window's colour depth tells whether it was created
+transparent (32) or not (24).
+
+| Check | Result |
+|---|---|
+| Opacity 100 → 95 % (slider, Left key) | Note window recreated (new X id), `{"opacity":95}` saved |
+| 95 → 90 % | Same window kept: no needless reopen |
+| 90 → 95 → 100 % | Kept at 95, recreated at 100, appearance `{}` |
+| Quick 95 → 100 → 95 % (three key presses, no pause) | Ends with one window, `Depth: 32`, `{"opacity":95}` saved |
+| Then 95 → 100 % | Recreated, `Depth: 24`; text and place kept |
+| Font picker | Opens with "System default" then the installed families (now read through the 5 s time limit) |
+
+Not checked in the real app: a strip resize that fails (cannot be caused from outside; the
+rollback is a few lines of code), a collapsed note wider than 4096 px (needs a screen that wide),
+and the font-list time limit itself (unit-tested with a slow command).
+

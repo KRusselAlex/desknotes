@@ -21,12 +21,24 @@ const NOTE_COLUMNS: &str = "n.id, n.title, n.content_json, n.color, n.created_at
 /// Offset applied to a duplicated note so it does not hide the original.
 const DUPLICATE_OFFSET: f64 = 24.0;
 
+/// A note's stored appearance, or the defaults (logged) when it is damaged.
+fn stored_appearance(id: &str, raw: &str) -> Appearance {
+    parse_appearance(raw).unwrap_or_else(|e| {
+        eprintln!("DeskNotes: note {id} has a damaged appearance, using the defaults: {e}");
+        Appearance::default()
+    })
+}
+
 fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
+    let id: String = row.get(0)?;
     let content_json: String = row.get(2)?;
-    let appearance: String = row.get(18)?;
+    // Styling is cosmetic: a damaged value falls back to the defaults rather
+    // than stopping the note from opening (and is logged, since a backup then
+    // holds the defaults too).
+    let appearance = stored_appearance(&id, &row.get::<_, String>(18)?);
     Ok((
         Note {
-            id: row.get(0)?,
+            id,
             title: row.get(1)?,
             content: serde_json::Value::Null,
             color: row.get(3)?,
@@ -39,9 +51,7 @@ fn note_from_row(row: &Row<'_>) -> rusqlite::Result<(Note, String)> {
             private: row.get(16)?,
             private_label: row.get(17)?,
             locked: false,
-            // Styling is cosmetic: a damaged value falls back to the defaults
-            // rather than stopping the note from opening.
-            appearance: parse_appearance(&appearance).unwrap_or_default(),
+            appearance,
             window: NoteWindow {
                 x: row.get(8)?,
                 y: row.get(9)?,

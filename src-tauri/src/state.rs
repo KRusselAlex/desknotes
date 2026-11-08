@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -51,6 +52,9 @@ pub struct AppState {
     /// Checklist resets (automation rule 2) sent to open note windows, waiting
     /// for their editor to claim them.
     pub pending_resets: PendingResets,
+    /// Ids of the notes whose open window was created transparent (below 100 %
+    /// opacity). Kept by `windows`: a window's transparency cannot be read back.
+    pub see_through: Mutex<HashSet<String>>,
 }
 
 /// The notes database inside the app data folder.
@@ -126,6 +130,7 @@ impl AppState {
             secrets: Mutex::new(()),
             lock_epoch: AtomicU64::new(0),
             pending_resets: PendingResets::default(),
+            see_through: Mutex::new(HashSet::new()),
         }
     }
 
