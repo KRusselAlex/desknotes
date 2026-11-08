@@ -135,13 +135,17 @@ pub async fn show_hidden_notes(app: AppHandle) -> IpcResult<usize> {
 /// How many notes "Show hidden notes" would bring back.
 #[tauri::command]
 pub fn hidden_note_count(state: State<'_, AppState>) -> IpcResult<usize> {
-    let remembered = state.with_db(|db| db.hidden_by_hide_all())?;
-    // Only notes "Show hidden notes" would really bring back: not those done, archived or
-    // trashed since.
-    let rows: Vec<_> = remembered
+    state.with_db(hidden_count)
+}
+
+/// Only notes "Show hidden notes" would really bring back: not those done, archived,
+/// trashed or deleted since.
+fn hidden_count(db: &desknotes_core::Database) -> desknotes_core::CoreResult<usize> {
+    let rows: Vec<_> = db
+        .hidden_by_hide_all()?
         .into_iter()
         .filter_map(|id| {
-            let note = state.with_db(|db| db.get_note(&id)).ok()?;
+            let note = db.get_note(&id).ok()?;
             Some((id, note.archived_at, note.deleted_at, note.completed_at))
         })
         .collect();
@@ -294,7 +298,11 @@ pub async fn set_note_completed(
         return Ok(());
     }
     let now = desknotes_core::now_ms();
-    state.with_db(|db| db.set_completed(&id, done, now))?;
+    let changed = state.with_db(|db| db.set_completed(&id, done, now))?;
+    if !done && !changed {
+        // A stale Reopen click on a note that is not done: it may be hidden on purpose.
+        return Ok(());
+    }
     if done {
         // The window is destroyed below, so it can no longer answer a save-all round (quit,
         // export, restore, hide-all, lock). Its text was saved by the page before this call,
@@ -387,6 +395,15 @@ fn window_refusal(
     }
 }
 
+/// Refused (`not_allowed`) for an archived, trashed or done note: it may have no window,
+/// and so no Note settings window either.
+pub(crate) fn ensure_may_have_window(note: &Note) -> IpcResult<()> {
+    match window_refusal(note.archived_at, note.deleted_at, note.completed_at) {
+        Some(message) => Err(IpcError::new("not_allowed", message)),
+        None => Ok(()),
+    }
+}
+
 /// The ids of the notes that may have a window: `(id, archived_at, deleted_at, completed_at)`
 /// rows without a `window_refusal`.
 fn without_window_refusal(
@@ -405,9 +422,7 @@ fn without_window_refusal(
 pub fn show_note_window(app: &AppHandle, state: &AppState, id: &str) -> IpcResult<()> {
     let id = parse_note_id(id)?;
     let note = state.with_db(|db| db.get_note(&id))?;
-    if let Some(message) = window_refusal(note.archived_at, note.deleted_at, note.completed_at) {
-        return Err(IpcError::new("not_allowed", message));
-    }
+    ensure_may_have_window(&note)?;
     state.with_db(|db| db.set_visible(&id, true))?;
     windows::open_note(app, &note)?;
     emit_changed(app, Some(&id), "other");
@@ -551,6 +566,40 @@ mod tests {
             vec!["active".to_string(), "active-too".to_string()]
         );
         assert!(without_window_refusal(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn only_a_note_that_may_have_a_window_gets_one_or_its_settings() {
+        let db = desknotes_core::Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        assert!(ensure_may_have_window(&db.get_note(&id).unwrap()).is_ok());
+        db.set_completed(&id, true, 1).unwrap();
+        let err = ensure_may_have_window(&db.get_note(&id).unwrap()).unwrap_err();
+        assert_eq!(err.code, "not_allowed");
+        assert_eq!(err.message, "reopen the note before showing it");
+    }
+
+    #[test]
+    fn the_hidden_count_is_what_show_hidden_notes_would_bring_back() {
+        let db = desknotes_core::Database::open_in_memory().unwrap();
+        let new = || db.create_note(None).unwrap().id;
+        let (active, done, archived, trashed, purged) = (new(), new(), new(), new(), new());
+        db.set_hidden_by_hide_all(&[
+            active.clone(),
+            done.clone(),
+            archived.clone(),
+            trashed.clone(),
+            purged.clone(),
+        ])
+        .unwrap();
+        assert_eq!(hidden_count(&db).unwrap(), 5);
+        // Since the hide-all: done, archived, trashed, and one gone for good.
+        db.set_completed(&done, true, 1).unwrap();
+        db.set_archived(&archived, true).unwrap();
+        db.trash_note(&trashed).unwrap();
+        db.trash_note(&purged).unwrap();
+        db.purge_note(&purged).unwrap();
+        assert_eq!(hidden_count(&db).unwrap(), 1, "only {active}");
     }
 
     #[test]

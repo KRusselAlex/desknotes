@@ -552,7 +552,8 @@ real-app check are.
 - **How it works:**
   - `Autosave` (`src/features/notes/autosave.ts`) waits 500 ms after the last change,
     with no write per keystroke, then calls `save_note_content`.
-  - `flush()` runs before hide, close and any save-all round.
+  - `flush()` runs before hide, close and any save-all round, and when the note view
+    unmounts, so no timer outlives it.
   - Rust validates the document, then derives the title and search text
     (`db/notes.rs` `save_content`).
   - If a save fails, the window stays open and shows the error, and quitting is blocked
@@ -700,6 +701,10 @@ real-app check are.
   - `set_archived`, `trash_note`, `restore_note`, `purge_note` and `set_completed` are in
     `db/notes.rs`.
   - Marking done touches only `completed_at`. Text, colour and reminder stay.
+    `set_completed` reports whether the done state changed: reopening a note that is not
+    done changes nothing, so a stale Reopen click never shows a hidden note.
+  - A done, archived or trashed note gets no window and no Note settings window
+    (`ensure_may_have_window` in `commands/notes.rs`).
   - When the action comes from the manager for an open note, the shell hands it to that
     window with `note-action`, so the window saves first.
 - **Code:** `src/features/notes/DoneStrip.tsx`, `NoteWindow.tsx`, `ManagerWindow.tsx`,

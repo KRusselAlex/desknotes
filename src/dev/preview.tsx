@@ -403,7 +403,13 @@ mockIPC(
       }
       case "list_fonts":
         return ["DejaVu Sans", "Noto Serif", "Ubuntu", "Ubuntu Mono"];
-      case "open_note_settings":
+      case "open_note_settings": {
+        // Like the shell: no Note settings for a note that may have no window.
+        const n = find(a.id);
+        if (n.deletedAt !== null || n.archivedAt !== null || n.completedAt !== null)
+          throw { code: "not_allowed", message: "this note has no window" };
+        return null;
+      }
       case "reopen_note":
         return null;
       case "hidden_note_count":
@@ -621,7 +627,8 @@ mockIPC(
       case "set_note_completed": {
         const n = find(a.id);
         if (n.deletedAt !== null) throw { code: "not_allowed", message: "restore the note first" };
-        // Like the core: done keeps an existing date; reopening clears it.
+        // Like the core: done keeps an existing date; reopening a note that is not done changes nothing.
+        if (!a.done && n.completedAt === null) return null;
         n.completedAt = a.done ? (n.completedAt ?? Date.now()) : null;
         void emit("notes-changed", { id: a.id, kind: "other" });
         return null;

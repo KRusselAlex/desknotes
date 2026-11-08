@@ -433,6 +433,9 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
       }),
     [note.id],
   );
+  // Leaving: save what is pending now and stop the timers, which would otherwise fire
+  // after this note is gone. Saving nothing pending writes nothing.
+  useEffect(() => () => void autosave.flush(), [autosave]);
 
   const editor = useEditor({
     extensions: createExtensions(),
@@ -1026,7 +1029,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         startStrip();
       },
     },
-    { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
+    { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id).catch(() => undefined) },
     {
       id: "private",
       label: "Private",

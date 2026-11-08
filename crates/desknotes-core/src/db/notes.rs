@@ -487,19 +487,31 @@ impl Database {
     /// already-done note done keeps its original date. Reopening also marks the window
     /// visible (unless the note is archived). Refused for a note in the trash,
     /// like archiving. The shell closes and opens the window.
-    pub fn set_completed(&self, id: &str, done: bool, now_ms: i64) -> CoreResult<()> {
+    ///
+    /// Returns whether the done state changed. Reopening a note that is not done changes
+    /// nothing, the window flag included: a stale Reopen click must not show a hidden note.
+    pub fn set_completed(&self, id: &str, done: bool, now_ms: i64) -> CoreResult<bool> {
         let tx = self.conn.unchecked_transaction()?;
-        let changed = tx.execute(
-            "UPDATE notes SET completed_at = CASE WHEN ?2 THEN coalesce(completed_at, ?3) ELSE NULL END
-             WHERE id = ?1 AND deleted_at IS NULL",
-            params![id, done, now_ms],
-        )?;
-        if changed == 0 {
+        let was_done: Option<bool> = tx
+            .query_row(
+                "SELECT completed_at IS NOT NULL FROM notes WHERE id = ?1 AND deleted_at IS NULL",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(was_done) = was_done else {
             self.get_note(id)?; // NotFound if it does not exist at all
             return Err(CoreError::NotAllowed(
                 "restore the note from the trash first".into(),
             ));
+        };
+        if was_done == done {
+            return Ok(false);
         }
+        tx.execute(
+            "UPDATE notes SET completed_at = CASE WHEN ?2 THEN ?3 ELSE NULL END WHERE id = ?1",
+            params![id, done, now_ms],
+        )?;
         if !done {
             // A reopened note is a visible one again, as after unarchiving: a hide-all that
             // ran while its "Marked done" strip ended may have cleared the flag. A note that
@@ -512,7 +524,7 @@ impl Database {
             )?;
         }
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     /// Archive hides the window; the note stays searchable under "Archived".
@@ -975,6 +987,29 @@ mod tests {
             },
             "only the visible flag differs from before"
         );
+    }
+
+    #[test]
+    fn reopening_a_note_that_is_not_done_changes_nothing() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        // A hidden active note, then a stale Reopen click from a list drawn before.
+        db.set_visible(&id, false).unwrap();
+        let before = db.get_note(&id).unwrap();
+        assert!(
+            !db.set_completed(&id, false, 6_000).unwrap(),
+            "reports no change"
+        );
+        assert_eq!(db.get_note(&id).unwrap(), before, "it stays hidden");
+    }
+
+    #[test]
+    fn set_completed_reports_whether_the_done_state_changed() {
+        let db = db();
+        let id = db.create_note(None).unwrap().id;
+        assert!(db.set_completed(&id, true, 5_000).unwrap());
+        assert!(!db.set_completed(&id, true, 9_000).unwrap(), "already done");
+        assert!(db.set_completed(&id, false, 9_500).unwrap());
     }
 
     #[test]

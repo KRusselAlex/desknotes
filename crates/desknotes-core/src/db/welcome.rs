@@ -185,7 +185,9 @@ mod tests {
             ("active", |_, _| {}),
             ("archived", |db, id| db.set_archived(id, true).unwrap()),
             ("trashed", |db, id| db.trash_note(id).unwrap()),
-            ("completed", |db, id| db.set_completed(id, true, 1).unwrap()),
+            ("completed", |db, id| {
+                db.set_completed(id, true, 1).unwrap();
+            }),
         ];
         for (name, put_in_state) in states {
             let db = Database::open_in_memory().unwrap();

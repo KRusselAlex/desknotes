@@ -26,43 +26,28 @@ const handlers: {
   automations?: (a: Automations) => void;
   checklistReset?: (e: ChecklistReset) => void;
 } = {};
+type Handlers = typeof handlers;
+/**
+ * Keep the latest handler for an event. A window that goes removes its own on unsubscribe,
+ * so an event sent before the current window has subscribed is never taken by the last
+ * test's unmounted one (see `subscribed`).
+ */
+function keep<K extends keyof Handlers>(key: K, h: NonNullable<Handlers[K]>) {
+  handlers[key] = h;
+  return Promise.resolve(() => {
+    if (handlers[key] === h) delete handlers[key];
+  });
+}
 vi.mock("../../ipc/events", () => ({
-  onNotesChanged: (h: (e: NotesChanged) => void) => {
-    handlers.notesChanged = h;
-    return Promise.resolve(() => undefined);
-  },
-  onPrivacyChanged: (h: (e: PrivacyChanged) => void) => {
-    handlers.privacy = h;
-    return Promise.resolve(() => undefined);
-  },
-  onSaveAllRequest: (h: () => void) => {
-    handlers.willQuit = h;
-    return Promise.resolve(() => undefined);
-  },
-  onNoteAction: (h: (a: NoteAction) => void) => {
-    handlers.noteAction = h;
-    return Promise.resolve(() => undefined);
-  },
-  onAppAppearanceChanged: (h: (a: AppAppearance) => void) => {
-    handlers.appAppearance = h;
-    return Promise.resolve(() => undefined);
-  },
-  onRemindersChanged: (h: (e: RemindersChanged) => void) => {
-    handlers.reminders = h;
-    return Promise.resolve(() => undefined);
-  },
-  onImagesDropped: (h: (e: ImagesDropped) => void) => {
-    handlers.imagesDropped = h;
-    return Promise.resolve(() => undefined);
-  },
-  onAutomationsChanged: (h: (a: Automations) => void) => {
-    handlers.automations = h;
-    return Promise.resolve(() => undefined);
-  },
-  onChecklistReset: (h: (e: ChecklistReset) => void) => {
-    handlers.checklistReset = h;
-    return Promise.resolve(() => undefined);
-  },
+  onNotesChanged: (h: (e: NotesChanged) => void) => keep("notesChanged", h),
+  onPrivacyChanged: (h: (e: PrivacyChanged) => void) => keep("privacy", h),
+  onSaveAllRequest: (h: () => void) => keep("willQuit", h),
+  onNoteAction: (h: (a: NoteAction) => void) => keep("noteAction", h),
+  onAppAppearanceChanged: (h: (a: AppAppearance) => void) => keep("appAppearance", h),
+  onRemindersChanged: (h: (e: RemindersChanged) => void) => keep("reminders", h),
+  onImagesDropped: (h: (e: ImagesDropped) => void) => keep("imagesDropped", h),
+  onAutomationsChanged: (h: (a: Automations) => void) => keep("automations", h),
+  onChecklistReset: (h: (e: ChecklistReset) => void) => keep("checklistReset", h),
 }));
 vi.mock("../../ipc/window", () => ({
   onCloseRequested: () => Promise.resolve(() => undefined),
@@ -170,10 +155,18 @@ const settingsWith = (rules: Partial<Automations> = {}) =>
 
 const editorBox = () => screen.queryByRole("textbox", { name: "Note text" });
 
+/**
+ * The note view has subscribed to its events. It mounts once the note has been read, and
+ * React may run its effects after a `findBy…` has returned; they all run in one go, so one
+ * handler being there means every one is.
+ */
+const subscribed = () => waitFor(() => expect(handlers.privacy).toBeDefined());
+
 async function openNote(over: Partial<Note> = {}) {
   vi.mocked(commands.getNote).mockResolvedValue(note(over));
   const view = render(<NoteWindow noteId={ID} />);
   await screen.findByText("Groceries for Saturday");
+  await subscribed();
   return view;
 }
 
@@ -271,6 +264,15 @@ describe("NoteWindow", () => {
     expect(vi.mocked(commands.saveNoteContent).mock.invocationCallOrder[0]!).toBeLessThan(
       vi.mocked(commands.hideNote).mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("saves pending text when it goes, not from a timer that outlives it", async () => {
+    const { container, unmount } = await openNote();
+    await typeIntoNote(container, "last words ");
+    expect(commands.saveNoteContent).not.toHaveBeenCalled();
+    unmount();
+    expect(commands.saveNoteContent).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(commands.saveNoteContent).mock.calls[0]![1]).toContain("last words");
   });
 
   it("keeps the window and the text when the save fails, whatever asks to close it", async () => {
@@ -585,6 +587,7 @@ describe("NoteWindow", () => {
       vi.mocked(commands.getNote).mockResolvedValueOnce(lockedNote()).mockResolvedValue(note({ private: true }));
       render(<NoteWindow noteId={ID} />);
       await screen.findByText("Bank");
+      await subscribed();
       await act(async () => handlers.privacy?.({ locked: false }));
       expect(await screen.findByRole("textbox", { name: "Note text" })).toBeInTheDocument();
     });
@@ -669,6 +672,7 @@ describe("NoteWindow", () => {
       vi.mocked(commands.getNote).mockResolvedValue(lockedNote());
       render(<NoteWindow noteId={ID} />);
       await screen.findByText("Bank");
+      await subscribed();
       await act(async () => handlers.willQuit?.());
       expect(commands.quitReady).toHaveBeenCalledWith(true);
       await act(async () => handlers.noteAction?.("hide"));
@@ -1284,6 +1288,7 @@ describe("NoteWindow", () => {
       vi.mocked(commands.getNote).mockResolvedValue(lockedNote({ appearance: { opacity: 90 } }));
       render(<NoteWindow noteId={ID} />);
       await screen.findByText("Bank");
+      await subscribed(); // the class is set by an effect of the same view
       expect(document.documentElement).toHaveClass("dn-see-through");
       await act(async () => handlers.noteAction?.("reopen"));
       expect(commands.reopenNote).toHaveBeenCalledWith(ID);

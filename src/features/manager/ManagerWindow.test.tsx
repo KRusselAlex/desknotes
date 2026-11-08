@@ -182,7 +182,7 @@ describe("ManagerWindow", () => {
       dates.forEach((ms, i) => {
         expect(within(rows[i]!).getByText(doneDateLabel(ms, NOW))).toBeInTheDocument();
       });
-      // The formatter's shape, pinned for English: time, "yesterday", weekday, date, date with year.
+      // The formatter's shape in the machine's locale: time, "yesterday", weekday, date, date with year.
       expect(dates.map((ms) => doneDateLabel(ms, NOW))).toEqual([
         `Done ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(NOW - 1000)}`,
         "Done yesterday",
@@ -190,7 +190,11 @@ describe("ManagerWindow", () => {
         `Done ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(dates[3])}`,
         `Done ${new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(dates[4])}`,
       ]);
-      expect(within(rows[3]!).queryByText(/20\d\d/)).toBeNull();
+      // This year's dates leave the year out, in any locale's digits or calendar.
+      const year = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" })
+        .formatToParts(dates[3])
+        .find((p) => p.type === "year")!.value;
+      expect(rows[3]).not.toHaveTextContent(year);
       expect(within(rows[0]!).getByRole("button", { name: "Reopen" })).toBeInTheDocument();
     });
 
@@ -395,10 +399,13 @@ describe("ManagerWindow with private notes", () => {
 
   it("reset_banner_needs_acknowledging", async () => {
     vi.mocked(commands.listNotes).mockResolvedValue([]);
-    vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ resetAt: Date.UTC(2026, 10, 1, 9, 30) }));
+    const resetAt = Date.UTC(2026, 10, 1, 9, 30);
+    vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ resetAt }));
     render(<ManagerWindow />);
     const banner = await screen.findByRole("alert");
-    expect(banner).toHaveTextContent(/The PIN was reset on .*2026/);
+    // In the machine's locale (digits and calendar vary: ٢٠٢٦ in Arabic, 2569 in Thai).
+    const when = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(resetAt);
+    expect(banner).toHaveTextContent(`The PIN was reset on ${when}`);
     expect(banner).toHaveTextContent("choose a new PIN in Settings → Privacy");
 
     vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ resetAt: null }));
