@@ -84,3 +84,13 @@ Not checked in the real app: the clipboard HTML, because no clipboard tool is in
 this machine. Bold with a stored Regular weight copied inside DeskNotes, and pastes from
 other apps, are covered by unit tests that go through ProseMirror's own clipboard
 serializer and paste parser. Pasting from Chrome and Firefox is still an owner check.
+
+Review follow-up (same day):
+- A parent checklist item now takes its side from its own line only.
+- The item directions are rebuilt only when the text changes.
+- `text-align: start` was tried on every list item and dropped: an English bullet under an
+  Arabic first line then had its text on the left but its marker hanging at the left edge,
+  because the list's indent stays on the right.
+
+Still open (pre-existing): in Automatic direction, a bullet or numbered item follows the
+note's first line's side, so choosing Left on it stores nothing and changes nothing.

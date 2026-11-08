@@ -2551,6 +2551,7 @@ describe("NoteWindow", () => {
     it("a checklist item's text starts from the item's own side, not the list's (DES-33)", () => {
       const css = readFileSync("src/styles/note.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
       const at = css.indexOf('.dn-note-body ul[data-type="taskList"] li {');
+      expect(at).toBeGreaterThanOrEqual(0);
       expect(css.slice(at, css.indexOf("}", at))).toMatch(/text-align: start/);
     });
 

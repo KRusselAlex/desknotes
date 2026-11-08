@@ -18,6 +18,7 @@ import {
   DOMSerializer,
   type DOMOutputSpec,
   type Mark as PMMark,
+  type Node as PMNode,
   type ParseRule,
   type TagParseRule,
 } from "@tiptap/pm/model";
@@ -359,6 +360,8 @@ const TaskItemDirection = Extension.create({
   name: "taskItemDirection",
   addProseMirrorPlugins() {
     const editor = this.editor;
+    // Built again only when the text changes: a cursor move keeps the same document.
+    let last: { doc: PMNode; set: DecorationSet } | null = null;
     return [
       new Plugin({
         key: new PluginKey("taskItemDirection"),
@@ -366,14 +369,17 @@ const TaskItemDirection = Extension.create({
           decorations: (state) => {
             // The editor's dir is set by NoteWindow; a change to it updates the view.
             if (editor.view?.dom.getAttribute("dir") !== "auto") return DecorationSet.empty;
+            if (last?.doc === state.doc) return last.set;
             const decorations: Decoration[] = [];
             state.doc.descendants((node, pos) => {
               if (node.type.name !== "taskItem") return true;
-              const dir = firstStrongDirection(node.textContent);
+              // Its own line only: a nested item's text must not decide its parent's side.
+              const dir = firstStrongDirection(node.firstChild?.textContent ?? "");
               if (dir) decorations.push(Decoration.node(pos, pos + node.nodeSize, { dir }));
               return true; // nested items decide for themselves
             });
-            return DecorationSet.create(state.doc, decorations);
+            last = { doc: state.doc, set: DecorationSet.create(state.doc, decorations) };
+            return last.set;
           },
         },
       }),

@@ -243,6 +243,7 @@
 .dn-note-body .tiptap li p {
   margin: 0;
 }
+
 .dn-note-body .tiptap a {
   color: inherit;
   text-decoration: underline;
@@ -352,7 +353,9 @@
   gap: 9px;
   align-items: flex-start;
   /* WebKit gives list items `text-align: match-parent`, which keeps the list's side even
-     when an item has a direction of its own (Automatic direction): start from its own. */
+     when an item has a direction of its own (Automatic direction): start from its own.
+     Only checklist items: a bullet's marker would stay on the list's side, apart from its
+     text. */
   text-align: start;
 }
 .dn-note-body ul[data-type="taskList"] li > label {

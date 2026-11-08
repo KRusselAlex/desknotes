@@ -735,6 +735,33 @@ describe("checklist items in Automatic direction (DES-33)", () => {
     ltr.done();
   });
 
+  it("a parent item with no letters of its own does not take its nested item's side", () => {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    const item = (text: string, nested?: object) => ({
+      type: "taskItem",
+      attrs: { checked: false },
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }, ...(nested ? [nested] : [])],
+    });
+    const editor = new Editor({
+      element,
+      extensions: createExtensions(),
+      editorProps: { attributes: { dir: "auto" } },
+      content: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "مرحبا" }] },
+          { type: "taskList", content: [item("123", { type: "taskList", content: [item("English child")] })] },
+        ],
+      },
+    });
+    const [parent, child] = [...element.querySelectorAll('ul[data-type="taskList"] > li')];
+    expect(parent!.getAttribute("dir")).toBeNull();
+    expect(child!.getAttribute("dir")).toBe("ltr");
+    editor.destroy();
+    element.remove();
+  });
+
   it("is never stored", () => {
     const { editor, done } = doc("auto");
     expect(serializeDoc(editor.getJSON())).not.toContain('"dir"');
