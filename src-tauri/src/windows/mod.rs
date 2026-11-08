@@ -400,6 +400,12 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
         // while this build was queued is not missed. A smaller note opens at the
         // minimum; GTK's resize event then saves that size.
         let min = min_note_size(&handle);
+        // Read here too: an opacity change made while this build was queued saw no
+        // window, so nothing would reopen one built with the old transparency.
+        let transparent = handle
+            .state::<AppState>()
+            .with_db(|db| db.get_note(&note_id))
+            .map_or(transparent, |n| needs_transparency(&n.appearance));
         let width = rect.width.max(f64::from(min.width));
         let (min_height, height) = if collapsed {
             (COLLAPSED_HEIGHT, COLLAPSED_HEIGHT)

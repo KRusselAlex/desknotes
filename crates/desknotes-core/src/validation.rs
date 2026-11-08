@@ -290,7 +290,8 @@ fn validate_text_style(attrs: Option<&Value>) -> CoreResult<()> {
             .ok_or_else(|| invalid(format!("textStyle {key} must be text")))?;
         match key.as_str() {
             "fontFamily" => {
-                validate_font_name(text)?;
+                // Checked as given, nothing removed: the content is stored as received.
+                check_font_name(text)?;
             }
             "fontSize" => {
                 // Compare with the canonical spelling so "015px" and "+15px" are refused.
@@ -413,12 +414,18 @@ pub fn validate_private_label(label: &str) -> CoreResult<String> {
     Ok(label.to_string())
 }
 
-/// A font family name for a note: characters that hide or reorder text are
-/// removed (as in a private label), then trimmed, at most `FONT_NAME_MAX_CHARS`
-/// characters, and free of anything that could break out of a CSS string
-/// (control characters, `"`, `\`, `;`). Empty means "system default" (`None`).
+/// A font family name for a note's appearance or the app default: characters
+/// that hide or reorder text are removed (as in a private label), then the name
+/// is checked by `check_font_name`. Empty means "system default" (`None`).
 pub fn validate_font_name(name: &str) -> CoreResult<Option<String>> {
     let name: String = name.chars().filter(|&c| !hides_or_reorders(c)).collect();
+    check_font_name(&name)
+}
+
+/// A font family name, trimmed: at most `FONT_NAME_MAX_CHARS` characters and
+/// free of anything that could break out of a CSS string (control characters,
+/// `"`, `\`, `;`). Empty means "system default" (`None`).
+fn check_font_name(name: &str) -> CoreResult<Option<String>> {
     let name = name.trim();
     if name.is_empty() {
         return Ok(None);
@@ -904,6 +911,9 @@ mod tests {
             json!({ "fontWeight": "bold" }),
             json!({ "fontWeight": 400 }),
             json!({ "fontFamily": "a;b" }),
+            // Zero-width characters do not hide a control character or a long name.
+            json!({ "fontFamily": "\u{200B}\n\u{200B}" }),
+            json!({ "fontFamily": format!("{}a", "\u{200B}".repeat(FONT_NAME_MAX_CHARS)) }),
             json!({ "fontFamily": "a\"b" }),
             json!({ "fontFamily": long_name }),
             json!({ "lineHeight": "2" }),
