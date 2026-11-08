@@ -75,6 +75,28 @@ the proof of a forgotten PIN ends on a PIN change, removal, setup or lock; a loc
 went during the save round locks nothing; labels lose hidden characters, also when saved
 before the rule.
 
+### PIN hashing off the database lock (DES-30, 2026-11-08)
+
+Release binary of `fix/des-30-hash-off-lock` (c950b8b). Isolation as in the DES-40 run:
+- a hidden `Xvfb` display with no window manager;
+- a private D-Bus daemon;
+- a scratch `HOME` with a database made by the core: a PIN, a recovery code and one private note on screen.
+
+The owner's DeskNotes and desktop were untouched. Digits were typed with libxdo after `xdo_focus_window`. The database was read with Python `sqlite3`, read-only.
+
+| Check | Result |
+|---|---|
+| Start | The private note opens locked: "Scratch", the keypad, "Forgot your PIN?" |
+| Wrong PIN | "Wrong PIN. Try again."; one failure stored |
+| Right PIN | The note unlocks; the stored failures are cleared |
+| Five wrong PINs (after a restart) | "Wrong PIN. Try again in 27 s", keys disabled; the right PIN typed then is ignored, 5 failures kept |
+| Right PIN after the 30 s wait | Unlocks; failures cleared. No errors in the log. |
+
+**Not checked in the real app:** that a note save arriving during a PIN check no longer waits for it. That needs two windows busy at once, which the tools cannot time. Unit tests cover it:
+- the database lock is free while a new PIN is hashed;
+- a lock during a check wins over the unlock (this test fails without the fix);
+- a check whose PIN changed meanwhile records nothing.
+
 ## Automated tests at the end of the branch
 
 `cargo test --workspace` (core 82 unit + 1 + 16 lock tests; desktop 46, 2 ignored), 217
