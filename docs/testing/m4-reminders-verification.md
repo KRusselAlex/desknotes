@@ -46,12 +46,18 @@ The owner's DeskNotes kept running and was untouched. **Method:** libxdo keys an
 | Type "25:00" | The field gets the red border and Save is disabled |
 | "0930", then Save | The popover closes, and the database has 2026-11-08 09:30, repeat none. The note's chip shows "09:30". |
 
+**Owner check (2026-11-08).** On the .deb of main 56d437e, which includes the later review fixes ("14h", and red only once the field is left), the owner reports that typing the time works. Checked against the machine:
+- the running DeskNotes was started at 10:25 from the installed binary, which is byte-for-byte the one in that .deb;
+- a new reminder was saved after that: 2026-11-30 06:00, repeat weekdays. The popover's default would have been the next whole hour (about 11:00), so the time was typed.
+
+The first report ("still broken") came from a DeskNotes started at 04:32 from the old .deb, which was still running after the reinstall. A new launch only hands over to the running copy, so the update shows only after Quit from the manager.
+
 ## Not checked in the real app (owner checks)
 
 | Item | Why |
 |---|---|
 | The banner as GNOME draws it (three buttons: 10 min, 1 h, Dismiss) and pressing each button; clicking the banner to open the note | Synthetic clicks don't reach GNOME Shell's banners. GNOME 46's three-button limit was read from its source. Button handling is covered by unit tests (stale-button guard, snooze, dismiss). |
-| The date field's calendar picker | Not opened here. The date field is native and the owner reports it works. |
+| The date field's calendar picker | Not opened here. The date field is native; the owner reports it works, and the reminder they set on 2026-11-08 has a date picked weeks ahead. |
 | The manager's Reminders tab in the real window | Checked in the browser preview, light and dark; unit tests cover grouping and overdue. |
 | A private note while locked ("Private note"; title closed from GNOME's list when the lock engages) | Needs a PIN in the scratch data. Unit tests cover the masking and close-on-lock. |
 | Sleep/resume and a time-zone change | Not done on the owner's machine. The re-anchor and resume wake are unit-tested. |
