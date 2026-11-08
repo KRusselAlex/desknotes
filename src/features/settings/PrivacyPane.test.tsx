@@ -326,6 +326,43 @@ describe("PrivacyPane", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("after another error, goes back to step one with the new PIN kept, so it can be tried again (DES-30)", async () => {
+    status(on());
+    vi.mocked(commands.changePin)
+      .mockRejectedValueOnce(new CommandError("internal", "database is busy"))
+      .mockResolvedValueOnce({ kind: "ok" });
+    render(<PrivacyPane />);
+    await userEvent.click(await screen.findByRole("button", { name: "Change PIN…" }));
+    await type(PIN);
+    await screen.findByText("Change PIN · 2 of 3");
+    await type(NEW_PIN);
+    await screen.findByText("Change PIN · 3 of 3");
+    await type(NEW_PIN);
+    expect(await screen.findByText("Change PIN · 1 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Database is busy.")).toBeInTheDocument();
+    await type(PIN);
+    await waitFor(() => expect(commands.changePin).toHaveBeenLastCalledWith(PIN, NEW_PIN));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("says why it went back to step one when the PIN was not checked (DES-30)", async () => {
+    status(on());
+    vi.mocked(commands.changePin)
+      .mockResolvedValueOnce({ kind: "waiting", waitSecs: 0 })
+      .mockResolvedValueOnce({ kind: "ok" });
+    render(<PrivacyPane />);
+    await userEvent.click(await screen.findByRole("button", { name: "Change PIN…" }));
+    await type(PIN);
+    await screen.findByText("Change PIN · 2 of 3");
+    await type(NEW_PIN);
+    await screen.findByText("Change PIN · 3 of 3");
+    await type(NEW_PIN);
+    expect(await screen.findByText("Change PIN · 1 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Your PIN was not checked. Enter it again.")).toBeInTheDocument();
+    await type(PIN);
+    await waitFor(() => expect(commands.changePin).toHaveBeenLastCalledWith(PIN, NEW_PIN));
+  });
+
   it("opens choose-a-new-PIN when asked (after a forgotten-PIN proof)", async () => {
     status(on({ recovery: "code", recoveryMethod: "code" }));
     vi.mocked(commands.chooseNewPin).mockResolvedValue({ recoveryCode: CODE });

@@ -149,6 +149,16 @@ describe("ForgotPin", () => {
     }
   });
 
+  it("a wait that has just ended is not called a wrong code (DES-30)", async () => {
+    route("code");
+    vi.mocked(commands.recoverWithCode).mockResolvedValue({ kind: "waiting", waitSecs: 0 });
+    render(<ForgotPin onClose={vi.fn()} />);
+    await userEvent.type(await screen.findByRole("textbox", { name: "Recovery code" }), "AAAABBBBCCCCDDDDEEEEFFFF{Enter}");
+    await waitFor(() => expect(commands.recoverWithCode).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status")).toHaveTextContent("");
+    expect(continueButton()).toBeEnabled();
+  });
+
   it("Back to PIN and Cancel leave without checking anything", async () => {
     route("code");
     const onClose = vi.fn();

@@ -675,6 +675,22 @@ describe("NoteWindow", () => {
       }
     });
 
+    it("starts no hold timer for a save-all answered after the window closed (DES-30)", async () => {
+      const { unmount } = await openNote({ private: true });
+      let answer: () => void = () => undefined;
+      vi.mocked(commands.quitReady).mockReturnValueOnce(new Promise<void>((resolve) => (answer = resolve)));
+      await act(async () => handlers.willQuit?.());
+      expect(commands.quitReady).toHaveBeenCalled();
+      unmount();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await act(async () => answer());
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("shows the PIN when the lock follows a save-all answer", async () => {
       await openNote({ private: true });
       await act(async () => handlers.willQuit?.());

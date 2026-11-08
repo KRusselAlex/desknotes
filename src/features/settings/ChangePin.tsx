@@ -8,6 +8,8 @@ import { PINS_DIFFER } from "./PinSetup";
 
 type Step = 1 | 2 | 3;
 
+const NOT_CHECKED = "Your PIN was not checked. Enter it again.";
+
 const TITLES: Record<Step, string> = {
   1: "Enter your current PIN",
   2: "Choose a new PIN",
@@ -18,7 +20,8 @@ const TITLES: Record<Step, string> = {
  * Change PIN (design "Change PIN · 1 of 3"): current PIN, new PIN, confirm, in an
  * S3-style dialog. `change_pin` checks both at the end; a wrong current PIN goes back
  * to step one and keeps the new PIN, so only the current one is typed again.
- * PINs wait in refs only until `change_pin` has answered.
+ * PINs wait in refs until the change is done (the new one is kept for another try
+ * after a wrong current PIN or an error) and are dropped when the dialog closes.
  */
 export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const titleId = useId();
@@ -54,13 +57,22 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
     try {
       result = await holding(hold, () => commands.changePin(currentPin, newPin));
     } catch (e) {
-      if (!(e instanceof CommandError && e.code === "validation")) throw e;
-      // A new PIN that is too easy: choose it again (the current one is kept).
-      first.current = null;
-      next.current = null;
-      setKeepsNew(false);
-      current.current = currentPin;
-      go(2, e.message);
+      if (e instanceof CommandError && e.code === "validation") {
+        // A new PIN that is too easy: choose it again (the current one is kept).
+        first.current = null;
+        next.current = null;
+        setKeepsNew(false);
+        current.current = currentPin;
+        go(2, e.message);
+        return null;
+      }
+      // Anything else changed nothing: try again from the current PIN, the new one kept
+      // (from the confirm step, typing the new PIN again could never match).
+      current.current = null;
+      next.current = newPin;
+      setKeepsNew(true);
+      if (step === 1) throw e;
+      go(1, e instanceof Error ? e.message : String(e));
       return null;
     } finally {
       setBusy(false);
@@ -75,7 +87,8 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
     next.current = newPin;
     setKeepsNew(true);
     if (step === 1) return result;
-    go(1, result);
+    // A wait that ended as it was read: nothing was checked, so nothing was wrong.
+    go(1, result.kind === "waiting" && result.waitSecs <= 0 ? NOT_CHECKED : result);
     return null;
   }
 

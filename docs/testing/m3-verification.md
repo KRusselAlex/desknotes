@@ -97,6 +97,23 @@ The owner's DeskNotes and desktop were untouched. Digits were typed with libxdo 
 - a lock during a check wins over the unlock (this test fails without the fix);
 - a check whose PIN changed meanwhile records nothing.
 
+### Privacy UI fixes (DES-30, 2026-11-08)
+
+Mocked UI preview (`npm run dev`, `/preview.html?w=settings&section=privacy`, the browser pane, not WebKitGTK):
+- Settings → Privacy → "Lock after inactivity": a click on the chosen "5 min" option, then ArrowRight twice, moves a visible focus ring to "15 min" with "5 min" still chosen.
+- Space then chooses "15 min", and only that option stays in the Tab order.
+
+**Not checked in the real app (WebKitGTK):**
+- the segmented keys;
+- focus going back to a dialog when its focused control goes away;
+- Tab out of an option the arrows moved to.
+
+Unit tests cover them, and each fails without its fix.
+
+**Owner decisions:**
+- the "Forgot your PIN?" password wait stays as it is, with no button;
+- the printed "DeskNotes recovery code" line stays.
+
 ## Automated tests at the end of the branch
 
 `cargo test --workspace` (core 82 unit + 1 + 16 lock tests; desktop 46, 2 ignored), 217
