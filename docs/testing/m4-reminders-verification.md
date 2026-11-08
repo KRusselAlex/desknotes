@@ -25,12 +25,33 @@ Design: `docs/superpowers/specs/2026-11-04-reminders-design.md` (owner's designs
 | Bell chip (B2) | "Stand-up notes" shows the bell and "16:09". "Bike repair" shows a red overdue chip with "15:56". |
 | Notes untouched | Note text unchanged; only the reminder rows changed |
 
+## The R1 popover's time field (DES-45, 2026-11-08)
+
+The owner found that the time could not be set.
+
+**Cause.** WebKitGTK 2.52 draws `<input type="time">` as segments, and its hour segment never moves on to the minutes by itself. Each digit replaces the hour, so typing "0930" left "12:00". A plain input on a bare WebKitGTK page, with no React involved, does exactly the same. The minutes were reachable only with Tab, the Right arrow or a click on them.
+
+**Fix.** The time is now a typed text field. Checked on a release binary of `fix/reminder-time-input`. **Isolation:**
+- a hidden screen: Xvfb with no window manager;
+- a private D-Bus;
+- a scratch `HOME`.
+
+The owner's DeskNotes kept running and was untouched. **Method:** libxdo keys and clicks, window screenshots, and the database read with Python `sqlite3`.
+
+| Check | Result |
+|---|---|
+| Open ⋯ → Set reminder… | The popover shows the date and "05:00" (the next whole hour) |
+| Type "0930" into the time field | All four digits are kept, and leaving the field shows "09:30" |
+| Type "9:30 pm" | Shows "21:30" once the field is left |
+| Type "25:00" | The field gets the red border and Save is disabled |
+| "0930", then Save | The popover closes, and the database has 2026-11-08 09:30, repeat none. The note's chip shows "09:30". |
+
 ## Not checked in the real app (owner checks)
 
 | Item | Why |
 |---|---|
 | The banner as GNOME draws it (three buttons: 10 min, 1 h, Dismiss) and pressing each button; clicking the banner to open the note | Synthetic clicks don't reach GNOME Shell's banners. GNOME 46's three-button limit was read from its source. Button handling is covered by unit tests (stale-button guard, snooze, dismiss). |
-| Setting a reminder with the R1 popover and its native date/time inputs | Keyboard and pickers can't be driven here; unit tests cover the popover. |
+| The date field's calendar picker | Not opened here. The date field is native and the owner reports it works. |
 | The manager's Reminders tab in the real window | Checked in the browser preview, light and dark; unit tests cover grouping and overdue. |
 | A private note while locked ("Private note"; title closed from GNOME's list when the lock engages) | Needs a PIN in the scratch data. Unit tests cover the masking and close-on-lock. |
 | Sleep/resume and a time-zone change | Not done on the owner's machine. The re-anchor and resume wake are unit-tested. |
