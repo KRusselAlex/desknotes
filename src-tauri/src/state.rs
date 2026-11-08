@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use desknotes_core::{CoreError, CoreResult, Database, now_ms};
@@ -45,6 +45,9 @@ pub struct AppState {
     /// runs with the database lock released: checks take turns, so the wrong-PIN
     /// waits cannot be raced past, and the PIN cannot change during one.
     pub secrets: Mutex<()>,
+    /// Counts locks. An unlock or a proof of a forgotten PIN compares it before and
+    /// after its check: a lock that came during the check wins.
+    pub lock_epoch: AtomicU64,
     /// Checklist resets (automation rule 2) sent to open note windows, waiting
     /// for their editor to claim them.
     pub pending_resets: PendingResets,
@@ -121,6 +124,7 @@ impl AppState {
             last_activity_ms: AtomicI64::new(now_ms()),
             new_pin_allowed: AtomicBool::new(false),
             secrets: Mutex::new(()),
+            lock_epoch: AtomicU64::new(0),
             pending_resets: PendingResets::default(),
         }
     }

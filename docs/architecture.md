@@ -813,7 +813,9 @@ real-app check are.
     recovery codes (`NewPin`, `NewRecoveryCode`) are hashed before the lock is taken.
     This work runs on a blocking thread and takes turns (`AppState::secrets`), so
     the wrong-PIN waits cannot be raced past. A check whose PIN changed meanwhile is
-    refused and records nothing.
+    refused and records nothing. Locks are counted (`AppState::lock_epoch`): an unlock
+    or recovery code whose check a lock overtook is refused ("Private notes were locked
+    again"), so a screen lock or suspend during the check stays.
   - The Ubuntu password is asked with `pkcheck --process pid,start-time,uid`, the form
     pkcheck(1) asks for.
   - A lock checks again that a PIN is still set after the save round: turning the lock

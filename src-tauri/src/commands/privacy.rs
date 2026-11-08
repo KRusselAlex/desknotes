@@ -18,7 +18,8 @@
 //! thread with the database lock released, so note windows are not held up
 //! (DES-30), and under `AppState::secrets`, so such work never overlaps.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{MutexGuard, PoisonError};
 
 use desknotes_core::db::{PinCheck, RecoveryChoice, RecoveryMethod, Secret};
 use desknotes_core::privacy::{NewPin, NewRecoveryCode, PIN_DIGITS, validate_new_pin};
@@ -77,20 +78,26 @@ pub struct RecoveryChange {
     pub recovery_code: Option<String>,
 }
 
-/// Run PIN and recovery-code work on a blocking thread, holding
-/// `AppState::secrets` throughout.
+/// Held for the whole of PIN and recovery-code work (`AppState::secrets`), and
+/// asked for by every check, so checks cannot run side by side.
+struct Turn<'a> {
+    _guard: MutexGuard<'a, ()>,
+}
+
+/// Run PIN and recovery-code work on a blocking thread, taking its turn.
 async fn take_turn<T: Send + 'static>(
     app: &AppHandle,
-    work: impl FnOnce(&AppState) -> IpcResult<T> + Send + 'static,
+    work: impl FnOnce(&AppState, &Turn) -> IpcResult<T> + Send + 'static,
 ) -> IpcResult<T> {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let _turn = state
-            .secrets
-            .lock()
-            .map_err(|_| IpcError::new("internal", "PIN lock poisoned"))?;
-        work(state.inner())
+        // The mutex guards no data: a panic in earlier work must not shut the
+        // owner out of their private notes until a restart.
+        let turn = Turn {
+            _guard: state.secrets.lock().unwrap_or_else(PoisonError::into_inner),
+        };
+        work(state.inner(), &turn)
     })
     .await
     .map_err(|e| IpcError::new("internal", e.to_string()))?
@@ -99,8 +106,9 @@ async fn take_turn<T: Send + 'static>(
 /// Check `input` against the PIN or recovery code without holding the database
 /// lock while it is hashed. On a match, `prepare` makes any new hash, also
 /// without the lock, then `apply` runs in the same hold of the lock that records
-/// the match, so nothing can slip in between. Callers hold `AppState::secrets`.
+/// the match, so nothing can slip in between.
 fn check_then<P, T>(
+    _turn: &Turn,
     db: &SharedDb,
     secret: Secret,
     input: &str,
@@ -192,6 +200,7 @@ fn store_first_pin(
 /// Settings → "If I forget my PIN" (D14), after the current PIN (shared
 /// throttle; anything but `ok` changes nothing). Callers check `method_usable`.
 fn change_recovery_method(
+    turn: &Turn,
     db: &SharedDb,
     pin: &str,
     method: RecoveryMethod,
@@ -199,6 +208,7 @@ fn change_recovery_method(
 ) -> IpcResult<RecoveryChange> {
     // One transaction: on error the earlier choice and code stay as they were.
     let (check, recovery_code) = check_then(
+        turn,
         db,
         Secret::Pin,
         pin,
@@ -241,6 +251,7 @@ fn replace_forgotten_pin(
 /// Settings → Change PIN, after the current PIN. A new PIN ends any proof of a
 /// forgotten one, which was given for the old PIN.
 fn change_known_pin(
+    turn: &Turn,
     db: &SharedDb,
     allowed: &AtomicBool,
     current: &str,
@@ -248,6 +259,7 @@ fn change_known_pin(
     now_ms: i64,
 ) -> IpcResult<PinCheck> {
     let (check, _) = check_then(
+        turn,
         db,
         Secret::Pin,
         current,
@@ -264,8 +276,15 @@ fn change_known_pin(
 
 /// Settings → turn the lock off, after the PIN. Also ends any proof of a
 /// forgotten PIN, so it cannot choose a PIN set up later.
-fn remove_pin(db: &SharedDb, allowed: &AtomicBool, pin: &str, now_ms: i64) -> IpcResult<PinCheck> {
+fn remove_pin(
+    turn: &Turn,
+    db: &SharedDb,
+    allowed: &AtomicBool,
+    pin: &str,
+    now_ms: i64,
+) -> IpcResult<PinCheck> {
     let (check, _) = check_then(
+        turn,
         db,
         Secret::Pin,
         pin,
@@ -325,20 +344,22 @@ pub async fn unlock(
     pin: String,
 ) -> IpcResult<PinCheck> {
     plausible_pin(&pin)?;
-    let (check, _) = take_turn(&app, move |state| {
+    let (check, unlocked) = take_turn(&app, move |state, turn| {
+        let seen = state.lock_epoch.load(Ordering::Acquire);
         check_then(
+            turn,
             state.db(),
             Secret::Pin,
             &pin,
             now_ms(),
             || Ok(()),
-            |db, ()| {
-                db.set_privacy_locked(false, &[]);
-                Ok(())
-            },
+            |db, ()| Ok(unlock_unless_locked_since(db, &state.lock_epoch, seen)),
         )
     })
     .await?;
+    if unlocked == Some(false) {
+        return Err(locked_meanwhile("your PIN"));
+    }
     if check == PinCheck::Ok {
         state.touch_activity();
         emit_privacy_changed(&app, false);
@@ -366,8 +387,13 @@ pub async fn setup_pin(
     method: RecoveryMethod,
 ) -> IpcResult<SetupResult> {
     only_from_settings(&window, PRIVACY)?;
+    validate_new_pin(&pin)?;
     method_usable(method, system_auth_available())?;
-    let recovery_code = take_turn(&app, move |state| {
+    let recovery_code = take_turn(&app, move |state, _turn| {
+        // Refused before anything is hashed; checked again when storing.
+        if state.with_db(|db| db.pin_is_set())? {
+            return Err(CoreError::NotAllowed("a PIN is already set".into()).into());
+        }
         let pin = NewPin::new(&pin)?;
         let choice = RecoveryChoice::prepare(method)?;
         state.with_db(|db| {
@@ -396,8 +422,15 @@ pub async fn change_pin(
     only_from_settings(&window, PRIVACY)?;
     plausible_pin(&current)?;
     validate_new_pin(&new)?;
-    take_turn(&app, move |state| {
-        change_known_pin(state.db(), &state.new_pin_allowed, &current, &new, now_ms())
+    take_turn(&app, move |state, turn| {
+        change_known_pin(
+            turn,
+            state.db(),
+            &state.new_pin_allowed,
+            &current,
+            &new,
+            now_ms(),
+        )
     })
     .await
 }
@@ -411,8 +444,8 @@ pub async fn turn_off_lock(
 ) -> IpcResult<PinCheck> {
     only_from_settings(&window, PRIVACY)?;
     plausible_pin(&pin)?;
-    let check = take_turn(&app, move |state| {
-        remove_pin(state.db(), &state.new_pin_allowed, &pin, now_ms())
+    let check = take_turn(&app, move |state, turn| {
+        remove_pin(turn, state.db(), &state.new_pin_allowed, &pin, now_ms())
     })
     .await?;
     if check == PinCheck::Ok {
@@ -435,8 +468,8 @@ pub async fn set_recovery_method(
     only_from_settings(&window, PRIVACY)?;
     plausible_pin(&pin)?;
     method_usable(method, system_auth_available())?;
-    take_turn(&app, move |state| {
-        change_recovery_method(state.db(), &pin, method, now_ms())
+    take_turn(&app, move |state, turn| {
+        change_recovery_method(turn, state.db(), &pin, method, now_ms())
     })
     .await
 }
@@ -451,6 +484,31 @@ static SYSTEM_PROMPT_OPEN: AtomicBool = AtomicBool::new(false);
 fn accept_proof(db: &Database, state: &AppState) {
     db.set_privacy_locked(false, &[]);
     state.new_pin_allowed.store(true, Ordering::Release);
+}
+
+/// A check compares with the database lock released, so a lock may come while
+/// it runs. `seen` is the lock count read before the check; the check's result
+/// is acted on only if no lock came since. Called with the database lock held,
+/// which every lock also takes.
+fn no_lock_since(lock_epoch: &AtomicU64, seen: u64) -> bool {
+    lock_epoch.load(Ordering::Acquire) == seen
+}
+
+/// Unlock after a correct PIN, unless a lock came during the check (`false`).
+fn unlock_unless_locked_since(db: &Database, lock_epoch: &AtomicU64, seen: u64) -> bool {
+    let unlock = no_lock_since(lock_epoch, seen);
+    if unlock {
+        db.set_privacy_locked(false, &[]);
+    }
+    unlock
+}
+
+/// The secret was right, but private notes locked while it was checked.
+fn locked_meanwhile(what: &str) -> IpcError {
+    IpcError::new(
+        "not_allowed",
+        format!("Private notes were locked again. Enter {what} again."),
+    )
 }
 
 /// "Forgot your PIN?" where the Ubuntu password can be used and the owner did
@@ -523,20 +581,28 @@ pub async fn recover_with_code(
             "The recovery code is 24 letters and digits.",
         ));
     }
-    let (check, _) = take_turn(&app, move |state| {
+    let (check, accepted) = take_turn(&app, move |state, turn| {
+        let seen = state.lock_epoch.load(Ordering::Acquire);
         check_then(
+            turn,
             state.db(),
             Secret::RecoveryCode,
             &code,
             now_ms(),
             || Ok(()),
             |db, ()| {
-                accept_proof(db, state);
-                Ok(())
+                let accept = no_lock_since(&state.lock_epoch, seen);
+                if accept {
+                    accept_proof(db, state);
+                }
+                Ok(accept)
             },
         )
     })
     .await?;
+    if accepted == Some(false) {
+        return Err(locked_meanwhile("the recovery code"));
+    }
     if check == PinCheck::Ok {
         state.touch_activity();
         emit_privacy_changed(&app, false);
@@ -566,7 +632,7 @@ pub async fn choose_new_pin(
     choose_new_pin_window(window.label())?;
     validate_new_pin(&pin)?;
     let system = system_auth_available();
-    let result = take_turn(&app, move |state| {
+    let result = take_turn(&app, move |state, _turn| {
         // No proof: refused before anything is hashed. The proof is checked
         // again, and used up, when the new PIN is stored.
         if !state.new_pin_allowed.load(Ordering::Acquire) {
@@ -656,19 +722,26 @@ pub fn acknowledge_pin_reset(state: State<'_, AppState>) -> IpcResult<()> {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use desknotes_core::db::{PinCheck, RecoveryChoice, RecoveryMethod, Secret};
     use desknotes_core::privacy::{NewPin, NewRecoveryCode};
     use desknotes_core::{CoreError, Database};
 
     use super::{
-        RecoveryChange, change_known_pin, change_recovery_method, check_then,
+        RecoveryChange, Turn, change_known_pin, change_recovery_method, check_then,
         choose_new_pin_window, issue_code_with_new_pin, method_usable, needs_pin_first,
         plausible_pin, remove_pin, replace_forgotten_pin, store_first_pin, system_route_allowed,
-        windows_must_hear,
+        unlock_unless_locked_since, windows_must_hear,
     };
     use crate::state::SharedDb;
+
+    fn with_turn<T>(f: impl FnOnce(&Turn) -> T) -> T {
+        let secrets = Mutex::new(());
+        f(&Turn {
+            _guard: secrets.lock().unwrap(),
+        })
+    }
 
     fn shared_with_pin(pin: &str) -> SharedDb {
         let db = Database::open_in_memory().unwrap();
@@ -692,17 +765,20 @@ mod tests {
     fn the_database_is_free_while_a_new_pin_is_hashed() {
         // Note windows keep saving while a PIN is checked and a new one made (DES-30).
         let db = shared_with_pin("482915");
-        let (check, applied) = check_then(
-            &db,
-            Secret::Pin,
-            "482915",
-            0,
-            || {
-                assert!(db.try_lock().is_ok(), "the database lock is not held");
-                Ok(new_pin("730518"))
-            },
-            |db, pin| db.store_new_pin(&pin),
-        )
+        let (check, applied) = with_turn(|turn| {
+            check_then(
+                turn,
+                &db,
+                Secret::Pin,
+                "482915",
+                0,
+                || {
+                    assert!(db.try_lock().is_ok(), "the database lock is not held");
+                    Ok(new_pin("730518"))
+                },
+                |db, pin| db.store_new_pin(&pin),
+            )
+        })
         .unwrap();
         assert_eq!((check, applied), (PinCheck::Ok, Some(())));
         assert_eq!(
@@ -712,19 +788,56 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_during_the_check_wins_over_the_unlock() {
+        // The PIN is compared with the database lock released, so a lock (screen
+        // lock, suspend, "Lock now") may come meanwhile; it must stay (DES-30).
+        let db = shared_with_pin("482915");
+        peek(&db, |d| d.set_privacy_locked(true, &[]));
+        let epoch = AtomicU64::new(7);
+        let unlock = |lock_comes: bool| {
+            let seen = epoch.load(Ordering::SeqCst);
+            with_turn(|turn| {
+                check_then(
+                    turn,
+                    &db,
+                    Secret::Pin,
+                    "482915",
+                    0,
+                    || {
+                        if lock_comes {
+                            epoch.fetch_add(1, Ordering::SeqCst);
+                        }
+                        Ok(())
+                    },
+                    |d, ()| Ok(unlock_unless_locked_since(d, &epoch, seen)),
+                )
+            })
+            .unwrap()
+        };
+
+        assert_eq!(unlock(true), (PinCheck::Ok, Some(false)));
+        assert!(peek(&db, |d| d.privacy_locked()), "still locked");
+        assert_eq!(unlock(false), (PinCheck::Ok, Some(true)));
+        assert!(!peek(&db, |d| d.privacy_locked()));
+    }
+
+    #[test]
     fn a_wrong_or_waiting_check_prepares_and_applies_nothing() {
         let db = shared_with_pin("482915");
         let nothing = |_: &Database, ()| -> desknotes_core::CoreResult<()> {
             panic!("applied after a wrong PIN")
         };
-        let (check, applied) = check_then(
-            &db,
-            Secret::Pin,
-            "000001",
-            0,
-            || -> desknotes_core::CoreResult<()> { panic!("prepared after a wrong PIN") },
-            nothing,
-        )
+        let (check, applied) = with_turn(|turn| {
+            check_then(
+                turn,
+                &db,
+                Secret::Pin,
+                "000001",
+                0,
+                || -> desknotes_core::CoreResult<()> { panic!("prepared after a wrong PIN") },
+                nothing,
+            )
+        })
         .unwrap();
         assert_eq!((check, applied), (PinCheck::Wrong { wait_secs: 0 }, None));
 
@@ -732,14 +845,17 @@ mod tests {
         for _ in 0..4 {
             peek(&db, |d| d.check_pin("000001", 0).unwrap());
         }
-        let (check, applied) = check_then(
-            &db,
-            Secret::Pin,
-            "482915",
-            1_000,
-            || -> desknotes_core::CoreResult<()> { panic!("prepared while waiting") },
-            nothing,
-        )
+        let (check, applied) = with_turn(|turn| {
+            check_then(
+                turn,
+                &db,
+                Secret::Pin,
+                "482915",
+                1_000,
+                || -> desknotes_core::CoreResult<()> { panic!("prepared while waiting") },
+                nothing,
+            )
+        })
         .unwrap();
         assert!(matches!(check, PinCheck::Waiting { .. }), "{check:?}");
         assert_eq!(applied, None);
@@ -751,7 +867,7 @@ mod tests {
         let db = shared_with_pin("482915");
         let allowed = AtomicBool::new(true);
         assert!(matches!(
-            change_known_pin(&db, &allowed, "000001", "730518", 0).unwrap(),
+            with_turn(|turn| change_known_pin(turn, &db, &allowed, "000001", "730518", 0)).unwrap(),
             PinCheck::Wrong { .. }
         ));
         assert!(
@@ -759,7 +875,7 @@ mod tests {
             "a wrong PIN changes nothing"
         );
         assert_eq!(
-            change_known_pin(&db, &allowed, "482915", "730518", 0).unwrap(),
+            with_turn(|turn| change_known_pin(turn, &db, &allowed, "482915", "730518", 0)).unwrap(),
             PinCheck::Ok
         );
         assert!(!allowed.load(Ordering::SeqCst));
@@ -770,13 +886,13 @@ mod tests {
 
         allowed.store(true, Ordering::SeqCst);
         assert!(matches!(
-            remove_pin(&db, &allowed, "000001", 0).unwrap(),
+            with_turn(|turn| remove_pin(turn, &db, &allowed, "000001", 0)).unwrap(),
             PinCheck::Wrong { .. }
         ));
         assert!(allowed.load(Ordering::SeqCst));
         assert!(peek(&db, |d| d.pin_is_set().unwrap()));
         assert_eq!(
-            remove_pin(&db, &allowed, "730518", 0).unwrap(),
+            with_turn(|turn| remove_pin(turn, &db, &allowed, "730518", 0)).unwrap(),
             PinCheck::Ok
         );
         assert!(!allowed.load(Ordering::SeqCst));
@@ -947,7 +1063,9 @@ mod tests {
         });
 
         // Wrong PIN: nothing changes, the wait counter grows.
-        let wrong = change_recovery_method(&db, "000000", RecoveryMethod::Code, 0).unwrap();
+        let wrong =
+            with_turn(|turn| change_recovery_method(turn, &db, "000000", RecoveryMethod::Code, 0))
+                .unwrap();
         assert_eq!(wrong.check, PinCheck::Wrong { wait_secs: 0 });
         assert_eq!(wrong.recovery_code, None);
         assert_eq!(
@@ -957,7 +1075,9 @@ mod tests {
         assert!(!peek(&db, |d| d.has_recovery_code().unwrap()));
 
         // To a code: a new one, returned once.
-        let to_code = change_recovery_method(&db, "482915", RecoveryMethod::Code, 0).unwrap();
+        let to_code =
+            with_turn(|turn| change_recovery_method(turn, &db, "482915", RecoveryMethod::Code, 0))
+                .unwrap();
         assert_eq!(to_code.check, PinCheck::Ok);
         let code = to_code.recovery_code.expect("a recovery code");
         assert_eq!(
@@ -970,7 +1090,10 @@ mod tests {
         );
 
         // Back to the computer password: the code stops working.
-        let to_system = change_recovery_method(&db, "482915", RecoveryMethod::System, 0).unwrap();
+        let to_system = with_turn(|turn| {
+            change_recovery_method(turn, &db, "482915", RecoveryMethod::System, 0)
+        })
+        .unwrap();
         assert_eq!(to_system.check, PinCheck::Ok);
         assert_eq!(to_system.recovery_code, None);
         assert_eq!(
