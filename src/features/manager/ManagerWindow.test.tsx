@@ -425,6 +425,17 @@ describe("ManagerWindow with private notes", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("The PIN was reset on");
   });
 
+  it("knows a lock from the event itself when the read that follows fails (DES-30)", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ enabled: true, locked: false }));
+    render(<ManagerWindow />);
+    await waitFor(() => expect(commands.privacyStatus).toHaveBeenCalled());
+    vi.mocked(commands.privacyStatus).mockRejectedValueOnce(new Error("database is busy"));
+    await act(async () => privacyChanged.handler?.({ locked: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.queryByRole("menuitem", { name: "Lock now" })).toBeNull();
+  });
+
   it("an older answer about the lock state does not replace a newer one (DES-30)", async () => {
     vi.mocked(commands.listNotes).mockResolvedValue([]);
     let answerFirst: (s: PrivacyStatus) => void = () => undefined;

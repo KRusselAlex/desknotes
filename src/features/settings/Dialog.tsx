@@ -63,7 +63,14 @@ export function Dialog({
       dialog.focus();
       return;
     }
-    const at = items.indexOf(document.activeElement as HTMLElement);
+    const active = document.activeElement as HTMLElement | null;
+    let at = items.indexOf(active as HTMLElement);
+    if (at === -1 && active && active !== dialog && dialog.contains(active)) {
+      // Focus is on a control kept out of the Tab order (an option the arrows moved to):
+      // go on from where it stands, as the browser would.
+      const after = items.findIndex((el) => active.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+      at = e.shiftKey ? (after === -1 ? items.length : after) : (after === -1 ? items.length : after) - 1;
+    }
     const next = e.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : at === -1 || at === items.length - 1 ? 0 : at + 1;
     items[next]!.focus();
   }

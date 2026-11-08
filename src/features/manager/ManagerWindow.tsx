@@ -105,7 +105,11 @@ export function ManagerWindow() {
 
   useEffect(() => {
     const unlisten = onNotesChanged(() => void refresh());
-    const unlistenPrivacy = onPrivacyChanged(() => void refresh());
+    const unlistenPrivacy = onPrivacyChanged(({ locked }) => {
+      // Known at once, even if the read that follows fails.
+      setPrivacy((p) => p && { ...p, locked });
+      void refresh();
+    });
     const unlistenReminders = onRemindersChanged(() => void refresh());
     return () => {
       void unlisten.then((f) => f());

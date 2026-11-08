@@ -28,6 +28,7 @@ export function Segmented<T extends string | number>({
   );
 
   function onKeyDown(e: KeyboardEvent) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="radio"]') ?? []);
     const at = nodes.indexOf(document.activeElement as HTMLElement);
     let next: number;

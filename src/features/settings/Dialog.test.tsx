@@ -53,4 +53,35 @@ describe("Dialog", () => {
     await userEvent.tab();
     expect(screen.getByRole("radio", { name: "Recovery code" })).toHaveFocus();
   });
+
+  it("Tab from an option the arrows moved to goes on to the next control, not the first", async () => {
+    const titleId = "t";
+    render(
+      <Dialog titleId={titleId}>
+        <div id={titleId}>Choose</div>
+        <button type="button">Before</button>
+        <Segmented
+          label="Way back"
+          options={[
+            { value: "system", label: "Computer password" },
+            { value: "code", label: "Recovery code" },
+          ]}
+          value="system"
+          onChange={vi.fn()}
+        />
+        <button type="button">Cancel</button>
+      </Dialog>,
+    );
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(screen.getByRole("radio", { name: "Computer password" })).toHaveFocus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: "Recovery code" })).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    // Shift+Tab goes to the control before it, as the browser does outside a dialog.
+    screen.getByRole("radio", { name: "Recovery code" }).focus();
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole("radio", { name: "Computer password" })).toHaveFocus();
+  });
 });
