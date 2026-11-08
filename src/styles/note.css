@@ -264,7 +264,8 @@
 }
 .dn-note-body .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  float: left;
+  /* The side the text starts from, so a right-to-left note shows it on the right. */
+  float: inline-start;
   height: 0;
   pointer-events: none;
   color: var(--dn-ink-muted);

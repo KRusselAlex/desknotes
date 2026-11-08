@@ -12,6 +12,8 @@ export function moveAmongRadios(e: KeyboardEvent<HTMLElement>) {
   if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
   const nodes = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]'));
   const at = nodes.indexOf(document.activeElement as HTMLElement);
+  // A control in the group that is not one of its options (the custom colour) keeps its keys.
+  if (at === -1) return;
   let next: number;
   if (e.key === "Home") next = 0;
   else if (e.key === "End") next = nodes.length - 1;

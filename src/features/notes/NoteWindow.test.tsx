@@ -2555,6 +2555,7 @@ describe("NoteWindow", () => {
       expect(lists).toMatch(/padding-inline-start: 22px/);
       const tiptap = css.slice(css.indexOf(".dn-note-body .tiptap {"), css.indexOf('.dn-note-body ul[data-type="taskList"] {'));
       expect(tiptap).not.toMatch(/(padding|border|margin)-(left|right)\b/);
+      expect(tiptap).not.toMatch(/float: (left|right)\b/);
     });
   });
 });

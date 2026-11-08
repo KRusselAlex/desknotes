@@ -692,5 +692,16 @@ describe("NoteSettingsWindow", () => {
       await userEvent.keyboard(" ");
       expect(commands.setNoteColor).toHaveBeenCalledWith(ID, expect.any(String));
     });
+
+    it("leaves the arrow keys to the custom colour, which is not one of the swatches", async () => {
+      await open();
+      const custom = screen.getByLabelText("Custom colour");
+      custom.focus();
+      // fireEvent: user-event's keyboard on a colour input is not implemented in jsdom.
+      for (const key of ["ArrowLeft", "End"]) {
+        expect(fireEvent.keyDown(custom, { key })).toBe(true); // not prevented
+        expect(custom).toHaveFocus();
+      }
+    });
   });
 });
