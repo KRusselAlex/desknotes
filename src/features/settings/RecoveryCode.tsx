@@ -7,7 +7,8 @@ import { useHoldWhile } from "./hold";
  * A recovery code shown once (design "Set up PIN · step 3, recovery code"): the six
  * groups, Copy, Print and "I've written it down", which the done button waits for.
  * The code is only on screen; it is copied only when Copy is pressed, and Print
- * prints nothing but the code.
+ * prints nothing but the code under a "DeskNotes recovery code" line (the owner kept
+ * that line, 2026-11-08).
  */
 export function RecoveryCode({
   code,

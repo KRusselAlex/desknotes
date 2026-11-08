@@ -53,13 +53,22 @@ export function ManagerWindow() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
   const [privacy, setPrivacy] = useState<PrivacyStatus | null>(null);
+  /** Only the newest read of the lock state is shown. */
+  const privacyRead = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const { width } = useWindowSize();
   const searching = query.trim() !== "";
 
   const refresh = useCallback(async () => {
     // The lock state only decides "Lock now" and the reset notice; the list does not wait for it.
-    commands.privacyStatus().then(setPrivacy, () => setPrivacy(null));
+    // A failed read keeps what was last known (the reset notice stays); the next refresh asks again.
+    const read = ++privacyRead.current;
+    commands.privacyStatus().then(
+      (s) => {
+        if (read === privacyRead.current) setPrivacy(s);
+      },
+      () => undefined,
+    );
     try {
       // Reminders are read on their own: if they fail, the notes and counts still update,
       // the tab keeps its last count and only the Reminders tab says what went wrong.

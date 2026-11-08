@@ -21,6 +21,8 @@ export function sentence(text: string): string {
 /** The message for a check that was not "ok" (null for "ok"). */
 export function messageFromCheck(result: PinCheck, now: number): PinMessage | null {
   if (result.kind === "ok") return null;
+  // A wait that ended as it was read: the input was not checked, so it was not wrong.
+  if (result.kind === "waiting" && result.waitSecs <= 0) return null;
   if (result.waitSecs > 0) {
     return { kind: "wait", wrong: result.kind === "wrong", until: now + result.waitSecs * 1000, secs: result.waitSecs };
   }

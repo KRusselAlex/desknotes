@@ -762,6 +762,15 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
 
   useEffect(() => stopHold, [stopHold]);
 
+  /** False once the window's view is gone: a save round answered later starts no hold timer. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   // Flush when focus leaves the window and when the app is quitting. A private
   // note then stays read-only until the lock that may follow arrives, or for
   // LOCK_HOLD_MS, so nothing typed in between is refused by the lock (R14).
@@ -783,7 +792,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         .then(() => commands.quitReady(autosave.currentState !== "error"))
         .catch(() => undefined)
         .then(() => {
-          if (!privateNow || lockCheck.current) return; // a lock check releases the hold itself
+          if (!mounted.current || !privateNow || lockCheck.current) return; // a lock check releases the hold itself
           stopHold();
           holdTimer.current = setTimeout(() => {
             holdTimer.current = null;

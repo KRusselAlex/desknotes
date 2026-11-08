@@ -54,13 +54,22 @@ export function ChangePin({ onDone, onCancel }: { onDone: () => void; onCancel: 
     try {
       result = await holding(hold, () => commands.changePin(currentPin, newPin));
     } catch (e) {
-      if (!(e instanceof CommandError && e.code === "validation")) throw e;
-      // A new PIN that is too easy: choose it again (the current one is kept).
-      first.current = null;
-      next.current = null;
-      setKeepsNew(false);
-      current.current = currentPin;
-      go(2, e.message);
+      if (e instanceof CommandError && e.code === "validation") {
+        // A new PIN that is too easy: choose it again (the current one is kept).
+        first.current = null;
+        next.current = null;
+        setKeepsNew(false);
+        current.current = currentPin;
+        go(2, e.message);
+        return null;
+      }
+      // Anything else changed nothing: try again from the current PIN, the new one kept
+      // (from the confirm step, typing the new PIN again could never match).
+      current.current = null;
+      next.current = newPin;
+      setKeepsNew(true);
+      if (step === 1) throw e;
+      go(1, e instanceof Error ? e.message : String(e));
       return null;
     } finally {
       setBusy(false);

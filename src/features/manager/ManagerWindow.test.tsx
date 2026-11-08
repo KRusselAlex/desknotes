@@ -414,6 +414,31 @@ describe("ManagerWindow with private notes", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 
+  it("keeps the reset notice when a later read of the lock state fails (DES-30)", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    vi.mocked(commands.privacyStatus).mockResolvedValue(privacy({ resetAt: Date.UTC(2026, 10, 1, 9, 30) }));
+    render(<ManagerWindow />);
+    await screen.findByRole("alert");
+    vi.mocked(commands.privacyStatus).mockRejectedValueOnce(new Error("database is busy"));
+    await act(async () => privacyChanged.handler?.({ locked: false }));
+    await waitFor(() => expect(commands.privacyStatus).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("alert")).toHaveTextContent("The PIN was reset on");
+  });
+
+  it("an older answer about the lock state does not replace a newer one (DES-30)", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([]);
+    let answerFirst: (s: PrivacyStatus) => void = () => undefined;
+    vi.mocked(commands.privacyStatus)
+      .mockReturnValueOnce(new Promise((resolve) => (answerFirst = resolve)))
+      .mockResolvedValueOnce(privacy({ enabled: true, locked: false }));
+    render(<ManagerWindow />);
+    await act(async () => privacyChanged.handler?.({ locked: false }));
+    await waitFor(() => expect(commands.privacyStatus).toHaveBeenCalledTimes(2));
+    await act(async () => answerFirst(privacy({ enabled: false })));
+    await userEvent.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.getByRole("menuitem", { name: "Lock now" })).toBeInTheDocument();
+  });
+
   it("explains why a locked private note cannot be deleted for good", async () => {
     vi.mocked(commands.listNotes).mockResolvedValue([lockedRow({ deletedAt: Date.now() })]);
     vi.mocked(commands.purgeNote).mockRejectedValueOnce(new CommandError("private_locked", "private notes are locked"));

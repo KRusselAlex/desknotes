@@ -12,8 +12,10 @@ const FOCUSABLE = [
 /**
  * Modal dialog in the S3 style (backdrop, raised card). Focus moves to the dialog
  * itself, not to a button, so digits typed for a PIN and Enter never press Cancel.
- * Tab and Shift+Tab stay inside the dialog; on close, focus goes back to the control
- * that was focused when it opened. Escape calls `onEscape` when given.
+ * Tab and Shift+Tab stay inside the dialog (skipping controls kept out of the Tab order);
+ * on close, focus goes back to the control that was focused when it opened. If the
+ * focused control goes away (a step changes), focus goes back to the dialog, where
+ * Escape and Tab still work. Escape calls `onEscape` when given.
  */
 export function Dialog({
   titleId,
@@ -36,6 +38,17 @@ export function Dialog({
     };
   }, []);
 
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const observer = new MutationObserver(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) dialog.focus();
+    });
+    observer.observe(dialog, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === "Escape") {
       onEscape?.();
@@ -44,7 +57,7 @@ export function Dialog({
     if (e.key !== "Tab") return;
     const dialog = ref.current;
     if (!dialog) return;
-    const items = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    const items = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0);
     e.preventDefault();
     if (items.length === 0) {
       dialog.focus();
