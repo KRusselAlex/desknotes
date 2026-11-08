@@ -51,6 +51,28 @@ describe("FormatBar text style", () => {
     expect(screen.queryByRole("dialog", { name: "Text style" })).not.toBeInTheDocument();
   });
 
+  it("Esc and Aa give the focus back to the text (DES-33)", async () => {
+    const user = userEvent.setup();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    editor.destroy();
+    editor = new Editor({ element: host, extensions: createExtensions(), content: "<p>Hello world</p>" });
+    try {
+      renderBar(false);
+      const aa = screen.getByRole("button", { name: "Text style" });
+      for (const closeWith of [() => user.keyboard("{Escape}"), () => user.click(aa)]) {
+        await user.click(aa);
+        await screen.findByRole("option", { name: "Amiri" });
+        screen.getByRole("combobox", { name: "Weight" }).focus(); // focus inside the popover
+        await closeWith();
+        expect(screen.queryByRole("dialog", { name: "Text style" })).not.toBeInTheDocument();
+        await waitFor(() => expect(editor.view.dom).toHaveFocus());
+      }
+    } finally {
+      host.remove();
+    }
+  });
+
   it("Escape closes the popover", async () => {
     const user = userEvent.setup();
     renderBar(false);

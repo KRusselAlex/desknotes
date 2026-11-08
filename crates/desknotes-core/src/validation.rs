@@ -294,8 +294,7 @@ fn validate_text_style(attrs: Option<&Value>) -> CoreResult<()> {
                 check_font_name(text)?;
             }
             "fontSize" => {
-                // Compare with the canonical spelling so "015px" and "+15px" are refused.
-                if !TEXT_STYLE_SIZES.clone().any(|n| text == format!("{n}px")) {
+                if !css_px(text).is_some_and(|n| TEXT_STYLE_SIZES.contains(&n)) {
                     return Err(invalid("font size must be 10px to 32px in whole pixels"));
                 }
             }
@@ -304,14 +303,30 @@ fn validate_text_style(attrs: Option<&Value>) -> CoreResult<()> {
                     return Err(invalid("font weight must be 300, 400, 500 or 600"));
                 }
             }
-            _ => {
+            "color" => {
                 if !TEXT_STYLE_COLORS.contains(&text.to_ascii_lowercase().as_str()) {
                     return Err(invalid("text colour is not one of the allowed colours"));
                 }
             }
+            // Unreachable: the key was checked against TEXT_STYLE_ATTRS above.
+            _ => {
+                return Err(invalid(format!(
+                    "unsupported textStyle attribute \"{key}\""
+                )));
+            }
         }
     }
     Ok(())
+}
+
+/// A size written the canonical CSS way, `15px`: digits without a sign or a
+/// leading zero (so `015px` and `+15px` are refused), then `px`.
+fn css_px(text: &str) -> Option<u32> {
+    let digits = text.strip_suffix("px")?;
+    let canonical = !digits.is_empty()
+        && !digits.starts_with('0')
+        && digits.bytes().all(|b| b.is_ascii_digit());
+    canonical.then(|| digits.parse().ok()).flatten()
 }
 
 /// A `highlight` mark has exactly one attribute, `color`, set to one of the
@@ -872,18 +887,25 @@ mod tests {
 
     #[test]
     fn text_style_accepts_the_spec_values() {
+        let accepted = |attrs: Value| {
+            let result = validate_doc(&text_style(attrs.clone()));
+            assert!(result.is_ok(), "{attrs} must be accepted: {result:?}");
+        };
         for color in [
             "#201e1d", "#8c491a", "#56633f", "#1d4f91", "#7a1b14", "#5b3a8c",
         ] {
-            assert!(validate_doc(&text_style(json!({ "color": color }))).is_ok());
+            accepted(json!({ "color": color }));
         }
         for size in ["10px", "15px", "32px"] {
-            assert!(validate_doc(&text_style(json!({ "fontSize": size }))).is_ok());
+            accepted(json!({ "fontSize": size }));
         }
         for weight in ["300", "400", "500", "600"] {
-            assert!(validate_doc(&text_style(json!({ "fontWeight": weight }))).is_ok());
+            accepted(json!({ "fontWeight": weight }));
         }
-        assert!(validate_doc(&text_style(json!({ "fontFamily": "Amiri" }))).is_ok());
+        accepted(json!({ "fontFamily": "Amiri" }));
+        // Blank is "no font of its own"; spaces around a name are allowed.
+        accepted(json!({ "fontFamily": "" }));
+        accepted(json!({ "fontFamily": " Amiri " }));
         assert!(
             validate_doc(&text_style(json!({
                 "fontFamily": null, "fontSize": null, "fontWeight": null, "color": null
@@ -906,11 +928,16 @@ mod tests {
             json!({ "fontSize": "15.5px" }),
             json!({ "fontSize": "15" }),
             json!({ "fontSize": "15pt" }),
+            json!({ "fontSize": "015px" }),
+            json!({ "fontSize": "+15px" }),
+            json!({ "fontSize": "px" }),
+            json!({ "fontSize": "99999999999px" }),
             json!({ "fontSize": 15 }),
             json!({ "fontWeight": "700" }),
             json!({ "fontWeight": "bold" }),
             json!({ "fontWeight": 400 }),
             json!({ "fontFamily": "a;b" }),
+            json!({ "fontFamily": "Ami\u{7}ri" }),
             // Zero-width characters do not hide a control character or a long name.
             json!({ "fontFamily": "\u{200B}\n\u{200B}" }),
             json!({ "fontFamily": format!("{}a", "\u{200B}".repeat(FONT_NAME_MAX_CHARS)) }),
@@ -946,7 +973,13 @@ mod tests {
                     "{kind} {align}"
                 );
             }
-            for align in [json!("justify"), json!("start")] {
+            for align in [
+                json!("justify"),
+                json!("start"),
+                json!(1),
+                json!(true),
+                json!(["left"]),
+            ] {
                 assert!(
                     validate_doc(&doc_with_align(kind, align.clone())).is_err(),
                     "{kind} {align}"

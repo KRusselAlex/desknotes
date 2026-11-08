@@ -167,6 +167,27 @@ describe("text-style editor logic", () => {
       expect(editor.getText()).toBe("HelLO");
     });
 
+    it("text already in that case: returns false and adds no undo step (DES-33)", () => {
+      const editor = editorWith("<p>HELLO</p>");
+      editor.commands.selectAll();
+      expect(changeCase(editor, "upper")).toBe(false);
+      expect(editor.can().undo()).toBe(false);
+    });
+
+    it("a Greek capital sigma becomes final only at the end of its word, across styled runs (DES-33)", () => {
+      // "ΟΔΟΣ" ends a word; the Σ inside "ΣΟΣ" + "ΤΑ" does not, though its run ends there.
+      const editor = editorWith("<p><strong>ΟΔΟΣ</strong> <em>ΣΟΣ</em>ΤΑ</p>");
+      editor.commands.selectAll();
+      changeCase(editor, "lower");
+      expect(editor.getText()).toBe("οδος σοστα");
+      expect(firstBlock(editor).content).toEqual([
+        { type: "text", text: "οδος", marks: [{ type: "bold" }] },
+        { type: "text", text: " " },
+        { type: "text", text: "σοσ", marks: [{ type: "italic" }] },
+        { type: "text", text: "τα" },
+      ]);
+    });
+
     it("changeCase with no selection returns false and changes nothing", () => {
       const editor = editorWith("<p>Hello</p>");
       editor.commands.setTextSelection(3);
