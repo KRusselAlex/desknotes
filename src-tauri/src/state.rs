@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use desknotes_core::{CoreError, CoreResult, Database, now_ms};
@@ -9,8 +9,22 @@ use crate::error::{IpcError, IpcResult};
 use crate::quit::QuitCoordinator;
 use crate::windows::geometry::GeometryWriter;
 
+/// The notes database, `None` when it could not be opened at startup.
+pub type SharedDb = Mutex<Option<Database>>;
+
+/// Run `f` with the database, mapping every failure to an IPC error.
+pub fn with_db<T>(db: &SharedDb, f: impl FnOnce(&Database) -> CoreResult<T>) -> IpcResult<T> {
+    let guard = db
+        .lock()
+        .map_err(|_| IpcError::new("internal", "database lock poisoned"))?;
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| IpcError::new(DATABASE_UNAVAILABLE, "the notes database is not open"))?;
+    Ok(f(db)?)
+}
+
 pub struct AppState {
-    db: Arc<Mutex<Option<Database>>>,
+    db: Arc<SharedDb>,
     /// Problems found at startup, shown in the manager. Never contains note text.
     startup_errors: Mutex<Vec<String>>,
     pub geometry: GeometryWriter,
@@ -27,6 +41,13 @@ pub struct AppState {
     /// One-shot permission to choose a new PIN without the current one, set
     /// only after the Ubuntu password or a recovery code was accepted (Task 7).
     pub new_pin_allowed: AtomicBool,
+    /// Taken for the whole of any work that hashes a PIN or recovery code, which
+    /// runs with the database lock released: checks take turns, so the wrong-PIN
+    /// waits cannot be raced past, and the PIN cannot change during one.
+    pub secrets: Mutex<()>,
+    /// Counts locks. An unlock or a proof of a forgotten PIN compares it before and
+    /// after its check: a lock that came during the check wins.
+    pub lock_epoch: AtomicU64,
     /// Checklist resets (automation rule 2) sent to open note windows, waiting
     /// for their editor to claim them.
     pub pending_resets: PendingResets,
@@ -102,20 +123,19 @@ impl AppState {
             notes_action: AtomicBool::new(false),
             last_activity_ms: AtomicI64::new(now_ms()),
             new_pin_allowed: AtomicBool::new(false),
+            secrets: Mutex::new(()),
+            lock_epoch: AtomicU64::new(0),
             pending_resets: PendingResets::default(),
         }
     }
 
     /// Run `f` with the database, mapping every failure to an IPC error.
     pub fn with_db<T>(&self, f: impl FnOnce(&Database) -> CoreResult<T>) -> IpcResult<T> {
-        let guard = self
-            .db
-            .lock()
-            .map_err(|_| IpcError::new("internal", "database lock poisoned"))?;
-        let db = guard
-            .as_ref()
-            .ok_or_else(|| IpcError::new(DATABASE_UNAVAILABLE, "the notes database is not open"))?;
-        Ok(f(db)?)
+        with_db(&self.db, f)
+    }
+
+    pub fn db(&self) -> &SharedDb {
+        &self.db
     }
 
     pub fn set_tray_available(&self, available: bool) {

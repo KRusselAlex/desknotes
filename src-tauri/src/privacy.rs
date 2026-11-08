@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use desknotes_core::db::RecoveryMethod;
 use desknotes_core::{CoreResult, Database, now_ms};
@@ -86,7 +86,7 @@ pub fn lock(app: &AppHandle) -> IpcResult<()> {
     }
     let outcome = windows::save_all_open_notes_detailed(app, SAVE_TIMEOUT);
     let not_saved: Vec<String> = outcome.unsaved.into_iter().chain(outcome.silent).collect();
-    if !state.with_db(|db| lock_saved(db, &state.new_pin_allowed, &not_saved))? {
+    if !state.with_db(|db| lock_saved(db, &state.new_pin_allowed, &state.lock_epoch, &not_saved))? {
         return Ok(());
     }
     // Close reminder notifications showing a title that is now withheld (R10). Only a
@@ -100,10 +100,12 @@ pub fn lock(app: &AppHandle) -> IpcResult<()> {
 /// nothing locked, when the PIN was removed meanwhile (the lock was turned off
 /// during the round), so no window is told of a lock that is not there.
 /// Clears a proof of a forgotten PIN (Task 7) under the same database lock that
-/// `accept_proof` gives it under, so one given just before cannot outlive the lock.
+/// `accept_proof` gives it under, so one given just before cannot outlive the lock,
+/// and counts the lock, so a PIN check running meanwhile does not undo it.
 fn lock_saved(
     db: &Database,
     new_pin_allowed: &AtomicBool,
+    lock_epoch: &AtomicU64,
     not_saved: &[String],
 ) -> CoreResult<bool> {
     if !db.pin_is_set()? {
@@ -118,6 +120,7 @@ fn lock_saved(
         .collect();
     db.set_privacy_locked(true, &keep_open_ids(not_saved, &private));
     new_pin_allowed.store(false, Ordering::Release);
+    lock_epoch.fetch_add(1, Ordering::AcqRel);
     Ok(true)
 }
 
@@ -314,13 +317,16 @@ mod tests {
         // turn_off_lock may run while lock() waits for the windows (DES-30).
         let db = Database::open_in_memory().unwrap();
         let proof = AtomicBool::new(true);
-        assert!(!lock_saved(&db, &proof, &[]).unwrap());
+        let epoch = AtomicU64::new(0);
+        assert!(!lock_saved(&db, &proof, &epoch, &[]).unwrap());
+        assert_eq!(epoch.load(Ordering::SeqCst), 0, "no lock, nothing counted");
         assert!(!db.privacy_locked());
 
         db.set_new_pin("482915").unwrap();
         let id = db.create_note(None).unwrap().id;
         db.set_private(&id, true, "").unwrap();
-        assert!(lock_saved(&db, &proof, std::slice::from_ref(&id)).unwrap());
+        assert!(lock_saved(&db, &proof, &epoch, std::slice::from_ref(&id)).unwrap());
+        assert_eq!(epoch.load(Ordering::SeqCst), 1, "the lock is counted");
         assert!(db.privacy_locked());
         assert!(
             !proof.load(Ordering::SeqCst),

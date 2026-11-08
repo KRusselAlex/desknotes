@@ -9,10 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Database;
 use crate::error::{CoreError, CoreResult};
-use crate::privacy::{
-    Throttle, hash_secret, new_recovery_code, normalize_recovery_code, validate_new_pin,
-    verify_secret,
-};
+use crate::privacy::{NewPin, NewRecoveryCode, Throttle, normalize_recovery_code, verify_secret};
 
 /// Settings keys. Values are stored as text.
 pub const PIN_HASH: &str = "pin_hash";
@@ -74,12 +71,72 @@ impl RecoveryMethod {
     }
 }
 
-/// A new recovery code (dashed, shown once) and the hash of its normalized form.
-fn make_recovery_code() -> CoreResult<(String, String)> {
-    let code = new_recovery_code()?;
-    let normalized = normalize_recovery_code(&code)
-        .ok_or_else(|| CoreError::Internal("could not make a recovery code".into()))?;
-    Ok((code, hash_secret(&normalized)?))
+/// The way back to store with [`Database::apply_recovery_method`], made before
+/// taking the database lock: a new recovery code is hashed, which is slow.
+pub enum RecoveryChoice {
+    System,
+    Code(NewRecoveryCode),
+}
+
+impl RecoveryChoice {
+    pub fn prepare(method: RecoveryMethod) -> CoreResult<Self> {
+        Ok(match method {
+            RecoveryMethod::System => Self::System,
+            RecoveryMethod::Code => Self::Code(NewRecoveryCode::new()?),
+        })
+    }
+
+    pub fn method(&self) -> RecoveryMethod {
+        match self {
+            Self::System => RecoveryMethod::System,
+            Self::Code(_) => RecoveryMethod::Code,
+        }
+    }
+
+    pub fn into_new_code(self) -> Option<NewRecoveryCode> {
+        match self {
+            Self::System => None,
+            Self::Code(code) => Some(code),
+        }
+    }
+}
+
+/// What a check is against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Secret {
+    Pin,
+    RecoveryCode,
+}
+
+impl Secret {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Pin => PIN_HASH,
+            Self::RecoveryCode => PIN_RECOVERY_HASH,
+        }
+    }
+}
+
+/// A check begun with [`Database::start_check`]: the stored hash, read under the
+/// database lock. The slow comparison, [`Self::matches`], needs no database, so the
+/// shell runs it with the lock released, then records the result with
+/// [`Database::finish_check`].
+pub struct StoredSecret {
+    secret: Secret,
+    hash: String,
+}
+
+impl StoredSecret {
+    /// About 0.33 s. For a recovery code, spacing, dashes and case do not matter;
+    /// input that cannot be a code is not hashed at all.
+    pub fn matches(&self, input: &str) -> bool {
+        match self.secret {
+            Secret::Pin => verify_secret(&self.hash, input),
+            Secret::RecoveryCode => {
+                normalize_recovery_code(input).is_some_and(|code| verify_secret(&self.hash, &code))
+            }
+        }
+    }
 }
 
 impl Database {
@@ -103,23 +160,40 @@ impl Database {
         self.set_setting(PIN_THROTTLE, &json)
     }
 
-    /// Shared by PIN and recovery-code checks. `candidate` is `None` for input that
-    /// cannot be right (it still counts as a failed try, without hashing).
-    fn check_secret(
+    /// First half of a PIN or recovery-code check: `Err` with the running wait, if
+    /// any (the input is then not even compared), or the stored hash to compare.
+    pub fn start_check(
         &self,
-        hash_key: &str,
-        candidate: Option<&str>,
+        secret: Secret,
         now_ms: i64,
-    ) -> CoreResult<PinCheck> {
-        let Some(hash) = self.get_setting(hash_key)? else {
+    ) -> CoreResult<Result<StoredSecret, PinCheck>> {
+        let Some(hash) = self.get_setting(secret.key())? else {
             return Err(CoreError::NotAllowed("nothing is set to check".into()));
         };
-        let mut throttle = self.throttle()?;
-        let wait = throttle.remaining_secs(now_ms);
+        let wait = self.throttle()?.remaining_secs(now_ms);
         if wait > 0 {
-            return Ok(PinCheck::Waiting { wait_secs: wait });
+            return Ok(Err(PinCheck::Waiting { wait_secs: wait }));
         }
-        if candidate.is_some_and(|c| verify_secret(&hash, c)) {
+        Ok(Ok(StoredSecret { secret, hash }))
+    }
+
+    /// Second half: records the comparison. A match clears the waits; a miss counts
+    /// as a failed try (both checks share the waits). If the secret was changed or
+    /// removed since [`Self::start_check`], nothing is recorded and the check is
+    /// refused: the input was compared with a secret that no longer counts.
+    pub fn finish_check(
+        &self,
+        stored: &StoredSecret,
+        matched: bool,
+        now_ms: i64,
+    ) -> CoreResult<PinCheck> {
+        if self.get_setting(stored.secret.key())?.as_deref() != Some(stored.hash.as_str()) {
+            return Err(CoreError::NotAllowed(
+                "the PIN changed while it was being checked; try again".into(),
+            ));
+        }
+        let mut throttle = self.throttle()?;
+        if matched {
             if throttle != Throttle::default() {
                 self.delete_setting(PIN_THROTTLE)?;
             }
@@ -132,31 +206,51 @@ impl Database {
         })
     }
 
+    /// Both halves at once, holding the database the whole time (tests and tools;
+    /// the app releases its lock in between).
+    fn check_secret(&self, secret: Secret, input: &str, now_ms: i64) -> CoreResult<PinCheck> {
+        match self.start_check(secret, now_ms)? {
+            Err(waiting) => Ok(waiting),
+            Ok(stored) => {
+                let matched = stored.matches(input);
+                self.finish_check(&stored, matched, now_ms)
+            }
+        }
+    }
+
     pub fn pin_is_set(&self) -> CoreResult<bool> {
         Ok(self.get_setting(PIN_HASH)?.is_some())
     }
 
     /// Validates and stores a new PIN and clears any wait.
     pub fn set_new_pin(&self, pin: &str) -> CoreResult<()> {
-        validate_new_pin(pin)?;
-        let hash = hash_secret(pin)?;
+        self.store_new_pin(&NewPin::new(pin)?)
+    }
+
+    /// Stores a PIN made with [`NewPin::new`] and clears any wait.
+    pub fn store_new_pin(&self, pin: &NewPin) -> CoreResult<()> {
         let tx = self.conn.unchecked_transaction()?;
-        self.set_setting(PIN_HASH, &hash)?;
+        self.set_setting(PIN_HASH, pin.hash())?;
         self.delete_setting(PIN_THROTTLE)?;
         tx.commit()?;
         Ok(())
     }
 
     pub fn check_pin(&self, pin: &str, now_ms: i64) -> CoreResult<PinCheck> {
-        self.check_secret(PIN_HASH, Some(pin), now_ms)
+        self.check_secret(Secret::Pin, pin, now_ms)
     }
 
     /// Makes a new recovery code, replacing any earlier one. The code is returned
     /// (dashed) once; only the hash of its normalized form is stored.
     pub fn issue_recovery_code(&self) -> CoreResult<String> {
-        let (code, hash) = make_recovery_code()?;
-        self.set_setting(PIN_RECOVERY_HASH, &hash)?;
-        Ok(code)
+        let code = NewRecoveryCode::new()?;
+        self.store_recovery_code(&code)?;
+        Ok(code.into_code())
+    }
+
+    /// Stores a code made with [`NewRecoveryCode::new`], replacing any earlier one.
+    pub fn store_recovery_code(&self, code: &NewRecoveryCode) -> CoreResult<()> {
+        self.set_setting(PIN_RECOVERY_HASH, code.hash())
     }
 
     pub fn has_recovery_code(&self) -> CoreResult<bool> {
@@ -186,25 +280,26 @@ impl Database {
     /// the stored code is removed so it stops working. On error nothing changed.
     /// Callers check the PIN and that the method can be used here first.
     pub fn switch_recovery_method(&self, method: RecoveryMethod) -> CoreResult<Option<String>> {
-        // Hashing is slow: done before the transaction opens.
-        let issued = match method {
-            RecoveryMethod::Code => Some(make_recovery_code()?),
-            RecoveryMethod::System => None,
-        };
+        self.apply_recovery_method(RecoveryChoice::prepare(method)?)
+    }
+
+    /// [`Self::switch_recovery_method`] with the new code, if any, already made.
+    pub fn apply_recovery_method(&self, choice: RecoveryChoice) -> CoreResult<Option<String>> {
+        let method = choice.method();
+        let code = choice.into_new_code();
         let tx = self.conn.unchecked_transaction()?;
-        match &issued {
-            Some((_, hash)) => self.set_setting(PIN_RECOVERY_HASH, hash)?,
+        match &code {
+            Some(code) => self.store_recovery_code(code)?,
             None => self.delete_setting(PIN_RECOVERY_HASH)?,
         }
         self.set_recovery_method(method)?;
         tx.commit()?;
-        Ok(issued.map(|(code, _)| code))
+        Ok(code.map(NewRecoveryCode::into_code))
     }
 
     /// Spacing, dashes and case do not matter. Shares the wrong-PIN throttle.
     pub fn check_recovery_code(&self, code: &str, now_ms: i64) -> CoreResult<PinCheck> {
-        let normalized = normalize_recovery_code(code);
-        self.check_secret(PIN_RECOVERY_HASH, normalized.as_deref(), now_ms)
+        self.check_secret(Secret::RecoveryCode, code, now_ms)
     }
 
     /// Removes the PIN, recovery code, recovery method and wait. Private flags and
@@ -277,6 +372,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use super::*;
+    use crate::privacy::{hash_secret, new_recovery_code};
 
     const PIN: &str = "482915";
     const NOW: i64 = 1_000_000_000;
@@ -338,6 +434,75 @@ mod tests {
     }
 
     #[test]
+    fn a_check_in_two_halves_records_like_one() {
+        // The app compares with the database lock released (DES-30).
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+
+        let stored = db.start_check(Secret::Pin, NOW).unwrap().ok().unwrap();
+        assert!(!stored.matches("000001"));
+        assert_eq!(
+            db.finish_check(&stored, false, NOW).unwrap(),
+            PinCheck::Wrong { wait_secs: 0 }
+        );
+        assert_eq!(throttle_of(&db).failures, 1);
+
+        let stored = db.start_check(Secret::Pin, NOW).unwrap().ok().unwrap();
+        assert!(stored.matches(PIN));
+        assert_eq!(db.finish_check(&stored, true, NOW).unwrap(), PinCheck::Ok);
+        assert_eq!(db.get_setting(PIN_THROTTLE).unwrap(), None, "waits cleared");
+
+        // While a wait runs, there is nothing to compare.
+        db.save_throttle(&Throttle {
+            failures: 5,
+            wait_until_ms: NOW + 30_000,
+        })
+        .unwrap();
+        assert_eq!(
+            db.start_check(Secret::Pin, NOW).unwrap().err(),
+            Some(PinCheck::Waiting { wait_secs: 30 })
+        );
+    }
+
+    #[test]
+    fn a_check_against_a_pin_changed_meanwhile_records_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        let stored = db.start_check(Secret::Pin, NOW).unwrap().ok().unwrap();
+
+        // Changed during the comparison: neither a match nor a miss counts.
+        db.set_setting(PIN_HASH, &hash_secret("730518").unwrap())
+            .unwrap();
+        for matched in [true, false] {
+            let refused = db.finish_check(&stored, matched, NOW).unwrap_err();
+            assert_eq!(refused.code(), "not_allowed");
+        }
+        assert_eq!(db.get_setting(PIN_THROTTLE).unwrap(), None);
+
+        // Removed during the comparison.
+        db.clear_pin().unwrap();
+        assert_eq!(
+            db.finish_check(&stored, true, NOW).unwrap_err().code(),
+            "not_allowed"
+        );
+    }
+
+    #[test]
+    fn a_recovery_code_check_in_two_halves_normalizes_the_input() {
+        let db = Database::open_in_memory().unwrap();
+        let (code, hash) = recovery();
+        db.set_setting(PIN_RECOVERY_HASH, hash).unwrap();
+        let stored = db
+            .start_check(Secret::RecoveryCode, NOW)
+            .unwrap()
+            .ok()
+            .unwrap();
+        assert!(stored.matches(&code.to_lowercase().replace('-', " ")));
+        assert!(!stored.matches("not a code"));
+        assert!(!stored.matches(PIN), "a PIN is not the recovery code");
+    }
+
+    #[test]
     fn wait_survives_reopening_the_database() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("d.db");
@@ -345,8 +510,8 @@ mod tests {
         {
             let db = Database::open(&path, &backups).unwrap();
             db.set_setting(PIN_HASH, pin_hash()).unwrap();
-            // Four failures already on record (shortcut: hashing four wrong PINs in a
-            // debug build takes ~16 s); the fifth goes through the real check.
+            // Four failures already on record (shortcut: hashing four wrong PINs takes
+            // seconds); the fifth goes through the real check.
             db.save_throttle(&Throttle {
                 failures: 4,
                 wait_until_ms: 0,

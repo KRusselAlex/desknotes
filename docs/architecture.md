@@ -807,6 +807,15 @@ real-app check are.
   - The shell decides when to lock (`src-tauri/src/privacy.rs`). It saves open notes
     first. A note whose save failed stays readable until its window closes.
   - The PIN is hashed with Argon2id (`privacy.rs`). PINs and codes are never logged.
+  - Each hash takes about 0.33 s, so it never runs while the database lock is held:
+    a check reads the stored hash (`start_check`), compares with the lock released,
+    then records the result and acts on it in one hold (`finish_check`). New PINs and
+    recovery codes (`NewPin`, `NewRecoveryCode`) are hashed before the lock is taken.
+    This work runs on a blocking thread and takes turns (`AppState::secrets`), so
+    the wrong-PIN waits cannot be raced past. A check whose PIN changed meanwhile is
+    refused and records nothing. Locks are counted (`AppState::lock_epoch`): an unlock
+    or recovery code whose check a lock overtook is refused ("Private notes were locked
+    again"), so a screen lock or suspend during the check stays.
   - The Ubuntu password is asked with `pkcheck --process pid,start-time,uid`, the form
     pkcheck(1) asks for.
   - A lock checks again that a PIN is still set after the save round: turning the lock
