@@ -271,12 +271,24 @@ function LockedNote({ note, onNote, app }: { note: Note; onNote: (n: Note) => vo
     );
   }
 
+  // Rolling up or out shows only the label or the PIN pad: nothing to save, no text revealed.
+  const collapse = () => void commands.setCollapsed(note.id, true).then(refresh, () => undefined);
   return (
     <div className={`dn-note is-private-locked${seeThroughClass(note.appearance)}${look.classes}`} style={look.style}>
       <header className="dn-note-header" data-tauri-drag-region>
         <span className="dn-grip" data-tauri-drag-region>
           <Icon name="grip" size={14} />
         </span>
+        <button
+          type="button"
+          className="dn-tool dn-locked-collapse"
+          aria-label="Collapse note"
+          aria-expanded="true"
+          title="Collapse to header"
+          onClick={collapse}
+        >
+          <Icon name="chevdown" />
+        </button>
         <span className="dn-locked-label" data-tauri-drag-region>
           {label}
         </span>

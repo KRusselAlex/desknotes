@@ -592,6 +592,29 @@ describe("NoteWindow", () => {
       expect(await screen.findByRole("textbox", { name: "Note text" })).toBeInTheDocument();
     });
 
+    it("a locked note collapses to its label and expands to the PIN pad, still locked", async () => {
+      const collapsed = { ...note().window, collapsed: true };
+      vi.mocked(commands.getNote)
+        .mockResolvedValueOnce(lockedNote())
+        .mockResolvedValueOnce(lockedNote({ window: collapsed }))
+        .mockResolvedValue(lockedNote());
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await screen.findByRole("img", { name: "0 of 6 digits" });
+
+      await userEvent.click(screen.getByRole("button", { name: "Collapse note" }));
+      expect(commands.setCollapsed).toHaveBeenCalledWith(ID, true);
+      await screen.findByRole("button", { name: "Expand" });
+      expect(container.querySelector(".dn-note")).toHaveClass("is-collapsed");
+      expect(container).toHaveTextContent("Bank");
+      expect(screen.queryByRole("img", { name: "0 of 6 digits" })).toBeNull();
+
+      await userEvent.click(screen.getByRole("button", { name: "Expand" }));
+      expect(commands.setCollapsed).toHaveBeenLastCalledWith(ID, false);
+      expect(await screen.findByRole("img", { name: "0 of 6 digits" })).toBeInTheDocument();
+      expect(editorBox()).toBeNull();
+      expect(commands.unlock).not.toHaveBeenCalled();
+    });
+
     it("lock_event_unmounts_editor_after_saving", async () => {
       const { container } = await openNote({ private: true, privateLabel: "Bank" });
       await typeIntoNote(container, "secret ");

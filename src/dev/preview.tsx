@@ -487,6 +487,10 @@ mockIPC(
       case "set_always_on_top":
         find(a.id).window.alwaysOnTop = Boolean(a.on);
         return null;
+      case "set_collapsed":
+        // The page rolls up; the browser window keeps its size.
+        find(a.id).window.collapsed = Boolean(a.collapsed);
+        return null;
       case "privacy_status":
         return privacyStatus();
       case "setup_pin": {
