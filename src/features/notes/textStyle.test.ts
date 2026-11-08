@@ -188,6 +188,31 @@ describe("text-style editor logic", () => {
       ]);
     });
 
+    it("lengths that change in opposite directions never move letters between runs (DES-33)", () => {
+      // Greek capitals drop a separate accent (shorter) while ﬁ becomes FI (longer): the
+      // block keeps its total length, but its letters no longer line up with the runs.
+      const up = String.prototype.toLocaleUpperCase;
+      String.prototype.toLocaleUpperCase = function (this: string, locale?: string | string[]) {
+        return up.call(this, locale ?? "el");
+      };
+      try {
+        const partial = editorWith("<p>\u03B1\u0301\uFB01</p>");
+        partial.commands.setTextSelection({ from: 3, to: 4 }); // only ﬁ
+        changeCase(partial, "upper");
+        expect(partial.getText()).toBe("\u03B1\u0301FI");
+
+        const runs = editorWith("<p><strong>\u03B1\u0301</strong>\uFB01</p>");
+        runs.commands.selectAll();
+        changeCase(runs, "upper");
+        expect(firstBlock(runs).content).toEqual([
+          { type: "text", text: "\u0391", marks: [{ type: "bold" }] },
+          { type: "text", text: "FI" },
+        ]);
+      } finally {
+        String.prototype.toLocaleUpperCase = up;
+      }
+    });
+
     it("changeCase with no selection returns false and changes nothing", () => {
       const editor = editorWith("<p>Hello</p>");
       editor.commands.setTextSelection(3);

@@ -364,6 +364,15 @@ export function textStyleState(editor: Editor, appearance: Appearance): TextStyl
   };
 }
 
+/** Whether `a` and `b` are the same text except where one has σ and the other ς. */
+function onlySigmaDiffers(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i] && !("σς".includes(a[i]!) && "σς".includes(b[i]!))) return false;
+  }
+  return true;
+}
+
 /**
  * Turns the selected letters into upper or lower case in the text itself. One
  * transaction (one undo step); each run keeps its marks and the selection keeps
@@ -377,14 +386,15 @@ export function changeCase(editor: Editor, to: "upper" | "lower"): boolean {
   const edits: { start: number; stop: number; node: PMNode; text: string }[] = [];
   state.doc.nodesBetween(from, end, (block, blockPos) => {
     if (!block.isTextblock) return true;
-    // The whole block at once, so a letter is converted in its word: a Greek capital
-    // sigma becomes a final ς only at a word's real end, not at the end of a styled run.
-    // One character per position (an image or line break counts as one), so offsets in
-    // the text are positions in the block; when converting changes the length (ß → SS),
-    // each run is converted on its own instead.
+    // Each run is converted on its own, except for one thing only the whole word can
+    // decide: whether a Greek capital sigma becomes the final ς. The block is converted
+    // as a whole too (one character per position: an image or line break counts as
+    // one), and its slice for the run is taken only when it is the run's own result
+    // with nothing but σ/ς differing. A conversion that changes lengths anywhere in the
+    // block (ß → SS, a dropped accent) can never move letters between runs that way.
     const original = block.textBetween(0, block.content.size, undefined, "\uFFFC");
     const whole = convert(original);
-    const inWord = whole.length === original.length;
+    const sameLength = whole.length === original.length;
     block.forEach((node, offset) => {
       if (!node.isText || !node.text) return;
       const pos = blockPos + 1 + offset;
@@ -392,7 +402,9 @@ export function changeCase(editor: Editor, to: "upper" | "lower"): boolean {
       const stop = Math.min(pos + node.nodeSize, end);
       if (start >= stop) return;
       const old = node.text.slice(start - pos, stop - pos);
-      const text = inWord ? whole.slice(start - blockPos - 1, stop - blockPos - 1) : convert(old);
+      const own = convert(old);
+      const inWord = sameLength ? whole.slice(start - blockPos - 1, stop - blockPos - 1) : own;
+      const text = onlySigmaDiffers(inWord, own) ? inWord : own;
       if (text !== old) edits.push({ start, stop, node, text });
     });
     return false;
