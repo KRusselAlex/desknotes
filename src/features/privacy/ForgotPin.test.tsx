@@ -57,6 +57,10 @@ describe("ForgotPin", () => {
     expect(await screen.findByRole("dialog", { name: "Forgot your PIN?" })).toHaveTextContent(
       "Enter your computer password in the window that opens.",
     );
+    // The ask runs in an effect that React may flush after findByRole has returned
+    // (its scheduler's setImmediate against RTL's setTimeout(0)), so wait for it.
+    // StrictMode's replayed effect runs in the same flush, so a second ask would be in by then.
+    await waitFor(() => expect(commands.forgotPinSystem).toHaveBeenCalled());
     expect(commands.forgotPinSystem).toHaveBeenCalledTimes(1);
   });
 
