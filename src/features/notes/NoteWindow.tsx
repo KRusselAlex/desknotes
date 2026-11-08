@@ -1029,7 +1029,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         startStrip();
       },
     },
-    { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id) },
+    { id: "settings", label: "Note settings…", icon: "settings", onSelect: () => void commands.openNoteSettings(note.id).catch(() => undefined) },
     {
       id: "private",
       label: "Private",
