@@ -29,7 +29,7 @@ const ARGON2_P_COST: u32 = 1;
 
 fn hasher() -> CoreResult<Argon2<'static>> {
     let params = Params::new(ARGON2_M_COST_KIB, ARGON2_T_COST, ARGON2_P_COST, None)
-        .map_err(|_| CoreError::Validation("invalid hashing parameters".into()))?;
+        .map_err(|_| CoreError::Internal("invalid hashing parameters".into()))?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }
 
@@ -59,11 +59,10 @@ pub fn validate_new_pin(pin: &str) -> CoreResult<()> {
 /// Hashes a PIN or recovery code to an Argon2id PHC string with a fresh random salt
 /// from the operating system's RNG.
 pub fn hash_secret(secret: &str) -> CoreResult<String> {
-    let salt = password_hash::try_generate_salt()
-        .map_err(|_| CoreError::Validation("no secure random source available".into()))?;
+    let salt = password_hash::try_generate_salt().map_err(|_| no_random_source())?;
     let hash = hasher()?
         .hash_password_with_salt(secret.as_bytes(), &salt)
-        .map_err(|_| CoreError::Validation("could not hash secret".into()))?;
+        .map_err(|_| CoreError::Internal("could not hash secret".into()))?;
     Ok(hash.to_string())
 }
 
@@ -77,14 +76,18 @@ pub fn verify_secret(phc: &str, secret: &str) -> bool {
     }
 }
 
+fn no_random_source() -> CoreError {
+    CoreError::Internal("no secure random source available".into())
+}
+
 /// A new random recovery code: 24 characters in six dash-separated groups of four.
-pub fn new_recovery_code() -> String {
+/// Fails, rather than panicking, when the OS random source does.
+pub fn new_recovery_code() -> CoreResult<String> {
     // 24 bytes from the OS RNG (two 16-byte draws); the low five bits of each byte pick
     // one of 32 characters, which is unbiased because 32 divides 256.
     let mut bytes = [0u8; 32];
     for chunk in bytes.chunks_mut(16) {
-        let draw = password_hash::try_generate_salt()
-            .expect("the operating system's secure random source failed");
+        let draw = password_hash::try_generate_salt().map_err(|_| no_random_source())?;
         chunk.copy_from_slice(&draw);
     }
     let mut code = String::with_capacity(RECOVERY_LEN + 5);
@@ -94,7 +97,7 @@ pub fn new_recovery_code() -> String {
         }
         code.push(RECOVERY_ALPHABET[(b & 31) as usize] as char);
     }
-    code
+    Ok(code)
 }
 
 /// Strips spaces and dashes, uppercases, and returns the bare 24 characters, or `None`
@@ -206,7 +209,7 @@ mod tests {
                     .all(|g| g.len() == 4 && g.bytes().all(|b| RECOVERY_ALPHABET.contains(&b)))
         };
         let codes: std::collections::HashSet<String> =
-            (0..100).map(|_| new_recovery_code()).collect();
+            (0..100).map(|_| new_recovery_code().unwrap()).collect();
         assert_eq!(codes.len(), 100);
         assert!(codes.iter().all(|c| shape(c)));
     }
@@ -219,7 +222,7 @@ mod tests {
         );
         assert_eq!(normalize_recovery_code("K7QDM2XR9FPAWT4HC8NBZL6"), None);
         assert_eq!(normalize_recovery_code("O7QDM2XR9FPAWT4HC8NBZL6E"), None);
-        let fresh = new_recovery_code();
+        let fresh = new_recovery_code().unwrap();
         assert_eq!(normalize_recovery_code(&fresh).unwrap().len(), 24);
     }
 

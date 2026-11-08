@@ -376,9 +376,26 @@ pub fn validate_color(color: &str) -> CoreResult<String> {
     }
 }
 
+/// Characters that are invisible or reorder the text around them: bidi
+/// embeddings, overrides and isolates, zero-width space, word joiner, BOM and
+/// soft hyphen. Zero-width joiners (Persian, Indic scripts, emoji) and the
+/// direction marks are kept: they change how text joins, not what it says.
+fn hides_or_reorders(c: char) -> bool {
+    matches!(
+        c,
+        '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{200B}'
+            | '\u{2060}'
+            | '\u{FEFF}'
+            | '\u{00AD}'
+    )
+}
+
 /// A private note's neutral label: trimmed, at most `PRIVATE_LABEL_MAX_CHARS`
-/// characters, no control characters. Empty is allowed (the fallback label is
-/// used for display).
+/// characters, no control characters and nothing that hides or reorders text,
+/// since it stands in for the note's text while locked. Empty is allowed (the
+/// fallback label is used for display).
 pub fn validate_private_label(label: &str) -> CoreResult<String> {
     let label = label.trim();
     if label.chars().count() > PRIVATE_LABEL_MAX_CHARS {
@@ -389,7 +406,20 @@ pub fn validate_private_label(label: &str) -> CoreResult<String> {
     if label.chars().any(char::is_control) {
         return Err(invalid("label must not contain control characters"));
     }
+    if label.chars().any(hides_or_reorders) {
+        return Err(invalid(
+            "label must not contain invisible or text-direction characters",
+        ));
+    }
     Ok(label.to_string())
+}
+
+/// A label from a backup: the characters [`validate_private_label`] refuses
+/// for new labels are removed rather than refused, so a backup made before
+/// that rule still restores. Otherwise the same checks.
+pub fn clean_private_label(label: &str) -> CoreResult<String> {
+    let kept: String = label.chars().filter(|&c| !hides_or_reorders(c)).collect();
+    validate_private_label(&kept)
 }
 
 /// A font family name for a note: trimmed, at most `FONT_NAME_MAX_CHARS`
@@ -1013,6 +1043,43 @@ mod tests {
             "validation"
         );
         assert!(validate_private_label("a\nb").is_err());
+    }
+
+    #[test]
+    fn private_label_refuses_hidden_and_reordering_characters() {
+        // A label shown in place of a note's text must read as it is stored (DES-30).
+        for label in [
+            "Bank\u{202E}cod.exe",
+            "\u{200B}Bank",
+            "Ba\u{2066}nk\u{2069}",
+            "\u{FEFF}Bank",
+            "Ba\u{2060}nk",
+            "Ba\u{00AD}nk",
+            "Ba\u{202A}nk",
+        ] {
+            assert_eq!(
+                validate_private_label(label).unwrap_err().code(),
+                "validation",
+                "{label:?}"
+            );
+        }
+        // Joiners that scripts and emoji need, and the direction marks, are kept.
+        for label in ["می\u{200C}خواهم", "👩\u{200D}💻 work", "بنك", "A\u{200F}B"] {
+            assert_eq!(validate_private_label(label).unwrap(), label);
+        }
+    }
+
+    #[test]
+    fn a_label_from_a_backup_loses_hidden_characters_instead_of_failing() {
+        assert_eq!(
+            clean_private_label("\u{200B}Ba\u{00AD}nk\u{202E}").unwrap(),
+            "Bank"
+        );
+        assert_eq!(clean_private_label(" \u{FEFF} ").unwrap(), "");
+        assert_eq!(clean_private_label("👩\u{200D}💻").unwrap(), "👩\u{200D}💻");
+        // Everything else is checked as for a new label.
+        assert!(clean_private_label("a\nb").is_err());
+        assert!(clean_private_label(&"x".repeat(41)).is_err());
     }
 
     #[test]

@@ -67,15 +67,18 @@ fn database_path() -> Result<(PathBuf, PathBuf), String> {
 }
 
 fn reset() -> Result<String, String> {
-    match single_instance::running(APP_IDENTIFIER) {
-        Ok(false) => {}
-        Ok(true) => return Err(running_message()),
+    // Hold DeskNotes' single-instance name from the start, so it cannot start
+    // while the database is opened (which may migrate it), the password is
+    // asked for or the reset is written. A running DeskNotes owns it already.
+    let _claim = match single_instance::claim(APP_IDENTIFIER) {
+        Ok(Some(claim)) => claim,
+        Ok(None) => return Err(running_message()),
         Err(e) => {
             return Err(format!(
                 "Could not check whether DeskNotes is running ({e}). {NOTHING_CHANGED}"
             ));
         }
-    }
+    };
 
     let (db_path, backup_dir) = database_path()?;
     // Opening would create an empty database; there is nothing to reset then.
@@ -102,32 +105,10 @@ fn reset() -> Result<String, String> {
         }
     }
 
-    // Hold DeskNotes' single-instance name while writing, so it cannot start
-    // (or have started during the password prompt) alongside the reset.
-    let _claim = match single_instance::claim(APP_IDENTIFIER) {
-        Ok(Some(claim)) => claim,
-        Ok(None) => return Err(running_message()),
-        Err(e) => {
-            return Err(format!(
-                "Could not check whether DeskNotes is running ({e}). {NOTHING_CHANGED}"
-            ));
-        }
-    };
-
-    // The notice first: a reset must never go unannounced at the next start.
-    db.record_pin_reset(now_ms())
-        .map_err(|e| format!("The reset could not be recorded: {e}. {NOTHING_CHANGED}"))?;
-    if let Err(e) = db.clear_pin() {
-        let undone = db.acknowledge_pin_reset().is_ok();
-        return Err(if undone {
-            format!("The PIN could not be removed: {e}. {NOTHING_CHANGED}")
-        } else {
-            format!(
-                "The PIN could not be removed: {e}. The PIN was kept, but DeskNotes may \
-                 say at its next start that it was reset."
-            )
-        });
-    }
+    // The notice and the removal in one write: never a reset nobody is told
+    // about, nor a notice for a PIN that was kept.
+    db.reset_pin(now_ms())
+        .map_err(|e| format!("The PIN could not be removed: {e}. {NOTHING_CHANGED}"))?;
     Ok(
         "The PIN was removed. Private notes are no longer locked. DeskNotes will say so \
         at its next start; choose a new PIN in Settings → Privacy to lock them again."

@@ -47,11 +47,29 @@ fn start_time_from_stat(stat: &str) -> Option<u64> {
     after_name.split_whitespace().nth(19)?.parse().ok()
 }
 
-/// The `--process` subject for `pkcheck`: `pid,start-time`, so polkit can tell
-/// this process from a later one given the same id.
+/// The real user id: the first number of the `Uid:` line of `/proc/<pid>/status`.
 #[cfg(any(target_os = "linux", test))]
-fn process_subject(pid: u32, stat: &str) -> Option<String> {
-    Some(format!("{pid},{}", start_time_from_stat(stat)?))
+fn uid_from_status(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// The `--process` subject for `pkcheck`: `pid,start-time,uid`, the form
+/// pkcheck(1) asks for. With fewer fields pkcheck looks them up itself, which
+/// is racy: the start time tells this process from a later one given the
+/// same id, and the uid says whose password is asked for.
+#[cfg(any(target_os = "linux", test))]
+fn process_subject(pid: u32, stat: &str, status: &str) -> Option<String> {
+    Some(format!(
+        "{pid},{},{}",
+        start_time_from_stat(stat)?,
+        uid_from_status(status)?
+    ))
 }
 
 /// Ask for the Ubuntu password with the system's own dialog (polkit agent).
@@ -65,12 +83,13 @@ pub fn ask_system_password() -> bool {
     {
         use std::process::{Command, Stdio};
         let pid = std::process::id();
-        let subject = std::fs::read_to_string("/proc/self/stat")
-            .ok()
-            .and_then(|stat| process_subject(pid, &stat));
+        let read = |file| std::fs::read_to_string(file).ok();
+        let subject = read("/proc/self/stat")
+            .zip(read("/proc/self/status"))
+            .and_then(|(stat, status)| process_subject(pid, &stat, &status));
         let Some(subject) = subject else {
             eprintln!(
-                "DeskNotes: the Ubuntu password could not be asked for: no process start time"
+                "DeskNotes: the Ubuntu password could not be asked for: no process start time or user id"
             );
             return false;
         };
@@ -97,7 +116,9 @@ pub fn ask_system_password() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ACTION_ID, PKCHECK, POLICY_FILE, process_subject, start_time_from_stat};
+    use super::{
+        ACTION_ID, PKCHECK, POLICY_FILE, process_subject, start_time_from_stat, uid_from_status,
+    };
 
     const POLICY: &str = include_str!("../../polkit/io.github.krusselalex.desknotes.policy");
 
@@ -153,16 +174,33 @@ mod tests {
         let stat = "65937 (cat) R 65926 65926 65926 0 -1 4194304 123 0 0 0 0 0 0 0 20 0 1 0 452830 \
                     8646656 429 18446744073709551615";
         assert_eq!(start_time_from_stat(stat), Some(452_830));
-        assert_eq!(
-            process_subject(65937, stat).as_deref(),
-            Some("65937,452830")
-        );
         // A command name with spaces and parentheses does not shift the fields.
         let odd = "7 (a) b (c) S 1 7 7 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 99 0 0";
         assert_eq!(start_time_from_stat(odd), Some(99));
         assert_eq!(start_time_from_stat("7 (cut short) S 1 2"), None);
         assert_eq!(start_time_from_stat("no name at all"), None);
-        assert_eq!(process_subject(7, ""), None);
+    }
+
+    #[test]
+    fn the_subject_names_the_process_start_time_and_real_uid() {
+        // pkcheck(1): "New code should always use pid,pid-start-time,uid" (DES-30).
+        let stat = "65937 (cat) R 65926 65926 65926 0 -1 4194304 123 0 0 0 0 0 0 0 20 0 1 0 452830 \
+                    8646656 429 18446744073709551615";
+        let status =
+            "Name:\tcat\nUmask:\t0022\nUid:\t1000\t0\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
+        assert_eq!(
+            uid_from_status(status),
+            Some(1000),
+            "the real uid, not the effective one"
+        );
+        assert_eq!(
+            process_subject(65937, stat, status).as_deref(),
+            Some("65937,452830,1000")
+        );
+        assert_eq!(uid_from_status("Name:\tcat\n"), None);
+        assert_eq!(uid_from_status("Uid:\tnope\n"), None);
+        assert_eq!(process_subject(65937, stat, ""), None);
+        assert_eq!(process_subject(7, "", status), None);
     }
 
     #[cfg(target_os = "linux")]
@@ -170,6 +208,8 @@ mod tests {
     fn this_process_has_a_start_time() {
         let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
         assert!(start_time_from_stat(&stat).is_some(), "{stat}");
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        assert!(uid_from_status(&status).is_some(), "{status}");
     }
 
     #[cfg(target_os = "linux")]

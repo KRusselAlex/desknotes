@@ -23,8 +23,8 @@ use crate::model::{Appearance, NoteWindow};
 use crate::now_ms;
 use crate::reminders::{validate_rule, within_range};
 use crate::validation::{
-    is_image_id, parse_content, parse_note_id, validate_appearance, validate_color,
-    validate_private_label,
+    clean_private_label, is_image_id, parse_content, parse_note_id, validate_appearance,
+    validate_color,
 };
 
 pub const BACKUP_FORMAT: &str = "desknotes-backup";
@@ -200,7 +200,7 @@ pub fn parse_backup(raw: &str) -> CoreResult<Backup> {
         // Same checks as a save from the editor (size, structure, safe links).
         parse_content(&note.content.to_string()).map_err(|e| invalid(format!("note {n}: {e}")))?;
         note.color = validate_color(&note.color).map_err(|e| invalid(format!("note {n}: {e}")))?;
-        note.private_label = validate_private_label(&note.private_label)
+        note.private_label = clean_private_label(&note.private_label)
             .map_err(|e| invalid(format!("note {n}: {e}")))?;
         note.appearance = validate_appearance(std::mem::take(&mut note.appearance))
             .map_err(|e| invalid(format!("note {n}: {e}")))?;
@@ -294,6 +294,16 @@ mod tests {
         let mut control = note(A);
         control["privateLabel"] = json!("a\u{7}b");
         assert!(parse_backup(&file_v2(vec![control])).is_err());
+    }
+
+    #[test]
+    fn a_label_with_hidden_characters_still_restores_without_them() {
+        // New labels refuse these (DES-30); a backup made before that must still restore.
+        let mut private = note(A);
+        private["private"] = json!(true);
+        private["privateLabel"] = json!("\u{200B}Ba\u{00AD}nk");
+        let b = parse_backup(&file_v2(vec![private])).unwrap();
+        assert_eq!(b.notes[0].private_label, "Bank");
     }
 
     fn file_v3(notes: Vec<serde_json::Value>) -> String {

@@ -21,6 +21,10 @@ pub enum CoreError {
          it was left untouched"
     )]
     SchemaTooNew { found: i64, supported: i64 },
+    /// Something that should not fail did: no secure random source, a hashing
+    /// failure. Not the caller's input, so never reported as `Validation`.
+    #[error("internal error: {0}")]
+    Internal(String),
     /// An image could not be accepted (design: images in notes §3).
     #[error("image error: {0}")]
     Image(#[from] ImageError),
@@ -63,6 +67,7 @@ impl CoreError {
             CoreError::NotAllowed(_) => "not_allowed",
             CoreError::PrivateLocked => "private_locked",
             CoreError::SchemaTooNew { .. } => "schema_too_new",
+            CoreError::Internal(_) => "internal",
             CoreError::Image(e) => e.code(),
         }
     }
