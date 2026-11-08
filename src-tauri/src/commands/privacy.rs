@@ -166,7 +166,49 @@ fn replace_forgotten_pin(
             "enter the Ubuntu password or the recovery code first".into(),
         ));
     }
+    if !issue_code {
+        // The Ubuntu password is the way back: a recovery code kept from a PIN set
+        // before D14 stops working too, and the method is stored, so Settings shows
+        // it. One transaction, done first: a failure below leaves the old PIN with
+        // the Ubuntu password still able to replace it.
+        db.switch_recovery_method(RecoveryMethod::System)?;
+    }
     store_pin_with_code(db, pin, issue_code)
+}
+
+/// Settings → Change PIN, after the current PIN. A new PIN ends any proof of a
+/// forgotten one, which was given for the old PIN.
+fn change_known_pin(
+    db: &Database,
+    allowed: &AtomicBool,
+    current: &str,
+    new: &str,
+    now_ms: i64,
+) -> CoreResult<PinCheck> {
+    let check = db.check_pin(current, now_ms)?;
+    if check == PinCheck::Ok {
+        db.set_new_pin(new)?;
+        allowed.store(false, Ordering::Release);
+    }
+    Ok(check)
+}
+
+/// Settings → turn the lock off, after the PIN. Also ends any proof of a
+/// forgotten PIN, so it cannot choose a PIN set up later.
+fn remove_pin(db: &Database, allowed: &AtomicBool, pin: &str, now_ms: i64) -> CoreResult<PinCheck> {
+    let check = db.check_pin(pin, now_ms)?;
+    if check == PinCheck::Ok {
+        db.clear_pin()?;
+        allowed.store(false, Ordering::Release);
+    }
+    Ok(check)
+}
+
+/// After `choose_new_pin`: windows hear of a new PIN, and of a PIN the R8
+/// rollback removed. A refusal changed nothing and may come while the lock is
+/// on, so it says nothing; neither does a PIN state that cannot be read.
+fn windows_must_hear(stored: bool, pin_set_now: Option<bool>) -> bool {
+    stored || pin_set_now == Some(false)
 }
 
 /// A PIN is exactly 6 digits; anything else is refused without checking it.
@@ -247,6 +289,8 @@ pub async fn setup_pin(
         let code = store_first_pin(db, &pin, method)?;
         // Notes open now stay unlocked; the lock comes on at the next trigger.
         db.set_privacy_locked(false, &[]);
+        // No proof of a forgotten PIN outlives the PIN it was given for.
+        state.new_pin_allowed.store(false, Ordering::Release);
         Ok(code)
     })?;
     tray::refresh(&app);
@@ -265,13 +309,7 @@ pub async fn change_pin(
     only_from_settings(&window, PRIVACY)?;
     plausible_pin(&current)?;
     validate_new_pin(&new)?;
-    state.with_db(|db| {
-        let check = db.check_pin(&current, now_ms())?;
-        if check == PinCheck::Ok {
-            db.set_new_pin(&new)?;
-        }
-        Ok(check)
-    })
+    state.with_db(|db| change_known_pin(db, &state.new_pin_allowed, &current, &new, now_ms()))
 }
 
 /// Turn the lock off: needs the PIN. Private flags and labels are kept.
@@ -284,13 +322,7 @@ pub async fn turn_off_lock(
 ) -> IpcResult<PinCheck> {
     only_from_settings(&window, PRIVACY)?;
     plausible_pin(&pin)?;
-    let check = state.with_db(|db| {
-        let check = db.check_pin(&pin, now_ms())?;
-        if check == PinCheck::Ok {
-            db.clear_pin()?;
-        }
-        Ok(check)
-    })?;
+    let check = state.with_db(|db| remove_pin(db, &state.new_pin_allowed, &pin, now_ms()))?;
     if check == PinCheck::Ok {
         tray::refresh(&app);
         emit_privacy_changed(&app, false);
@@ -436,10 +468,14 @@ pub async fn choose_new_pin(
         let issue_code = issue_code_with_new_pin(db.recovery_method()?, system);
         replace_forgotten_pin(db, &state.new_pin_allowed, &pin, issue_code)
     });
-    // The R8 rollback may have removed the PIN: the tray follows either way.
+    // The R8 rollback may have removed the PIN: the tray follows either way, and
+    // windows hear of it as of a new PIN.
     tray::refresh(&app);
+    let pin_set_now = state.with_db(|db| db.pin_is_set()).ok();
+    if windows_must_hear(result.is_ok(), pin_set_now) {
+        emit_privacy_changed(&app, false);
+    }
     let recovery_code = result?;
-    emit_privacy_changed(&app, false);
     Ok(SetupResult { recovery_code })
 }
 
@@ -511,10 +547,85 @@ mod tests {
     use desknotes_core::db::RecoveryMethod;
 
     use super::{
-        RecoveryChange, change_recovery_method, choose_new_pin_window, issue_code_with_new_pin,
-        method_usable, needs_pin_first, plausible_pin, replace_forgotten_pin, store_first_pin,
-        system_route_allowed,
+        RecoveryChange, change_known_pin, change_recovery_method, choose_new_pin_window,
+        issue_code_with_new_pin, method_usable, needs_pin_first, plausible_pin, remove_pin,
+        replace_forgotten_pin, store_first_pin, system_route_allowed, windows_must_hear,
     };
+
+    #[test]
+    fn changing_or_removing_the_pin_ends_a_forgotten_pin_proof() {
+        // A proof given for the old PIN must not choose a PIN later (DES-30).
+        let db = Database::open_in_memory().unwrap();
+        db.set_new_pin("482915").unwrap();
+        let allowed = AtomicBool::new(true);
+        assert!(matches!(
+            change_known_pin(&db, &allowed, "000001", "730518", 0).unwrap(),
+            PinCheck::Wrong { .. }
+        ));
+        assert!(
+            allowed.load(Ordering::SeqCst),
+            "a wrong PIN changes nothing"
+        );
+        assert_eq!(
+            change_known_pin(&db, &allowed, "482915", "730518", 0).unwrap(),
+            PinCheck::Ok
+        );
+        assert!(!allowed.load(Ordering::SeqCst));
+        assert_eq!(db.check_pin("730518", 0).unwrap(), PinCheck::Ok);
+
+        allowed.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            remove_pin(&db, &allowed, "000001", 0).unwrap(),
+            PinCheck::Wrong { .. }
+        ));
+        assert!(allowed.load(Ordering::SeqCst));
+        assert!(db.pin_is_set().unwrap());
+        assert_eq!(
+            remove_pin(&db, &allowed, "730518", 0).unwrap(),
+            PinCheck::Ok
+        );
+        assert!(!allowed.load(Ordering::SeqCst));
+        assert!(!db.pin_is_set().unwrap());
+    }
+
+    #[test]
+    fn a_new_pin_by_the_ubuntu_password_retires_an_older_recovery_code() {
+        // A PIN set before D14 may have a recovery code and no method; once the Ubuntu
+        // password chose the new PIN, only that way back may work (DES-30).
+        let db = Database::open_in_memory().unwrap();
+        db.set_new_pin("482915").unwrap();
+        let old = db.issue_recovery_code().unwrap();
+        let allowed = AtomicBool::new(true);
+        assert_eq!(
+            replace_forgotten_pin(&db, &allowed, "730518", false).unwrap(),
+            None
+        );
+        assert!(!db.has_recovery_code().unwrap());
+        assert!(matches!(
+            db.check_recovery_code(&old, 0).unwrap_err(),
+            CoreError::NotAllowed(_)
+        ));
+        assert_eq!(db.check_pin("730518", 0).unwrap(), PinCheck::Ok);
+        assert_eq!(
+            db.recovery_method().unwrap(),
+            Some(RecoveryMethod::System),
+            "the way back is now stored, as Settings shows it"
+        );
+    }
+
+    #[test]
+    fn windows_hear_of_a_new_pin_and_of_a_pin_a_rollback_removed() {
+        assert!(windows_must_hear(true, Some(true)), "a new PIN");
+        assert!(
+            windows_must_hear(false, Some(false)),
+            "the R8 rollback removed the PIN"
+        );
+        assert!(
+            !windows_must_hear(false, Some(true)),
+            "refused: nothing changed, and the lock may be on"
+        );
+        assert!(!windows_must_hear(false, None), "unknown: say nothing");
+    }
 
     #[test]
     fn choose_new_pin_only_from_settings() {

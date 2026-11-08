@@ -296,6 +296,16 @@ mod tests {
         assert!(parse_backup(&file_v2(vec![control])).is_err());
     }
 
+    #[test]
+    fn a_label_with_hidden_characters_still_restores_without_them() {
+        // Removed like in any label (DES-30), so a backup made before the rule restores.
+        let mut private = note(A);
+        private["private"] = json!(true);
+        private["privateLabel"] = json!("\u{200B}Ba\u{00AD}nk");
+        let b = parse_backup(&file_v2(vec![private])).unwrap();
+        assert_eq!(b.notes[0].private_label, "Bank");
+    }
+
     fn file_v3(notes: Vec<serde_json::Value>) -> String {
         json!({"format": BACKUP_FORMAT, "version": 3, "appVersion": "0.3.0", "exportedAt": 3, "notes": notes})
             .to_string()

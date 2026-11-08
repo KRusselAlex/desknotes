@@ -29,27 +29,6 @@ impl Drop for Claim {
     }
 }
 
-/// Whether another DeskNotes owns the name now. `Err` when it cannot be told.
-pub fn running(identifier: &str) -> Result<bool, String> {
-    #[cfg(target_os = "linux")]
-    {
-        use zbus::blocking::Connection;
-        use zbus::blocking::fdo::DBusProxy;
-        use zbus::names::BusName;
-
-        let name = bus_name(identifier);
-        let name = BusName::try_from(name.as_str()).map_err(|e| e.to_string())?;
-        let connection = Connection::session().map_err(|e| e.to_string())?;
-        let proxy = DBusProxy::new(&connection).map_err(|e| e.to_string())?;
-        proxy.name_has_owner(name).map_err(|e| e.to_string())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = identifier;
-        Err("checking for a running DeskNotes is only possible on Linux".into())
-    }
-}
-
 /// Take the single-instance name, as a running DeskNotes would. `Ok(None)`
 /// when another process owns it (DeskNotes is running); `Err` when it cannot be told.
 pub fn claim(identifier: &str) -> Result<Option<Claim>, String> {
@@ -84,14 +63,12 @@ mod tests {
     #[test]
     #[ignore = "needs a private D-Bus session bus (dbus-run-session)"]
     fn a_claim_keeps_others_out_until_dropped() {
-        use super::{claim, running};
+        use super::claim;
         let id = "io.github.krusselalex.desknotes.test";
-        assert_eq!(running(id), Ok(false));
         let first = claim(id).unwrap().expect("free name");
-        assert_eq!(running(id), Ok(true));
         assert!(claim(id).unwrap().is_none(), "already owned");
         drop(first);
-        assert_eq!(running(id), Ok(false));
+        assert!(claim(id).unwrap().is_some(), "free again once dropped");
     }
 
     #[test]

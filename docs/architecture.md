@@ -73,7 +73,7 @@ A thin adapter around the core: commands, windows, platform code.
 | `notify.rs` | Desktop notifications through `org.freedesktop.Notifications` over zbus. |
 | `lock_triggers.rs` | D-Bus watchers for sleep and screen lock, and the inactivity timer. |
 | `system_auth.rs` | Proof of the Ubuntu password through polkit (`pkcheck`), for a forgotten PIN. |
-| `single_instance.rs` | Detects whether DeskNotes is running, for `--reset-pin`. |
+| `single_instance.rs` | Holds DeskNotes' single-instance name for `--reset-pin`, which refuses while DeskNotes runs. |
 | `gnome_shortcut.rs` | Adds DeskNotes' GNOME custom keyboard shortcut through GSettings. |
 | `fonts.rs` | Lists installed font families (`fc-list`). |
 | `clipboard.rs` | Reads a pasted image from the system clipboard, since WebKitGTK gives the page none. |
@@ -784,7 +784,8 @@ real-app check are.
 
 - **What the user sees:**
   - Any note can be made private, with an optional neutral label ("Private note" when it
-    has none).
+    has none). Characters that are invisible or reorder text (bidi overrides and
+    isolates, zero-width space, soft hyphen) are removed from labels, new or restored.
   - With a 6-digit PIN set, private notes are locked:
     - at start-up;
     - on sleep and on screen lock;
@@ -798,12 +799,22 @@ real-app check are.
     - a 24-character recovery code, shown once;
     - as a last resort, `desknotes --reset-pin` in a terminal with DeskNotes closed.
       The manager then shows "The PIN was reset on …" until it is acknowledged.
+  - Proving a forgotten PIN allows one new PIN. Changing, removing or setting up a PIN,
+    or a lock, cancels that permission.
 - **How it works:**
   - The core withholds text and refuses changes while locked (`db/mod.rs`).
   - Export and restore are refused while any private note is locked.
   - The shell decides when to lock (`src-tauri/src/privacy.rs`). It saves open notes
     first. A note whose save failed stays readable until its window closes.
   - The PIN is hashed with Argon2id (`privacy.rs`). PINs and codes are never logged.
+  - The Ubuntu password is asked with `pkcheck --process pid,start-time,uid`, the form
+    pkcheck(1) asks for.
+  - A lock checks again that a PIN is still set after the save round: turning the lock
+    off during the round leaves nothing locked.
+  - `--reset-pin` takes DeskNotes' single-instance name before it opens the database, and
+    writes the "PIN was reset" notice and the PIN removal in one transaction. It lets the
+    name go during the Ubuntu password prompt (a DeskNotes started then would wait on it
+    and fail) and takes it again before writing, refusing if DeskNotes started.
 - **Code:** `src/features/privacy/`, `src/features/settings/PrivacyPane.tsx`,
   `PinSetup.tsx`, `ChangePin.tsx`, `RecoveryCode.tsx`; `commands/privacy.rs`;
   `platform/lock_triggers.rs`, `platform/system_auth.rs`; `reset_pin.rs`;

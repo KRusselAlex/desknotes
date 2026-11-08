@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use desknotes_core::db::RecoveryMethod;
-use desknotes_core::now_ms;
+use desknotes_core::{CoreResult, Database, now_ms};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -86,24 +86,39 @@ pub fn lock(app: &AppHandle) -> IpcResult<()> {
     }
     let outcome = windows::save_all_open_notes_detailed(app, SAVE_TIMEOUT);
     let not_saved: Vec<String> = outcome.unsaved.into_iter().chain(outcome.silent).collect();
-    state.with_db(|db| {
-        // A note that cannot be read is treated as private: keeping a normal
-        // note in the list changes nothing, dropping a private one could lose text.
-        let private: HashSet<String> = not_saved
-            .iter()
-            .filter(|id| db.get_note(id).map(|n| n.private).unwrap_or(true))
-            .cloned()
-            .collect();
-        db.set_privacy_locked(true, &keep_open_ids(&not_saved, &private));
-        Ok(())
-    })?;
+    if !state.with_db(|db| lock_saved(db, &state.new_pin_allowed, &not_saved))? {
+        return Ok(());
+    }
     // Close reminder notifications showing a title that is now withheld (R10). Only a
     // flag and a wake: the lock never waits for the notification service.
     crate::reminders::on_locked(app);
-    // A proof of identity given before the lock (Task 7) does not outlive it.
-    state.new_pin_allowed.store(false, Ordering::Release);
     emit_privacy_changed(app, true);
     Ok(())
+}
+
+/// The database side of [`lock`], once the save round is over: `false`, and
+/// nothing locked, when the PIN was removed meanwhile (the lock was turned off
+/// during the round), so no window is told of a lock that is not there.
+/// Clears a proof of a forgotten PIN (Task 7) under the same database lock that
+/// `accept_proof` gives it under, so one given just before cannot outlive the lock.
+fn lock_saved(
+    db: &Database,
+    new_pin_allowed: &AtomicBool,
+    not_saved: &[String],
+) -> CoreResult<bool> {
+    if !db.pin_is_set()? {
+        return Ok(false);
+    }
+    // A note that cannot be read is treated as private: keeping a normal
+    // note in the list changes nothing, dropping a private one could lose text.
+    let private: HashSet<String> = not_saved
+        .iter()
+        .filter(|id| db.get_note(id).map(|n| n.private).unwrap_or(true))
+        .cloned()
+        .collect();
+    db.set_privacy_locked(true, &keep_open_ids(not_saved, &private));
+    new_pin_allowed.store(false, Ordering::Release);
+    Ok(true)
 }
 
 /// Run [`lock`] on another thread (from the main thread: tray, D-Bus signals).
@@ -292,6 +307,29 @@ mod tests {
 
     fn ids(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_lock_whose_pin_went_during_the_save_round_locks_nothing() {
+        // turn_off_lock may run while lock() waits for the windows (DES-30).
+        let db = Database::open_in_memory().unwrap();
+        let proof = AtomicBool::new(true);
+        assert!(!lock_saved(&db, &proof, &[]).unwrap());
+        assert!(!db.privacy_locked());
+
+        db.set_new_pin("482915").unwrap();
+        let id = db.create_note(None).unwrap().id;
+        db.set_private(&id, true, "").unwrap();
+        assert!(lock_saved(&db, &proof, std::slice::from_ref(&id)).unwrap());
+        assert!(db.privacy_locked());
+        assert!(
+            !proof.load(Ordering::SeqCst),
+            "a proof of a forgotten PIN does not outlive the lock"
+        );
+        assert!(
+            !db.is_note_locked(&id).unwrap(),
+            "a private note that did not save stays open"
+        );
     }
 
     #[test]

@@ -76,9 +76,9 @@ impl RecoveryMethod {
 
 /// A new recovery code (dashed, shown once) and the hash of its normalized form.
 fn make_recovery_code() -> CoreResult<(String, String)> {
-    let code = new_recovery_code();
+    let code = new_recovery_code()?;
     let normalized = normalize_recovery_code(&code)
-        .ok_or_else(|| CoreError::Validation("could not make a recovery code".into()))?;
+        .ok_or_else(|| CoreError::Internal("could not make a recovery code".into()))?;
     Ok((code, hash_secret(&normalized)?))
 }
 
@@ -99,7 +99,7 @@ impl Database {
 
     fn save_throttle(&self, throttle: &Throttle) -> CoreResult<()> {
         let json = serde_json::to_string(throttle)
-            .map_err(|_| CoreError::Validation("could not store the wait".into()))?;
+            .map_err(|_| CoreError::Internal("could not store the wait".into()))?;
         self.set_setting(PIN_THROTTLE, &json)
     }
 
@@ -212,10 +212,27 @@ impl Database {
     /// The privacy lock is turned off too, so a PIN set later does not suddenly
     /// lock notes whose editors are open; the shell locks again explicitly.
     pub fn clear_pin(&self) -> CoreResult<()> {
+        self.delete_pin_settings()?;
+        self.set_privacy_locked(false, &[]);
+        Ok(())
+    }
+
+    fn delete_pin_settings(&self) -> CoreResult<()> {
         self.conn.execute(
             "DELETE FROM settings WHERE key IN (?1, ?2, ?3, ?4)",
             [PIN_HASH, PIN_RECOVERY_HASH, PIN_THROTTLE, RECOVERY_METHOD],
         )?;
+        Ok(())
+    }
+
+    /// `desknotes --reset-pin` (D11): the "PIN was reset" notice and [`Self::clear_pin`]
+    /// in one transaction, so there is never a notice for a PIN that was kept, nor
+    /// a reset nobody is told about. On error nothing changed.
+    pub fn reset_pin(&self, now_ms: i64) -> CoreResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.record_pin_reset(now_ms)?;
+        self.delete_pin_settings()?;
+        tx.commit()?;
         self.set_privacy_locked(false, &[]);
         Ok(())
     }
@@ -274,7 +291,7 @@ mod tests {
     fn recovery() -> &'static (String, String) {
         static R: OnceLock<(String, String)> = OnceLock::new();
         R.get_or_init(|| {
-            let code = new_recovery_code();
+            let code = new_recovery_code().unwrap();
             let hash = hash_secret(&normalize_recovery_code(&code).unwrap()).unwrap();
             (code, hash)
         })
@@ -425,6 +442,40 @@ mod tests {
         let note = db.get_note(&id).unwrap();
         assert!(note.private);
         assert_eq!(note.private_label, "Work");
+    }
+
+    #[test]
+    fn reset_pin_removes_the_pin_and_leaves_the_notice() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        db.set_private(&id, true, "Work").unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.set_setting(PIN_RECOVERY_HASH, &recovery().1).unwrap();
+        db.set_recovery_method(RecoveryMethod::Code).unwrap();
+
+        db.reset_pin(NOW).unwrap();
+        assert!(!db.pin_is_set().unwrap());
+        assert!(!db.has_recovery_code().unwrap());
+        assert_eq!(db.recovery_method().unwrap(), None);
+        assert_eq!(db.pin_reset_at().unwrap(), Some(NOW));
+        assert!(db.get_note(&id).unwrap().private, "private flags stay");
+    }
+
+    #[test]
+    fn a_reset_that_fails_changes_nothing() {
+        // Notice and removal are one write (DES-30): a failure part-way must not leave
+        // a notice for a PIN that was kept.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER keep_pin BEFORE DELETE ON settings \
+                 WHEN old.key = 'pin_hash' BEGIN SELECT RAISE(ABORT, 'kept'); END;",
+            )
+            .unwrap();
+        assert!(db.reset_pin(NOW).is_err());
+        assert!(db.pin_is_set().unwrap());
+        assert_eq!(db.pin_reset_at().unwrap(), None);
     }
 
     #[test]

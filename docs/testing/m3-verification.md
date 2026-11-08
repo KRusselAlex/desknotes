@@ -53,6 +53,28 @@ These touch the owner's own session or need a real person at the password prompt
 | A locked private note collapses to its header and expands again, still locked (DES-46) | Passed 2026-11-08 (owner) on the `.deb` of main 56d437e: the running DeskNotes was started at 10:25 from that binary. Read-only check: a PIN is set, lock after 1 min, 4 private notes; the one on screen is stored collapsed |
 | Copy and Print of a recovery code (clipboard, print dialog) | **Not confirmed**: no recovery code is stored (`recovery_method = system`). The code screen and its Copy / Print buttons were seen in the scratch-data run above, not pressed |
 
+## Privacy hardening (DES-30, 2026-11-08)
+
+`desknotes --reset-pin` from a debug build of `fix/des-30-privacy-security`, on scratch
+data (`XDG_DATA_HOME` in a scratch folder, made with a PIN, a recovery code and one
+private note), each run on its own private D-Bus (`dbus-run-session`). `APPDIR` was set so
+no Ubuntu password prompt opened. The database was read with Python `sqlite3`, read-only.
+
+| Check | Result |
+|---|---|
+| Another process owns `io.github.krusselalex.desknotes.SingleInstance` (as a running DeskNotes does) | "DeskNotes is running. Quit it first …", exit 1; PIN, recovery code and private flag unchanged, no reset notice |
+| Name free | "The PIN was removed …", exit 0; PIN and recovery code gone, reset notice recorded, the note still private |
+| Run again | "No PIN is set. Nothing was changed.", exit 0 |
+| The claim test on a private bus (`a_claim_keeps_others_out_until_dropped`, ignored by default) | Passes |
+
+**Not checked in the real app:** the Ubuntu password prompt with the new
+`pid,start-time,uid` subject (it opens on the owner's screen: an owner check on the
+next `.deb`), and a DeskNotes started while that prompt is open (the name is let go during
+the prompt; the reset is then refused). The other DES-30 changes are covered by unit tests:
+the proof of a forgotten PIN ends on a PIN change, removal, setup or lock; a lock whose PIN
+went during the save round locks nothing; labels lose hidden characters, also when saved
+before the rule.
+
 ## Automated tests at the end of the branch
 
 `cargo test --workspace` (core 82 unit + 1 + 16 lock tests; desktop 46, 2 ignored), 217

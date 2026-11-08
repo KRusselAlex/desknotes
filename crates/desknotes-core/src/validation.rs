@@ -376,11 +376,30 @@ pub fn validate_color(color: &str) -> CoreResult<String> {
     }
 }
 
-/// A private note's neutral label: trimmed, at most `PRIVATE_LABEL_MAX_CHARS`
-/// characters, no control characters. Empty is allowed (the fallback label is
-/// used for display).
+/// Characters that are invisible or reorder the text around them: bidi
+/// embeddings, overrides and isolates, zero-width space, word joiner, BOM and
+/// soft hyphen. Zero-width joiners (Persian, Indic scripts, emoji) and the
+/// direction marks are kept: they change how text joins, not what it says.
+fn hides_or_reorders(c: char) -> bool {
+    matches!(
+        c,
+        '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{200B}'
+            | '\u{2060}'
+            | '\u{FEFF}'
+            | '\u{00AD}'
+    )
+}
+
+/// A private note's neutral label, which stands in for the note's text while
+/// locked: characters that hide or reorder text are removed (not refused: some
+/// keyboards type them, and labels saved before this rule must still save),
+/// then trimmed, at most `PRIVATE_LABEL_MAX_CHARS` characters and no control
+/// characters. Empty is allowed (the fallback label is used for display).
 pub fn validate_private_label(label: &str) -> CoreResult<String> {
-    let label = label.trim();
+    let kept: String = label.chars().filter(|&c| !hides_or_reorders(c)).collect();
+    let label = kept.trim();
     if label.chars().count() > PRIVATE_LABEL_MAX_CHARS {
         return Err(invalid(format!(
             "label must be at most {PRIVATE_LABEL_MAX_CHARS} characters"
@@ -1013,6 +1032,37 @@ mod tests {
             "validation"
         );
         assert!(validate_private_label("a\nb").is_err());
+    }
+
+    #[test]
+    fn private_label_loses_hidden_and_reordering_characters() {
+        // A label shown in place of a note's text must read as it is stored (DES-30).
+        // Removed, not refused: some keyboards type them (Khmer types U+200B on the
+        // space bar), and labels saved before the rule must still save.
+        for (label, kept) in [
+            ("Bank\u{202E}cod.exe", "Bankcod.exe"),
+            ("\u{200B}Bank", "Bank"),
+            ("Ba\u{2066}nk\u{2069}", "Bank"),
+            ("\u{FEFF}Bank", "Bank"),
+            ("Ba\u{2060}nk", "Bank"),
+            ("Ba\u{00AD}nk", "Bank"),
+            ("Ba\u{202A}nk", "Bank"),
+            (" \u{FEFF} ", ""),
+        ] {
+            assert_eq!(validate_private_label(label).unwrap(), kept, "{label:?}");
+        }
+        // Joiners that scripts and emoji need, and the direction marks, are kept.
+        for label in ["می\u{200C}خواهم", "👩\u{200D}💻 work", "بنك", "A\u{200F}B"] {
+            assert_eq!(validate_private_label(label).unwrap(), label);
+        }
+        // The other checks still refuse.
+        assert!(validate_private_label("a\u{200B}\nb").is_err());
+        assert!(validate_private_label(&format!("{}\u{200B}", "x".repeat(41))).is_err());
+        assert_eq!(
+            validate_private_label(&format!("{}\u{200B}", "x".repeat(40))).unwrap(),
+            "x".repeat(40),
+            "removed characters do not count towards the limit"
+        );
     }
 
     #[test]

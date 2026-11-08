@@ -695,6 +695,23 @@ mod tests {
     }
 
     #[test]
+    fn a_label_saved_before_the_hidden_character_rule_still_lets_the_note_change() {
+        // "Make not private" and Rename send the stored label back (DES-30 review).
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        db.conn
+            .execute(
+                "UPDATE notes SET private = 1, private_label = ?2 WHERE id = ?1",
+                rusqlite::params![id, "Ba\u{200B}nk"],
+            )
+            .unwrap();
+        db.set_private(&id, false, "Ba\u{200B}nk").unwrap();
+        let note = db.get_note(&id).unwrap();
+        assert!(!note.private);
+        assert_eq!(note.private_label, "Bank");
+    }
+
+    #[test]
     fn create_then_get() {
         let db = db();
         let note = db.create_note(None).unwrap();
