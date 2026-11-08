@@ -38,6 +38,10 @@ export function ReminderPopover({
   // What is typed in the time field; `time` is what it reads as, or null.
   const [timeText, setTimeText] = useState(start.time);
   const time = parseTime(timeText);
+  // Set once the field is left with a time it cannot read, and cleared as soon as the text
+  // reads as one again, so a time half typed ("14:", "093") is never marked.
+  const [timeLeft, setTimeLeft] = useState(false);
+  const timeInvalid = timeLeft && time === null && timeText.trim() !== "";
   const [repeat, setRepeat] = useState<Repeat>(start.repeat);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -99,17 +103,19 @@ export function ReminderPopover({
         <input
           type="text"
           aria-label="Time"
-          aria-invalid={time === null && timeText.trim() !== ""}
+          aria-invalid={timeInvalid}
           className="dn-reminder-time"
           value={timeText}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => {
             setTimeText(e.target.value);
+            if (parseTime(e.target.value) !== null) setTimeLeft(false);
             setError(null);
           }}
           onBlur={() => {
             if (time !== null) setTimeText(time);
+            else setTimeLeft(true);
           }}
         />
       </div>

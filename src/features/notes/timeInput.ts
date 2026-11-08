@@ -5,11 +5,12 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /**
  * The typed time as "HH:MM" (24-hour), or null when it is not one. Takes "14:00", "9:30",
- * "0930", "930", "9", "9.30", "9h30", and 12-hour forms such as "9pm", "9:30 p.m." or "12am".
- * Minutes always have two digits ("9:3" is refused).
+ * "0930", "930", "9", "9.30", "9h30", "14h", and 12-hour forms such as "9pm", "9:30 p.m." or
+ * "12am". Minutes always have two digits ("9:3" is refused); only "h" may stand without
+ * them, the French way ("9:" and "9." are refused).
  */
 export function parseTime(text: string): string | null {
-  const m = /^\s*(\d{1,2})(?:[:.h ]?(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?\s*$/i.exec(text);
+  const m = /^\s*(\d{1,2})(?:[:.h ]?(\d{2})|h)?\s*(?:([ap])\.?\s*m?\.?)?\s*$/i.exec(text);
   if (!m) return null;
   let hour = Number(m[1]);
   const minute = m[2] ? Number(m[2]) : 0;

@@ -110,6 +110,32 @@ describe("ReminderPopover", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
+  it("does not mark a time that is still being typed", async () => {
+    renderPopover();
+    await userEvent.clear(timeInput());
+    for (const key of "14:45") {
+      await userEvent.type(timeInput(), key);
+      expect(timeInput()).not.toHaveAttribute("aria-invalid", "true");
+    }
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "25:00");
+    expect(timeInput()).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("does not mark a correction again while it is typed", async () => {
+    renderPopover();
+    await userEvent.clear(timeInput());
+    await userEvent.type(timeInput(), "25:00");
+    await userEvent.tab();
+    expect(timeInput()).toHaveAttribute("aria-invalid", "true");
+    await userEvent.clear(timeInput());
+    for (const key of "9:30 pm") {
+      await userEvent.type(timeInput(), key);
+      expect(timeInput()).not.toHaveAttribute("aria-invalid", "true");
+    }
+  });
+
   it("does not save without a time", async () => {
     renderPopover();
     await userEvent.clear(timeInput());

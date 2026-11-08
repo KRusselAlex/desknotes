@@ -755,8 +755,9 @@ real-app check are.
   - One reminder per note: a date, a time, and a repeat (none, daily, weekdays, weekly,
     monthly). It is set from the note's reminder popover.
   - The date is a native date field. The time is typed into a text field ("9:30", "0930",
-    "9pm"…) and shows as 24-hour "HH:MM" once left: WebKitGTK's native time field never
-    moves on from the hour (DES-45).
+    "14h", "9pm"…) and shows as 24-hour "HH:MM" once left: WebKitGTK's native time field
+    never moves on from the hour (DES-45). A time it cannot read is marked red only once
+    the field is left, and Save stays disabled until it reads.
   - A desktop notification shows the note's **title**, or "Private note" while it is
     locked, with buttons: 10 min, 1 h, Dismiss.
   - Clicking the notification opens the note.
