@@ -2548,6 +2548,12 @@ describe("NoteWindow", () => {
       expect(rule(".dn-note.is-high-contrast")).toMatch(/--note-bg-solid: var\(--dn-hc-bg\) !important/);
     });
 
+    it("a checklist item's text starts from the item's own side, not the list's (DES-33)", () => {
+      const css = readFileSync("src/styles/note.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const at = css.indexOf('.dn-note-body ul[data-type="taskList"] li {');
+      expect(css.slice(at, css.indexOf("}", at))).toMatch(/text-align: start/);
+    });
+
     it("lists and quotes indent on the side the text starts from (right-to-left too)", () => {
       const css = readFileSync("src/styles/note.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
       const lists = css.slice(css.indexOf(".dn-note-body .tiptap ul,"), css.indexOf(".dn-note-body .tiptap li p"));

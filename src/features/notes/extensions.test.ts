@@ -509,6 +509,30 @@ describe("old documents", () => {
           type: "bulletList",
           content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "item" }] }] }],
         },
+        {
+          type: "orderedList",
+          attrs: { start: 1, type: null },
+          content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "one" }] }] }],
+        },
+        {
+          type: "taskList",
+          content: [
+            { type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "done" }] }] },
+          ],
+        },
+        {
+          type: "blockquote",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", marks: [{ type: "italic" }], text: "q" },
+                { type: "hardBreak" },
+                { type: "text", text: "r" },
+              ],
+            },
+          ],
+        },
         { type: "paragraph" },
       ],
     });
@@ -589,6 +613,70 @@ describe("pasted HTML", () => {
     editor.destroy();
   });
 
+  it("bold text with a stored Regular weight stays bold through a copy inside DeskNotes (DES-33)", () => {
+    const source = editorWith({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "b", marks: [{ type: "bold" }, { type: "textStyle", attrs: { fontWeight: "400" } }] }],
+        },
+      ],
+    });
+    source.commands.selectAll();
+    const { dom } = source.view.serializeForClipboard(source.state.selection.content());
+    const target = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(target, dom.innerHTML);
+    const marks = target.getJSON().content![0]!.content![0]!.marks!;
+    expect(marks.map((m) => m.type)).toEqual(["bold", "textStyle"]);
+    expect(marks[1]!.attrs).toEqual(expect.objectContaining({ fontWeight: "400" }));
+    source.destroy();
+    target.destroy();
+  });
+
+  it("a regular weight inside bold from the web un-bolds, as the page showed it, and stores no weight (DES-33)", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(editor, '<p><strong>a<span style="font-weight:400">b</span><span style="font-weight:normal">c</span></strong></p>');
+    const runs = (editor.getJSON() as JSONContent).content![0]!.content!;
+    expect(runs.map((r) => [r.text, (r.marks ?? []).map((m) => m.type)])).toEqual([
+      ["a", ["bold"]],
+      ["bc", []],
+    ]);
+    editor.destroy();
+    // Docs' wrapper is still not bold either.
+    const docs = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(docs, '<b style="font-weight:normal"><span>d</span></b>');
+    expect(docs.getText()).toBe("d");
+    expect(JSON.stringify(docs.getJSON())).not.toContain('"bold"');
+    docs.destroy();
+  });
+
+  it("a pasted span whose styles are all refused leaves no empty text style, even before saving (DES-33)", () => {
+    const editor = editorWith({ type: "doc", content: [{ type: "paragraph" }] });
+    paste(editor, '<p data-pm-slice="0 0 []"><span style="color:#ff0000;font-size:9px">x</span></p>');
+    expect(editor.getJSON().content![0]!.content![0]).toEqual({ type: "text", text: "x" });
+    editor.destroy();
+  });
+
+  it("copied HTML names the font alone, without the page's var(--note-font) fallback (DES-33)", () => {
+    const source = editorWith({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "f", marks: [{ type: "textStyle", attrs: { fontFamily: "Amiri" } }] }],
+        },
+      ],
+    });
+    // On the page the fallback is there; on the clipboard it is not.
+    expect(source.getHTML()).toContain("var(--note-font");
+    source.commands.selectAll();
+    const html = source.view.serializeForClipboard(source.state.selection.content()).dom.innerHTML;
+    expect(html).not.toContain("var(");
+    expect(html).toMatch(/font-family: (&quot;|")Amiri(&quot;|");/);
+    source.destroy();
+  });
+
   it("copy and paste between two notes keeps every text style", () => {
     const source = editorWith(fixture);
     source.commands.selectAll();
@@ -600,3 +688,57 @@ describe("pasted HTML", () => {
     target.destroy();
   });
 });
+
+describe("checklist items in Automatic direction (DES-33)", () => {
+  const doc = (dir: string) => {
+    const element = document.createElement("div");
+    document.body.appendChild(element);
+    const editor = new Editor({
+      element,
+      extensions: createExtensions(),
+      editorProps: { attributes: { dir } },
+      content: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "مرحبا" }] },
+          {
+            type: "taskList",
+            content: ["Milk", "خبز", "123"].map((text) => ({
+              type: "taskItem",
+              attrs: { checked: false },
+              content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+            })),
+          },
+        ],
+      },
+    });
+    const items = () => [...editor.view.dom.querySelectorAll('ul[data-type="taskList"] > li')].map((li) => li.getAttribute("dir"));
+    return { editor, items, done: () => (editor.destroy(), element.remove()) };
+  };
+
+  it("each item takes the direction of its own text, not the note's first line", () => {
+    const { editor, items, done } = doc("auto");
+    expect(items()).toEqual(["ltr", "rtl", null]); // digits only: no direction of its own
+    // Follows edits.
+    editor.commands.insertContentAt(editor.state.doc.content.size - 6, "x");
+    expect(items()[2]).toBe("ltr");
+    done();
+  });
+
+  it("an explicit direction is left to the note, and switching to it removes the item directions", () => {
+    const { editor, items, done } = doc("auto");
+    editor.setOptions({ editorProps: { attributes: { dir: "rtl" } } });
+    expect(items()).toEqual([null, null, null]);
+    done();
+    const ltr = doc("ltr");
+    expect(ltr.items()).toEqual([null, null, null]);
+    ltr.done();
+  });
+
+  it("is never stored", () => {
+    const { editor, done } = doc("auto");
+    expect(serializeDoc(editor.getJSON())).not.toContain('"dir"');
+    done();
+  });
+});
+

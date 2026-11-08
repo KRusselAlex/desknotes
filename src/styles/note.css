@@ -351,6 +351,9 @@
   display: flex;
   gap: 9px;
   align-items: flex-start;
+  /* WebKit gives list items `text-align: match-parent`, which keeps the list's side even
+     when an item has a direction of its own (Automatic direction): start from its own. */
+  text-align: start;
 }
 .dn-note-body ul[data-type="taskList"] li > label {
   position: relative;

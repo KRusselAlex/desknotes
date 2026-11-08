@@ -63,3 +63,24 @@ stops its own Esc instead, and a unit test dispatches an Esc already marked as h
 Not checked in the real app: Semibold chosen on the title (needs the native select list), the
 Greek final sigma (needs Greek typed), and Esc in the link editor while Aa is open. These
 are unit-tested.
+
+## DES-33 batch 2: paste, copy and checklists in Automatic direction (2026-11-08)
+
+Debug build of `fix/des-33-paste`, hidden X display, scratch HOME. A note was put in the
+throwaway database with an Arabic first line, a checklist ("Milk", "خبز") and a paragraph
+in DejaVu Serif; direction Automatic.
+
+| Check | Before | After |
+|---|---|---|
+| "Milk" item | Box on the right, text right-aligned (followed the Arabic first line) | Box on the left, text from the left |
+| "خبز" item | Box on the right | Box on the right |
+| Paragraph "Font" | Left | Left (unchanged) |
+
+Found on the way: with only the item's `dir` set, "Milk" kept its box on the left but its
+text on the right. WebKit gives list items `text-align: match-parent`. Temporary outlines
+showed it, and `text-align: start` on checklist items fixed it.
+
+Not checked in the real app: the clipboard HTML, because no clipboard tool is installed on
+this machine. Bold with a stored Regular weight copied inside DeskNotes, and pastes from
+other apps, are covered by unit tests that go through ProseMirror's own clipboard
+serializer and paste parser. Pasting from Chrome and Firefox is still an owner check.
