@@ -8,6 +8,10 @@
   color: var(--dn-app-text);
   font-size: var(--dn-text-compact);
 }
+/* The window itself holds the focus only while a switched note is read: no ring on the page. */
+.dn-ns:focus {
+  outline: none;
+}
 .dn-ns-scroll {
   flex: 1;
   min-height: 0;

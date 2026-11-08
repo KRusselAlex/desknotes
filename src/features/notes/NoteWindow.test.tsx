@@ -1,8 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fixture from "../../../tests/fixtures/rich-doc.json";
-// @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
-import { readFileSync } from "node:fs";
 import type { ChecklistReset, ImagesDropped, NoteAction, NotesChanged, PrivacyChanged } from "../../ipc/events";
 import {
   APP_APPEARANCE_DEFAULTS,
@@ -189,6 +187,11 @@ const menuOrder = () =>
   Array.from(screen.getByRole("menu").querySelectorAll('[role^="menuitem"]')).map(
     (i) => i.getAttribute("aria-label") ?? i.textContent ?? "",
   );
+
+// vitest runs in Node and can read stylesheets from disk. The module name is a variable
+// so type-checking needs no Node typings, with or without @types/node installed.
+const NODE_FS = "node:fs";
+const { readFileSync } = (await import(/* @vite-ignore */ NODE_FS)) as { readFileSync: (path: string, encoding: "utf8") => string };
 
 describe("NoteWindow", () => {
   beforeEach(() => {
@@ -2470,6 +2473,89 @@ describe("NoteWindow", () => {
         expect(screen.getAllByRole("status")).toHaveLength(1);
         expect(screen.getByRole("status").textContent).toBe("Marked done");
       });
+    });
+  });
+
+  describe("note look (DES-31)", () => {
+    const rootOf = (container: HTMLElement) => container.querySelector(".dn-note") as HTMLElement;
+
+    it("stops being see-through when the opacity is back at 100 %", async () => {
+      await openNote({ appearance: { opacity: 80 } });
+      expect(document.documentElement).toHaveClass("dn-see-through");
+      vi.mocked(commands.getNote).mockResolvedValue(note({ appearance: { opacity: 100 } }));
+      await act(async () => handlers.notesChanged?.({ id: ID, kind: "other" }));
+      await waitFor(() => expect(document.documentElement).not.toHaveClass("dn-see-through"));
+    });
+
+    it("a collapsed strip uses the note's own colours and opacity", async () => {
+      vi.mocked(commands.getNote).mockResolvedValue(
+        note({
+          color: "#cfe8ff",
+          appearance: { opacity: 85, textColor: "#1d4f91" },
+          window: { ...note().window, collapsed: true },
+        }),
+      );
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await screen.findByRole("button", { name: "Expand" });
+      const root = rootOf(container);
+      expect(root.style.getPropertyValue("--note-bg")).toBe("rgba(207, 232, 255, 0.85)");
+      expect(root.style.getPropertyValue("--note-ink")).toBe("#1d4f91");
+      expect(document.documentElement).toHaveClass("dn-see-through");
+    });
+
+    it("a locked private note uses its own colours and opacity, never its text", async () => {
+      vi.mocked(commands.privacyStatus).mockResolvedValue(status({ locked: true }));
+      vi.mocked(commands.getNote).mockResolvedValue(
+        lockedNote({ color: "#ffd8b1", appearance: { opacity: 90, textColor: "#56633f" } }),
+      );
+      const { container } = render(<NoteWindow noteId={ID} />);
+      await screen.findByText("Bank");
+      const root = rootOf(container);
+      expect(root.style.getPropertyValue("--note-bg")).toBe("rgba(255, 216, 177, 0.9)");
+      expect(root.style.getPropertyValue("--note-ink")).toBe("#56633f");
+      expect(document.documentElement).toHaveClass("dn-see-through");
+    });
+
+    it("draws the first frame in the colour and opacity from the page URL", async () => {
+      const before = window.location.href;
+      window.history.replaceState(null, "", "/?color=%23cfe8ff&opacity=85");
+      try {
+        vi.mocked(commands.getNote).mockReturnValue(new Promise(() => undefined));
+        const { container } = render(<NoteWindow noteId={ID} />);
+        const root = await waitFor(() => {
+          const el = container.querySelector('.dn-note[aria-busy="true"]') as HTMLElement | null;
+          expect(el).not.toBeNull();
+          return el!;
+        });
+        expect(root.style.getPropertyValue("--note-bg")).toBe("rgba(207, 232, 255, 0.85)");
+        expect(document.documentElement).toHaveClass("dn-see-through");
+      } finally {
+        window.history.replaceState(null, "", before);
+      }
+    });
+
+    it("checkboxes follow the text colour, with an opaque tick, also in high contrast", () => {
+      const css = readFileSync("src/styles/note.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const rule = (selector: string) => {
+        const at = css.indexOf(`${selector} {`);
+        expect(at, selector).toBeGreaterThanOrEqual(0);
+        return css.slice(at, css.indexOf("}", at));
+      };
+      const box = '.dn-note-body ul[data-type="taskList"] input[type="checkbox"]';
+      expect(rule(box)).toMatch(/border: 1\.5px solid var\(--note-ink, var\(--dn-ink\)\)/);
+      expect(rule(`${box}:checked`)).toMatch(/background: var\(--note-ink, var\(--dn-ink\)\)/);
+      expect(rule(`${box}:checked::before`)).toMatch(/background: var\(--note-bg-solid, var\(--note-bg\)\)/);
+      expect(rule(".dn-note.is-high-contrast")).toMatch(/--note-bg-solid: var\(--dn-hc-bg\) !important/);
+    });
+
+    it("lists and quotes indent on the side the text starts from (right-to-left too)", () => {
+      const css = readFileSync("src/styles/note.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const lists = css.slice(css.indexOf(".dn-note-body .tiptap ul,"), css.indexOf(".dn-note-body .tiptap li p"));
+      expect(lists).toMatch(/padding-inline-start: 20px/);
+      expect(lists).toMatch(/padding-inline-start: 22px/);
+      const tiptap = css.slice(css.indexOf(".dn-note-body .tiptap {"), css.indexOf('.dn-note-body ul[data-type="taskList"] {'));
+      expect(tiptap).not.toMatch(/(padding|border|margin)-(left|right)\b/);
+      expect(tiptap).not.toMatch(/float: (left|right)\b/);
     });
   });
 });

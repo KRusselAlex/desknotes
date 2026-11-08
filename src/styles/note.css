@@ -231,13 +231,14 @@
   line-height: 1.3;
   margin: 0 0 6px;
 }
+/* Logical sides, so a right-to-left list keeps its markers on its starting side. */
 .dn-note-body .tiptap ul,
 .dn-note-body .tiptap ol {
   margin: 0 0 8px;
-  padding-left: 20px;
+  padding-inline-start: 20px;
 }
 .dn-note-body .tiptap ol {
-  padding-left: 22px;
+  padding-inline-start: 22px;
 }
 .dn-note-body .tiptap li p {
   margin: 0;
@@ -251,8 +252,8 @@
 }
 .dn-note-body .tiptap blockquote {
   margin: 0 0 8px;
-  padding-left: 10px;
-  border-left: 3px solid var(--dn-ink-line);
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid var(--dn-ink-line);
 }
 .dn-note-body .tiptap code {
   font-family: var(--dn-font-mono);
@@ -263,7 +264,8 @@
 }
 .dn-note-body .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  float: left;
+  /* The side the text starts from, so a right-to-left note shows it on the right. */
+  float: inline-start;
   height: 0;
   pointer-events: none;
   color: var(--dn-ink-muted);
@@ -340,7 +342,7 @@
 /* Checklists (N1, N16, N17). Tiptap 3 renders <label><input><span sr-only></label>. */
 .dn-note-body ul[data-type="taskList"] {
   list-style: none;
-  padding-left: 0;
+  padding-inline-start: 0;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -364,7 +366,8 @@
   height: 16px;
   margin: 0;
   border-radius: 5px;
-  border: 1.5px solid var(--dn-ink);
+  /* The note's own text colour, like the text beside it. */
+  border: 1.5px solid var(--note-ink, var(--dn-ink));
   background: transparent;
   cursor: pointer;
 }
@@ -373,13 +376,14 @@
 }
 .dn-note-body ul[data-type="taskList"] input[type="checkbox"]:checked {
   border: 0;
-  background: var(--dn-ink);
+  background: var(--note-ink, var(--dn-ink));
 }
 .dn-note-body ul[data-type="taskList"] input[type="checkbox"]:checked::before {
   content: "";
   position: absolute;
   inset: 2px;
-  background: var(--note-bg);
+  /* Opaque even on a see-through note, so the tick stays crisp. */
+  background: var(--note-bg-solid, var(--note-bg));
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
 }
@@ -924,6 +928,7 @@ html.dn-see-through #root {
    The background is painted opaque here, over the see-through body-only fill. */
 .dn-note.is-high-contrast {
   --note-bg: var(--dn-hc-bg) !important;
+  --note-bg-solid: var(--dn-hc-bg) !important;
   --note-hd: var(--dn-hc-bg) !important;
   --note-ink: var(--dn-hc-ink) !important;
   --dn-ink: var(--dn-hc-ink);

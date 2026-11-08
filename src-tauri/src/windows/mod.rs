@@ -386,6 +386,7 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
     // Transparency is a creation-time property of the window, so only a note
     // below 100 % opacity gets it; crossing 100 % reopens the window.
     let transparent = needs_transparency(&note.appearance);
+    let url = note_url(&note.color, &note.appearance);
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
@@ -402,10 +403,16 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
         let min = min_note_size(&handle);
         // Read here too: an opacity change made while this build was queued saw no
         // window, so nothing would reopen one built with the old transparency.
-        let transparent = handle
+        let fresh = handle
             .state::<AppState>()
-            .with_db(|db| db.get_note(&note_id))
-            .map_or(transparent, |n| needs_transparency(&n.appearance));
+            .with_db(|db| db.get_note(&note_id));
+        let (transparent, url) = match &fresh {
+            Ok(n) => (
+                needs_transparency(&n.appearance),
+                note_url(&n.color, &n.appearance),
+            ),
+            Err(_) => (transparent, url),
+        };
         let width = rect.width.max(f64::from(min.width));
         let (min_height, height) = if collapsed {
             (COLLAPSED_HEIGHT, COLLAPSED_HEIGHT)
@@ -415,25 +422,24 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
                 rect.height.max(f64::from(min.height)),
             )
         };
-        let mut builder =
-            WebviewWindowBuilder::new(&handle, &label, WebviewUrl::App("index.html".into()))
-                .title("DeskNotes") // never the note text: titles are visible to others
-                .decorations(false)
-                .resizable(true)
-                // A double-click on the drag area would otherwise maximise the note,
-                // and that full-screen size would be saved as its normal size.
-                .maximizable(false)
-                .inner_size(width, height)
-                .min_inner_size(f64::from(min.width), min_height)
-                .always_on_top(always_on_top)
-                // Created hidden, shown below. tao maps a visible window *before*
-                // removing its decorations, so Mutter first frames it with a 37 px
-                // title bar and the note keeps that extra height, growing on every
-                // restart. Mapping only after it is undecorated avoids this.
-                // Tauri's own drag-drop handler stays on: WebKitGTK gives the page no
-                // dropped files, so Rust reads them (`image_drop`) and the webview
-                // never opens a dropped file in place of the note.
-                .visible(false);
+        let mut builder = WebviewWindowBuilder::new(&handle, &label, WebviewUrl::App(url.into()))
+            .title("DeskNotes") // never the note text: titles are visible to others
+            .decorations(false)
+            .resizable(true)
+            // A double-click on the drag area would otherwise maximise the note,
+            // and that full-screen size would be saved as its normal size.
+            .maximizable(false)
+            .inner_size(width, height)
+            .min_inner_size(f64::from(min.width), min_height)
+            .always_on_top(always_on_top)
+            // Created hidden, shown below. tao maps a visible window *before*
+            // removing its decorations, so Mutter first frames it with a 37 px
+            // title bar and the note keeps that extra height, growing on every
+            // restart. Mapping only after it is undecorated avoids this.
+            // Tauri's own drag-drop handler stays on: WebKitGTK gives the page no
+            // dropped files, so Rust reads them (`image_drop`) and the webview
+            // never opens a dropped file in place of the note.
+            .visible(false);
         if transparent {
             builder = builder.transparent(true);
         }
@@ -481,6 +487,24 @@ fn focus_after_show(
         Some(settings) => settings.set_focus(),
         None => Ok(()),
     }
+}
+
+/// Page loaded by a new note window. The note's colour and, below 100 %, its
+/// opacity ride along so the page's first frame (before the note is read) has
+/// the note's colour instead of a lemon flash. Never anything of its text.
+fn note_url(color: &str, appearance: &Appearance) -> String {
+    let mut url = String::from("index.html");
+    if let Ok(color) = desknotes_core::validation::validate_color(color) {
+        // `#rrggbb` once validated; `#` must be escaped in a query.
+        url.push_str(&format!("?color=%23{}", &color[1..]));
+        if let Some(opacity) = appearance
+            .opacity
+            .filter(|_| needs_transparency(appearance))
+        {
+            url.push_str(&format!("&opacity={opacity}"));
+        }
+    }
+    url
 }
 
 /// Whether a note's window must be created transparent: its opacity is below
@@ -807,6 +831,28 @@ mod tests {
         assert!(!needs_transparency(&with(Some(100))));
         assert!(needs_transparency(&with(Some(95))));
         assert!(needs_transparency(&with(Some(80))));
+    }
+
+    #[test]
+    fn a_note_window_url_carries_only_its_colour_and_opacity() {
+        let with = |opacity| Appearance {
+            opacity,
+            ..Appearance::default()
+        };
+        assert_eq!(
+            note_url("#FFF4A3", &with(None)),
+            "index.html?color=%23fff4a3"
+        );
+        assert_eq!(
+            note_url("#cfe3ff", &with(Some(100))),
+            "index.html?color=%23cfe3ff"
+        );
+        assert_eq!(
+            note_url("#cfe3ff", &with(Some(85))),
+            "index.html?color=%23cfe3ff&opacity=85"
+        );
+        // A colour that is not #rrggbb never reaches the URL.
+        assert_eq!(note_url("red&x=1", &with(Some(85))), "index.html");
     }
 
     #[test]

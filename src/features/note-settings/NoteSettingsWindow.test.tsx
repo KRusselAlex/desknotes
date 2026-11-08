@@ -573,4 +573,135 @@ describe("NoteSettingsWindow", () => {
       expect(commands.setNoteAppearance).not.toHaveBeenCalled();
     });
   });
+
+  describe("hardening (DES-31)", () => {
+    function deferred<T>() {
+      let resolve!: (v: T) => void;
+      const promise = new Promise<T>((r) => (resolve = r));
+      return { promise, resolve };
+    }
+    const ink = (name: string) => screen.getByRole("radio", { name });
+
+    it("ignores a read that answers after a newer one", async () => {
+      await open();
+      const older = deferred<Note>();
+      vi.mocked(commands.getNote).mockReturnValueOnce(older.promise);
+      act(() => handlers.notesChanged?.({ id: ID, kind: "other" }));
+      vi.mocked(commands.getNote).mockResolvedValueOnce(note({ appearance: { textColor: "#1d4f91" } }));
+      await act(async () => handlers.notesChanged?.({ id: ID, kind: "other" }));
+      expect(ink("Blue text")).toHaveAttribute("aria-checked", "true");
+      await act(async () => older.resolve(note({ appearance: { textColor: "#8c491a" } })));
+      expect(ink("Blue text")).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("keeps a change made while a read was on its way", async () => {
+      await open();
+      const read = deferred<Note>();
+      vi.mocked(commands.getNote).mockReturnValueOnce(read.promise);
+      act(() => handlers.notesChanged?.({ id: ID, kind: "other" }));
+      await userEvent.click(ink("Green text")); // sent and answered before the read lands
+      await act(async () => read.resolve(note()));
+      expect(ink("Green text")).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("a slider drag the system cancels still sends its value and lets reads through", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(commands.getNote).mockResolvedValue(note());
+        render(<NoteSettingsWindow noteId={ID} />);
+        await act(async () => {
+          await vi.runOnlyPendingTimersAsync();
+        });
+        const slider = screen.getByRole("slider", { name: "Line spacing" });
+        fireEvent.pointerDown(slider);
+        fireEvent.change(slider, { target: { value: "150" } });
+        fireEvent.change(slider, { target: { value: "160" } });
+        fireEvent.pointerCancel(slider);
+        expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { lineSpacing: 160 });
+        // Not stuck "dragging": a change made elsewhere shows again.
+        vi.mocked(commands.getNote).mockResolvedValue(note({ appearance: { lineSpacing: 120 } }));
+        await act(async () => {
+          handlers.notesChanged?.({ id: ID, kind: "other" });
+          await vi.runOnlyPendingTimersAsync();
+        });
+        expect(screen.getByText("120 %")).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("an error stays until the control it belongs to succeeds", async () => {
+      await open();
+      vi.mocked(commands.setNoteColor).mockRejectedValueOnce(new Error("colour refused"));
+      await userEvent.click(screen.getByRole("radio", { name: "Peach" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("colour refused");
+      await userEvent.click(ink("Blue text")); // another control succeeds
+      expect(screen.getByRole("alert")).toHaveTextContent("colour refused");
+      await userEvent.click(screen.getByRole("radio", { name: "Peach" }));
+      await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    });
+
+    it("a resize that comes before a switched note's first read is not undone by its saved size", async () => {
+      await open();
+      const first = deferred<Note>();
+      vi.mocked(commands.getNote).mockReturnValueOnce(first.promise);
+      act(() => handlers.switchNote?.("other"));
+      act(() => handlers.resized?.({ id: "other", width: 512, height: 400 }));
+      await act(async () => first.resolve(note({ id: "other", window: { ...note().window, width: 300, height: 280 } })));
+      expect(screen.getByRole("textbox", { name: "Width" })).toHaveValue("512");
+      expect(screen.getByRole("textbox", { name: "Height" })).toHaveValue("400");
+    });
+
+    it("focuses the font when it opens, and keeps the focus in the window during a switch", async () => {
+      await open();
+      await waitFor(() => expect(screen.getByRole("combobox", { name: "Font" })).toHaveFocus());
+      await userEvent.click(ink("Blue text"));
+      const first = deferred<Note>();
+      vi.mocked(commands.getNote).mockReturnValueOnce(first.promise);
+      act(() => handlers.switchNote?.("other"));
+      expect(document.activeElement).not.toBe(document.body);
+      await act(async () => first.resolve(note({ id: "other" })));
+      expect(screen.getByRole("combobox", { name: "Font" })).toHaveFocus();
+    });
+
+    it("closes when a switched note cannot be read", async () => {
+      await open();
+      vi.mocked(commands.getNote).mockRejectedValueOnce(new Error("not found"));
+      await act(async () => handlers.switchNote?.("other"));
+      expect(closeCurrentWindow).toHaveBeenCalledTimes(1);
+    });
+
+    it("moves between colours with the arrow keys; only the chosen one is in the Tab order", async () => {
+      await open(note({ appearance: { textColor: "#8c491a" } }));
+      expect(ink("Brown text")).toHaveAttribute("tabindex", "0");
+      expect(ink("Black text")).toHaveAttribute("tabindex", "-1");
+      ink("Brown text").focus();
+      await userEvent.keyboard("{ArrowRight}");
+      expect(ink("Green text")).toHaveFocus();
+      await userEvent.keyboard("{End}");
+      expect(ink("Blue text")).toHaveFocus();
+      await userEvent.keyboard("{ArrowRight}");
+      expect(ink("Black text")).toHaveFocus();
+      expect(commands.setNoteAppearance).not.toHaveBeenCalled();
+
+      const lemon = screen.getByRole("radio", { name: "Lemon" });
+      expect(lemon).toHaveAttribute("tabindex", "0");
+      lemon.focus();
+      await userEvent.keyboard("{ArrowRight}");
+      expect(screen.getByRole("radio", { name: "Peach" })).toHaveFocus();
+      await userEvent.keyboard(" ");
+      expect(commands.setNoteColor).toHaveBeenCalledWith(ID, expect.any(String));
+    });
+
+    it("leaves the arrow keys to the custom colour, which is not one of the swatches", async () => {
+      await open();
+      const custom = screen.getByLabelText("Custom colour");
+      custom.focus();
+      // fireEvent: user-event's keyboard on a colour input is not implemented in jsdom.
+      for (const key of ["ArrowLeft", "End"]) {
+        expect(fireEvent.keyDown(custom, { key })).toBe(true); // not prevented
+        expect(custom).toHaveFocus();
+      }
+    });
+  });
 });

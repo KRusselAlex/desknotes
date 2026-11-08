@@ -1,9 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-// @ts-expect-error The project has no Node typings; vitest runs in Node and can read the stylesheet.
-import { readFileSync } from "node:fs";
 import type { ReminderListRow } from "../../types/reminder";
 import { RemindersList } from "./RemindersList";
+
+// vitest runs in Node and can read stylesheets from disk. The module name is a variable
+// so type-checking needs no Node typings, with or without @types/node installed.
+const NODE_FS = "node:fs";
+const { readFileSync } = (await import(/* @vite-ignore */ NODE_FS)) as { readFileSync: (path: string, encoding: "utf8") => string };
 
 const now = new Date(2026, 10, 4, 12, 0).getTime();
 const row = (over: Partial<ReminderListRow> = {}): ReminderListRow => ({

@@ -25,6 +25,8 @@ describe("appearanceStyle", () => {
     const s = style("#fff4a3", { opacity: 80 });
     expect(s["--note-bg"]).toBe("rgba(255, 244, 163, 0.8)");
     expect(s["--note-hd"]).toBe("rgba(246, 231, 124, 0.8)");
+    // Solid for what must stay crisp on a see-through note (the checkbox tick).
+    expect(s["--note-bg-solid"]).toBe("#fff4a3");
     expect(style("#fff4a3", { opacity: 100 })["--note-bg"]).toBe("#fff4a3");
   });
 
