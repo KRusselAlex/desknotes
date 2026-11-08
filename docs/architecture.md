@@ -786,8 +786,9 @@ real-app check are.
     - on sleep and on screen lock;
     - after 1, 5, 10 or 15 minutes with no input in DeskNotes (5 by default);
     - with "Lock now".
-  - A locked note shows only its label. Unlocking with the PIN unlocks all private
-    notes. Wrong PINs bring growing waits.
+  - A locked note shows only its label. It still collapses to its strip and expands to
+    the PIN pad, staying locked. Unlocking with the PIN unlocks all private notes. Wrong
+    PINs bring growing waits.
   - If the PIN is forgotten, there are three ways back:
     - the Ubuntu password (polkit);
     - a 24-character recovery code, shown once;

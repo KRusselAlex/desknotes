@@ -11,6 +11,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Where the open note has it, and shown like its other header buttons: on hover or focus. */
+.dn-note:not(:hover):not(:focus-within) .dn-locked-collapse {
+  visibility: hidden;
+}
 .dn-note-locked {
   flex: 1;
   min-height: 0;
