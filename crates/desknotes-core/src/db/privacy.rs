@@ -146,7 +146,9 @@ impl Database {
         Ok(())
     }
 
-    /// Stored throttle; a missing or damaged value counts as no failures.
+    /// Stored throttle; a missing or damaged value counts as no failures. Failing
+    /// open is on purpose: a damaged value must not lock the owner out for good,
+    /// and the PIN itself is still checked.
     fn throttle(&self) -> CoreResult<Throttle> {
         Ok(self
             .get_setting(PIN_THROTTLE)?
@@ -431,6 +433,26 @@ mod tests {
             serde_json::to_string(&PinCheck::Ok).unwrap(),
             r#"{"kind":"ok"}"#
         );
+    }
+
+    #[test]
+    fn a_new_pin_ends_a_running_wait() {
+        // Choosing a new PIN (after a forgotten one) must not leave the old PIN's
+        // wait in the way of the new one (DES-30).
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(PIN_HASH, pin_hash()).unwrap();
+        db.save_throttle(&Throttle {
+            failures: 5,
+            wait_until_ms: NOW + 30_000,
+        })
+        .unwrap();
+        assert!(matches!(
+            db.check_pin(PIN, NOW).unwrap(),
+            PinCheck::Waiting { .. }
+        ));
+        db.set_new_pin("730518").unwrap();
+        assert_eq!(db.get_setting(PIN_THROTTLE).unwrap(), None);
+        assert_eq!(db.check_pin("730518", NOW).unwrap(), PinCheck::Ok);
     }
 
     #[test]

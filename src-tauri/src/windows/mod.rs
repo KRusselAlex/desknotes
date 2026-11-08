@@ -740,6 +740,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn settings_sections_match_the_webview_list() {
+        // One list per language; this keeps them the same (DES-30).
+        let ts = include_str!("../../../src/types/note.ts");
+        let line = ts
+            .lines()
+            .find(|l| l.starts_with("export const SETTINGS_SECTIONS = ["))
+            .expect("SETTINGS_SECTIONS in src/types/note.ts");
+        let names: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
+        assert_eq!(names, SETTINGS_SECTIONS);
+    }
+
+    #[test]
     fn the_note_settings_window_is_not_taken_for_a_note() {
         assert_eq!(note_id_from_label(NOTE_SETTINGS), None);
         assert_eq!(note_id_from_label(&note_label("abc")), Some("abc"));

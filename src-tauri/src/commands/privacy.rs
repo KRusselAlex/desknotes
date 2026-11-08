@@ -731,8 +731,8 @@ mod tests {
     use super::{
         RecoveryChange, Turn, change_known_pin, change_recovery_method, check_then,
         choose_new_pin_window, issue_code_with_new_pin, method_usable, needs_pin_first,
-        plausible_pin, remove_pin, replace_forgotten_pin, store_first_pin, system_route_allowed,
-        unlock_unless_locked_since, windows_must_hear,
+        plausible_pin, remove_pin, replace_forgotten_pin, store_first_pin, store_pin_with_code,
+        system_route_allowed, unlock_unless_locked_since, windows_must_hear,
     };
     use crate::state::SharedDb;
 
@@ -759,6 +759,83 @@ mod tests {
 
     fn new_code() -> Option<NewRecoveryCode> {
         Some(NewRecoveryCode::new().unwrap())
+    }
+
+    /// A scratch database whose setting `key` cannot be written (a trigger refuses
+    /// it), to see the R8 rollback leave no PIN without a way back.
+    fn database_refusing(key: &str) -> (tempfile::TempDir, Database) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("desknotes.db");
+        let db = Database::open(&path, &dir.path().join("backups")).unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TRIGGER refuse BEFORE INSERT ON settings WHEN NEW.key = '{key}'
+                 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;"
+            ))
+            .unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn a_code_that_cannot_be_stored_takes_the_new_pin_with_it() {
+        // R8: a PIN with no way back is never left (DES-30).
+        let (_dir, db) = database_refusing("pin_recovery_hash");
+        assert!(store_pin_with_code(&db, &new_pin("482915"), new_code()).is_err());
+        assert!(!db.pin_is_set().unwrap());
+        assert!(!db.has_recovery_code().unwrap());
+    }
+
+    #[test]
+    fn a_way_back_that_cannot_be_stored_takes_the_first_pin_with_it() {
+        let (_dir, db) = database_refusing("recovery_method");
+        for choice in [
+            RecoveryChoice::System,
+            RecoveryChoice::prepare(RecoveryMethod::Code).unwrap(),
+        ] {
+            assert!(store_first_pin(&db, &new_pin("482915"), choice).is_err());
+            assert!(!db.pin_is_set().unwrap());
+            assert_eq!(db.recovery_method().unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn a_forgotten_pin_replaced_without_its_code_leaves_no_pin_and_uses_the_proof() {
+        let (_dir, db) = database_refusing("pin_recovery_hash");
+        db.set_new_pin("482915").unwrap();
+        let allowed = AtomicBool::new(true);
+        assert!(replace_forgotten_pin(&db, &allowed, &new_pin("730518"), new_code()).is_err());
+        assert!(
+            !db.pin_is_set().unwrap(),
+            "no PIN rather than one with no way back"
+        );
+        assert!(!allowed.load(Ordering::SeqCst), "the proof is used up");
+    }
+
+    #[test]
+    fn changing_the_way_back_during_a_wait_changes_nothing() {
+        let db = shared_with_pin("482915");
+        peek(&db, |d| {
+            d.set_recovery_method(RecoveryMethod::System).unwrap();
+            for _ in 0..5 {
+                d.check_pin("000001", 0).unwrap();
+            }
+        });
+        let during = with_turn(|turn| {
+            change_recovery_method(turn, &db, "482915", RecoveryMethod::Code, 1_000)
+        })
+        .unwrap();
+        assert!(
+            matches!(during.check, PinCheck::Waiting { .. }),
+            "{:?}",
+            during.check
+        );
+        assert_eq!(during.recovery_code, None);
+        assert_eq!(
+            peek(&db, |d| d.recovery_method().unwrap()),
+            Some(RecoveryMethod::System)
+        );
+        assert!(!peek(&db, |d| d.has_recovery_code().unwrap()));
     }
 
     #[test]

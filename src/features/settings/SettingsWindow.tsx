@@ -5,7 +5,7 @@ import type { IconName } from "../../components/icons";
 import { Switch } from "../../components/Switch";
 import { commands } from "../../ipc/commands";
 import { onAutomationsChanged, onSettingsSection } from "../../ipc/events";
-import type { AboutLink, AppAppearance, Automations, SettingsSection, SettingsView } from "../../types/note";
+import { SETTINGS_SECTIONS, type AboutLink, type AppAppearance, type Automations, type SettingsSection, type SettingsView } from "../../types/note";
 import { COLOR_PRESETS } from "../appearance/colors";
 import { AppearancePane } from "./AppearancePane";
 import { AutomationsPane } from "./AutomationsPane";
@@ -15,7 +15,7 @@ import { PrivacyPane } from "./PrivacyPane";
 import { SettingsHold } from "./hold";
 import { ShortcutRow } from "./ShortcutRow";
 
-type Section = "general" | "appearance" | "automations" | "privacy" | "backup" | "about";
+type Section = Exclude<SettingsSection, "privacy-new-pin">;
 
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "general", label: "General", icon: "settings" },
@@ -26,11 +26,9 @@ const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "about", label: "About", icon: "info" },
 ];
 
-const SECTION_NAMES: readonly SettingsSection[] = ["general", "appearance", "automations", "privacy", "privacy-new-pin", "backup", "about"];
-
 /** The section another window asked for (`open_settings(section)`), or null if unknown. */
 export function parseSection(name: string | null | undefined): { section: Section; newPin: boolean } | null {
-  const known = SECTION_NAMES.find((s) => s === name);
+  const known = SETTINGS_SECTIONS.find((s) => s === name);
   if (!known) return null;
   return known === "privacy-new-pin" ? { section: "privacy", newPin: true } : { section: known, newPin: false };
 }

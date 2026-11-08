@@ -206,8 +206,8 @@ impl Database {
         finish(pair)
     }
 
-    /// True when the lock is in effect and the note with this id is not kept open.
-    /// Only meaningful for private notes. `lock` is `self.lock_active()`.
+    /// The one "withheld" rule: a private note is withheld when the lock is in effect
+    /// and it is not kept open. `lock` is `self.lock_active()`.
     pub(super) fn withheld(&self, lock: bool, private: bool, id: &str) -> bool {
         private && lock && !self.kept_open.borrow().contains(id)
     }

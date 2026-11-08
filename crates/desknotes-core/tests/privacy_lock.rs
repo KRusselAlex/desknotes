@@ -112,6 +112,11 @@ fn search_does_not_see_locked_text() {
     );
     db.trash_note(&id).unwrap();
     assert!(ids(&db, NoteFilter::Trash, Some("drawer")).is_empty());
+    assert_eq!(
+        ids(&db, NoteFilter::Trash, Some("bank")),
+        vec![id.clone()],
+        "found in the Trash by its label (DES-30)"
+    );
 
     // Unlocking makes the text searchable again.
     db.set_privacy_locked(false, &[]);
@@ -418,4 +423,18 @@ fn clearing_the_pin_resets_the_lock() {
 
     db.set_privacy_locked(true, &[]);
     assert!(db.is_note_locked(&id).unwrap());
+}
+
+#[test]
+fn making_a_note_private_or_not_keeps_its_edit_time() {
+    // Privacy is not an edit: lists sorted by "last edited" must not move (DES-30).
+    let db = db_with_pin();
+    let id = db.create_note(None).unwrap().id;
+    db.save_content(&id, &doc("Groceries")).unwrap();
+    let edited = db.get_note(&id).unwrap().updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    db.set_private(&id, true, "Bank").unwrap();
+    assert_eq!(db.get_note(&id).unwrap().updated_at, edited);
+    db.set_private(&id, false, "Bank").unwrap();
+    assert_eq!(db.get_note(&id).unwrap().updated_at, edited);
 }
