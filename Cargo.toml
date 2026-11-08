@@ -19,6 +19,14 @@ sha2 = "0.10"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
+# Argon2 (PIN and recovery-code hashing) is about eight times slower unoptimized
+# (measured 2026-11-08), which made debug builds and tests wait seconds per hash.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
 [profile.release]
 lto = true
 codegen-units = 1

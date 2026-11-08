@@ -76,6 +76,53 @@ pub fn verify_secret(phc: &str, secret: &str) -> bool {
     }
 }
 
+/// A new PIN, checked and hashed. Hashing takes about 0.33 s, so callers make it
+/// before taking the database lock and then store it.
+pub struct NewPin {
+    hash: String,
+}
+
+impl NewPin {
+    pub fn new(pin: &str) -> CoreResult<Self> {
+        validate_new_pin(pin)?;
+        Ok(Self {
+            hash: hash_secret(pin)?,
+        })
+    }
+
+    pub(crate) fn hash(&self) -> &str {
+        &self.hash
+    }
+}
+
+/// A new recovery code (dashed, shown once) and the hash of its normalized form,
+/// made before taking the database lock, like [`NewPin`].
+pub struct NewRecoveryCode {
+    code: String,
+    hash: String,
+}
+
+impl NewRecoveryCode {
+    pub fn new() -> CoreResult<Self> {
+        let code = new_recovery_code()?;
+        let normalized = normalize_recovery_code(&code)
+            .ok_or_else(|| CoreError::Internal("could not make a recovery code".into()))?;
+        Ok(Self {
+            hash: hash_secret(&normalized)?,
+            code,
+        })
+    }
+
+    pub(crate) fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// The code to show once, after it is stored.
+    pub fn into_code(self) -> String {
+        self.code
+    }
+}
+
 fn no_random_source() -> CoreError {
     CoreError::Internal("no secure random source available".into())
 }

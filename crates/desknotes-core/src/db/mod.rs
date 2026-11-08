@@ -22,7 +22,9 @@ pub use automation::{Automations, PURGE_TRASH_DAYS_RANGE, cutoff_ms};
 pub use backup::{Export, LAST_BACKUP_AT};
 pub use images::ImageInfo;
 pub use migrations::LATEST_VERSION;
-pub use privacy::{LOCK_AFTER_CHOICES, PinCheck, RecoveryMethod};
+pub use privacy::{
+    LOCK_AFTER_CHOICES, PinCheck, RecoveryChoice, RecoveryMethod, Secret, StoredSecret,
+};
 pub use settings::FIRST_RUN_DONE;
 pub use welcome::welcome_content;
 
