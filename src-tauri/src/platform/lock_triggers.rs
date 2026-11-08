@@ -163,6 +163,8 @@ mod linux {
 
     /// GNOME `org.gnome.ScreenSaver.ActiveChanged(true)` on the session bus.
     /// Without GNOME's service the signal never comes; that is not an error.
+    /// It also comes when the screen only blanks (idle dimming, no password yet):
+    /// locking private notes then too is on purpose, as the screen is unattended.
     fn watch_screen_saver(on_lock: &dyn Fn()) -> zbus::Result<()> {
         let conn = Connection::session()?;
         let saver = proxy(&conn, SCREEN_SAVER, SCREEN_SAVER_PATH, SCREEN_SAVER)?;

@@ -114,6 +114,21 @@ Unit tests cover them, and each fails without its fix.
 - the "Forgot your PIN?" password wait stays as it is, with no button;
 - the printed "DeskNotes recovery code" line stays.
 
+### Tests and tidy-ups (DES-30, 2026-11-08)
+
+Tests only, plus refactors that change no behaviour. No real-app run was needed.
+
+New tests:
+- making a note private keeps its edit time;
+- a new PIN ends a running wait;
+- a locked note in the Trash is found by its label;
+- the automatic lock's reading of its settings;
+- R8 rollbacks, with a trigger that makes one write fail; the first of these fails when the rollback is removed;
+- changing the way back during a wait changes nothing;
+- the Settings section lists in Rust and TypeScript stay the same.
+
+The "export asks for the PIN before the file dialog" order (R11) needs the real dialog. It was checked in the real app on 2026-11-03 (table above).
+
 ## Automated tests at the end of the branch
 
 `cargo test --workspace` (core 82 unit + 1 + 16 lock tests; desktop 46, 2 ignored), 217

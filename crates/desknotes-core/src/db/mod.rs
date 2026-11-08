@@ -162,7 +162,7 @@ impl Database {
 
     /// Whether a *private* note with this id is withheld right now.
     fn withholds(&self, id: &str) -> CoreResult<bool> {
-        Ok(self.lock_active()? && !self.kept_open.borrow().contains(id))
+        Ok(self.withheld(self.lock_active()?, true, id))
     }
 
     /// Refuse when the note exists, is private and is withheld. A missing note

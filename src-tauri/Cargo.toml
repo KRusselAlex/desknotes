@@ -32,6 +32,9 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 [dev-dependencies]
 # Same version as desknotes-core's tests: a fixed IANA zone for the reminder tests.
 chrono-tz = "=0.10.4"
+# A second connection to a scratch database, to make one write fail (R8 rollback tests).
+rusqlite = { workspace = true }
+tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version Tauri uses; only to name the WebKit view type shared between windows.

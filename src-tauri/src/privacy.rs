@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::commands::app::SAVE_TIMEOUT;
 use crate::error::IpcResult;
 use crate::platform::lock_triggers::inactive_long_enough;
-use crate::state::{AppState, DATABASE_UNAVAILABLE};
+use crate::state::{AppState, DATABASE_UNAVAILABLE, SharedDb, with_db};
 use crate::windows::{self, emit_changed};
 
 /// Sent to all windows when the lock turns on or off, and to one note window
@@ -148,6 +148,7 @@ static AUTO_LOCK: Mutex<()> = Mutex::new(());
 const DEFAULT_LOCK_AFTER_MINUTES: u32 = 5;
 
 /// What the database said about the lock; `None` where it could not be read.
+#[derive(Debug, PartialEq)]
 struct LockInputs {
     pin_set: Option<bool>,
     locked: bool,
@@ -190,9 +191,9 @@ pub fn pin_set_without_database(code: &str) -> Option<bool> {
 
 /// Read what the automatic triggers need. A failure is logged once (no note
 /// text or secrets in it) and the unknowns stay `None`.
-fn read_lock_inputs(state: &AppState) -> LockInputs {
+fn read_lock_inputs(db: &SharedDb) -> LockInputs {
     static LOGGED: AtomicBool = AtomicBool::new(false);
-    let read = state.with_db(|db| {
+    let read = with_db(db, |db| {
         Ok(LockInputs {
             pin_set: db.pin_is_set().ok(),
             locked: db.privacy_locked(),
@@ -233,7 +234,7 @@ fn log_unreadable_once(logged: &AtomicBool, why: &str) {
 /// Returns false when locking failed; the manager is told why.
 pub fn lock_automatically(app: &AppHandle) -> bool {
     let _one_at_a_time = AUTO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let inputs = read_lock_inputs(&app.state::<AppState>());
+    let inputs = read_lock_inputs(app.state::<AppState>().db());
     if !auto_lock_needed(inputs.pin_set, inputs.locked) {
         return true;
     }
@@ -254,7 +255,7 @@ pub fn lock_automatically(app: &AppHandle) -> bool {
 /// window has reported input for the chosen number of minutes.
 pub fn lock_if_inactive(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let inputs = read_lock_inputs(&state);
+    let inputs = read_lock_inputs(state.db());
     let last = state.last_activity_ms.load(Ordering::Relaxed);
     if should_lock_for_inactivity(
         inputs.pin_set,
@@ -367,6 +368,47 @@ mod tests {
             i64::MAX,
             0
         ));
+    }
+
+    #[test]
+    fn lock_inputs_come_from_the_database_or_say_there_is_none() {
+        // DES-30: the automatic triggers' view of the database.
+        let none: SharedDb = Mutex::new(None);
+        assert_eq!(
+            read_lock_inputs(&none),
+            LockInputs {
+                pin_set: Some(false),
+                locked: false,
+                minutes: None
+            },
+            "no database, nothing to lock"
+        );
+
+        let db = Database::open_in_memory().unwrap();
+        db.set_lock_after_minutes(15).unwrap();
+        let shared: SharedDb = Mutex::new(Some(db));
+        assert_eq!(
+            read_lock_inputs(&shared),
+            LockInputs {
+                pin_set: Some(false),
+                locked: false,
+                minutes: Some(15)
+            }
+        );
+        with_db(&shared, |db| {
+            db.set_new_pin("482915")?;
+            db.set_privacy_locked(true, &[]);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            read_lock_inputs(&shared),
+            LockInputs {
+                pin_set: Some(true),
+                locked: true,
+                minutes: Some(15)
+            }
+        );
     }
 
     #[test]
