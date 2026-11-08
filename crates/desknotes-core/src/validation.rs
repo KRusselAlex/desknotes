@@ -440,6 +440,11 @@ pub fn validate_font_name(name: &str) -> CoreResult<Option<String>> {
 /// A font family name, trimmed: at most `FONT_NAME_MAX_CHARS` characters and
 /// free of anything that could break out of a CSS string (control characters,
 /// `"`, `\`, `;`). Empty means "system default" (`None`).
+///
+/// A `,` is allowed here but refused by the editor (`normalizeFontFamily`): there
+/// it tells a pasted font *list* ("Arial, sans-serif") from one name, while the
+/// core only has to keep the name safe inside its quoted CSS string, where a comma
+/// is harmless. Accepting it also keeps any name stored before that rule savable.
 fn check_font_name(name: &str) -> CoreResult<Option<String>> {
     let name = name.trim();
     if name.is_empty() {
