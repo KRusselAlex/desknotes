@@ -162,10 +162,17 @@ pub async fn list_fonts() -> IpcResult<Vec<String>> {
 }
 
 /// Open the Note settings window for a note, or switch the open one to it.
+/// Refused for an archived, trashed or done note (the window would close at once).
 /// Async: creating a window from a synchronous command deadlocks on Windows.
 #[tauri::command]
-pub async fn open_note_settings(app: AppHandle, id: String) -> IpcResult<()> {
+pub async fn open_note_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> IpcResult<()> {
     let id = parse_note_id(&id)?;
+    let note = state.with_db(|db| db.get_note(&id))?;
+    super::notes::ensure_may_have_window(&note)?;
     windows::note_settings::open_note_settings(&app, &id)
 }
 
