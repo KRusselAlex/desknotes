@@ -105,11 +105,10 @@ impl Database {
             Some("false") => false,
             _ => defaults.high_contrast,
         };
-        let layout = match self.get_setting(APPEARANCE_LAYOUT)?.as_deref() {
-            Some("comfortable") => Layout::Comfortable,
-            Some("compact") => Layout::Compact,
-            _ => defaults.layout,
-        };
+        let layout = self
+            .get_setting(APPEARANCE_LAYOUT)?
+            .and_then(|raw| Layout::parse(&raw))
+            .unwrap_or(defaults.layout);
         let default_font = self
             .get_setting(APPEARANCE_DEFAULT_FONT)?
             .and_then(|raw| validate_font_name(&raw).ok())
@@ -140,29 +139,18 @@ impl Database {
             None => None,
         };
         let a = AppAppearance { default_font, ..a };
-        let layout = match a.layout {
-            Layout::Comfortable => "comfortable",
-            Layout::Compact => "compact",
-        };
+        // `set_setting` runs on the same connection, so all four writes are inside `tx`.
         let tx = self.conn.unchecked_transaction()?;
-        for (key, value) in [
-            (
-                APPEARANCE_HIGH_CONTRAST,
-                if a.high_contrast { "true" } else { "false" }.to_string(),
-            ),
-            (APPEARANCE_LAYOUT, layout.to_string()),
-            (
-                APPEARANCE_DEFAULT_FONT,
-                a.default_font.clone().unwrap_or_default(),
-            ),
-            (APPEARANCE_DEFAULT_SIZE, a.default_size.to_string()),
-        ] {
-            tx.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                [key, value.as_str()],
-            )?;
-        }
+        self.set_setting(
+            APPEARANCE_HIGH_CONTRAST,
+            if a.high_contrast { "true" } else { "false" },
+        )?;
+        self.set_setting(APPEARANCE_LAYOUT, a.layout.as_str())?;
+        self.set_setting(
+            APPEARANCE_DEFAULT_FONT,
+            a.default_font.as_deref().unwrap_or_default(),
+        )?;
+        self.set_setting(APPEARANCE_DEFAULT_SIZE, &a.default_size.to_string())?;
         tx.commit()?;
         Ok(a)
     }
@@ -298,12 +286,43 @@ mod tests {
     #[test]
     fn app_appearance_defaults_when_unset() {
         let db = Database::open_in_memory().unwrap();
-        let a = db.app_appearance().unwrap();
-        assert_eq!(a, AppAppearance::default());
-        assert!(!a.high_contrast);
-        assert_eq!(a.layout, Layout::Comfortable);
-        assert_eq!(a.default_font, None);
-        assert_eq!(a.default_size, 15);
+        assert_eq!(
+            db.app_appearance().unwrap(),
+            AppAppearance {
+                high_contrast: false,
+                layout: Layout::Comfortable,
+                default_font: None,
+                default_size: 15,
+            }
+        );
+    }
+
+    #[test]
+    fn a_write_failing_part_way_stores_nothing() {
+        let db = Database::open_in_memory().unwrap();
+        // The size is written last: refusing it must undo the three writes before it.
+        db.conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER refuse_size BEFORE INSERT ON settings
+                 WHEN NEW.key = 'appearance_default_size'
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )
+            .unwrap();
+        let a = AppAppearance {
+            high_contrast: true,
+            layout: Layout::Compact,
+            default_font: Some("Amiri".into()),
+            default_size: 18,
+        };
+        assert!(db.set_app_appearance(a).is_err());
+        for key in [
+            super::APPEARANCE_HIGH_CONTRAST,
+            super::APPEARANCE_LAYOUT,
+            super::APPEARANCE_DEFAULT_FONT,
+            super::APPEARANCE_DEFAULT_SIZE,
+        ] {
+            assert_eq!(db.get_setting(key).unwrap(), None, "{key}");
+        }
     }
 
     #[test]
@@ -409,6 +428,28 @@ mod tests {
         db.set_setting(super::APPEARANCE_DEFAULT_SIZE, "abc")
             .unwrap();
         assert_eq!(db.app_appearance().unwrap().default_size, 15);
+    }
+
+    #[test]
+    fn layout_is_stored_under_its_serialised_name() {
+        for layout in [Layout::Comfortable, Layout::Compact] {
+            assert_eq!(serde_json::to_value(layout).unwrap(), layout.as_str());
+            assert_eq!(Layout::parse(layout.as_str()), Some(layout));
+        }
+        assert_eq!(Layout::parse("Compact"), None);
+    }
+
+    #[test]
+    fn defaults_match_the_shared_fixture() {
+        // src/ipc/events.test.ts checks APP_APPEARANCE_DEFAULTS against the same file.
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/app-appearance-defaults.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(AppAppearance::default()).unwrap(),
+            fixture
+        );
     }
 
     #[test]

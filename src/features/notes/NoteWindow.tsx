@@ -8,29 +8,17 @@ import { Icon } from "../../components/Icon";
 import { Menu, type MenuItem, type QuickAction } from "../../components/Menu";
 import { commands } from "../../ipc/commands";
 import {
-  onAutomationsChanged,
   onChecklistReset,
   onImagesDropped,
   onSaveAllRequest,
   onNoteAction,
   onNotesChanged,
   onPrivacyChanged,
-  onRemindersChanged,
 } from "../../ipc/events";
 import { onCloseRequested, openExternal } from "../../ipc/window";
-import { PRIVATE_FALLBACK_LABEL, type AppAppearance, type Appearance, type Note } from "../../types/note";
-import type { ReminderView } from "../../types/reminder";
-import {
-  APPEARANCE_DEFAULTS,
-  appClasses,
-  appearanceStyle,
-  effectiveAppearance,
-  isSeeThrough,
-  seeThroughClass,
-} from "../appearance/appearance";
+import type { AppAppearance, Appearance, Note } from "../../types/note";
+import { APPEARANCE_DEFAULTS, appearanceStyle, seeThroughClass } from "../appearance/appearance";
 import { useAppAppearance } from "../appearance/useAppAppearance";
-import { ForgotPin } from "../privacy/ForgotPin";
-import { PinPad } from "../privacy/PinPad";
 import { PrivateLabelDialog } from "../privacy/PrivateLabelDialog";
 import { isLockRefusal, refusalText } from "../privacy/refusal";
 import { UnlockDialog } from "../privacy/UnlockDialog";
@@ -58,6 +46,10 @@ import { chipText } from "./reminderText";
 import { ReminderPopover } from "./ReminderPopover";
 import { NoteNotice, SaveError, SaveIndicator } from "./SaveStatus";
 import { firstFrameLook } from "./firstFrame";
+import { LockedNote } from "./LockedNote";
+import { NoteLoadError } from "./NoteLoadError";
+import { isRepeating, useAutoCompleteRule, useReminder } from "./noteHooks";
+import { noteLook, useSeeThrough } from "./noteLook";
 
 /** Below this width the date hides and the bar keeps only List, B, I, Link. */
 const NARROW = 260;
@@ -76,84 +68,6 @@ const RESET_TEXT = "Checklist reset for this reminder";
 type Popover = "none" | "color" | "menu" | "link";
 
 const NO_APPEARANCE: Appearance = {};
-
-/** How often the chip looks again, so "today" and "overdue" stay right while the window is open. */
-const REMINDER_REFRESH_MS = 60_000;
-
-/**
- * The note's reminder, read again when it changes (reminders-changed for this note, or for
- * several) and every minute. `null` while it has none, or while it cannot be read.
- */
-function useReminder(noteId: string): ReminderView | null {
-  const [reminder, setReminder] = useState<ReminderView | null>(null);
-  useEffect(() => {
-    let live = true;
-    const load = () => {
-      commands.getReminder(noteId).then(
-        (r) => live && setReminder(r),
-        () => undefined,
-      );
-    };
-    load();
-    const timer = setInterval(load, REMINDER_REFRESH_MS);
-    const unlisten = onRemindersChanged(({ noteId: changed }) => {
-      if (changed === null || changed === noteId) load();
-    });
-    return () => {
-      live = false;
-      clearInterval(timer);
-      void unlisten.then((f) => f());
-    };
-  }, [noteId]);
-  return reminder;
-}
-
-/**
- * Automation rule 1, "Mark a checklist done when every item is ticked": read with the settings,
- * and again whenever Settings saves the rules. Off until known.
- */
-function useAutoCompleteRule(): boolean {
-  const [on, setOn] = useState(false);
-  useEffect(() => {
-    let live = true;
-    /** A change heard first is newer than the settings still being read. */
-    let heard = false;
-    commands.getSettings().then(
-      (s) => live && !heard && setOn(s.automations.autoCompleteChecklists),
-      () => undefined,
-    );
-    const unlisten = onAutomationsChanged((a) => {
-      heard = true;
-      setOn(a.autoCompleteChecklists);
-    });
-    return () => {
-      live = false;
-      void unlisten.then((f) => f());
-    };
-  }, []);
-  return on;
-}
-
-/** A repeating reminder makes the note a routine: rule 1 leaves it open (owner decision 2026-11-06). */
-function isRepeating(reminder: ReminderView | null): boolean {
-  const repeat: string | undefined = reminder?.repeat;
-  return repeat !== undefined && repeat !== "none";
-}
-
-/** The native window is transparent only below 100 % opacity; then the page must be too. */
-function useSeeThrough(appearance: Appearance) {
-  const see = isSeeThrough(appearance);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dn-see-through", see);
-    return () => document.documentElement.classList.remove("dn-see-through");
-  }, [see]);
-}
-
-/** Root class and CSS variables of a note: its own values over the app defaults,
- * and the app's high contrast and layout as classes (CSS only, nothing stored). */
-function noteLook(color: string, appearance: Appearance, app: AppAppearance) {
-  return { classes: appClasses(app), style: appearanceStyle(color, effectiveAppearance(appearance, app)) };
-}
 
 /** What the window shows until its note has been read: the note's colour and opacity
  * from the page URL (see `firstFrameLook`), never its text. */
@@ -186,188 +100,12 @@ export function NoteWindow({ noteId }: { noteId: string }) {
   return <LoadedNote note={note} onLocked={setNote} app={app} />;
 }
 
-/**
- * A private note while the privacy lock is on (design "PIN inside a note"): its
- * colour, its label (never its title) and the window controls, with the PIN pad
- * as the body. `onNote` receives the note again after any change; once it is
- * unlocked the editor mounts with the real text.
- */
-function LockedNote({ note, onNote, app }: { note: Note; onNote: (n: Note) => void; app: AppAppearance }) {
-  const label = note.privateLabel || PRIVATE_FALLBACK_LABEL;
-  const look = noteLook(note.color, note.appearance, app);
-  const [forgot, setForgot] = useState(false);
-  useSeeThrough(note.appearance);
-
-  const refresh = useCallback(() => {
-    commands.getNote(note.id).then(onNote, () => undefined);
-  }, [note.id, onNote]);
-
-  useEffect(() => {
-    const unlock = onPrivacyChanged(() => refresh());
-    const changed = onNotesChanged(({ id, kind }) => {
-      if (kind !== "content" && (id === null || id === note.id)) refresh();
-    });
-    return () => {
-      void unlock.then((f) => f());
-      void changed.then((f) => f());
-    };
-  }, [note.id, refresh]);
-
-  // Nothing to save while locked: answer quit, export and lock rounds at once.
-  useEffect(() => {
-    const unlisten = onSaveAllRequest(() => void commands.quitReady(true).catch(() => undefined));
-    return () => void unlisten.then((f) => f());
-  }, []);
-
-  const hide = useCallback(() => void commands.hideNote(note.id).catch(() => undefined), [note.id]);
-
-  useEffect(() => {
-    const unlisten = onNoteAction((action) => {
-      if (action === "hide") hide();
-      else if (action === "archive") void commands.setArchived(note.id, true).catch(() => undefined);
-      else if (action === "trash") void commands.trashNote(note.id).catch(() => undefined);
-      else if (action === "complete") void commands.setNoteCompleted(note.id, true).catch(() => undefined);
-      // Nothing to save while locked: the window can be recreated at once (opacity crossed 100 %).
-      else if (action === "reopen") void commands.reopenNote(note.id).catch(() => undefined);
-    });
-    return () => void unlisten.then((f) => f());
-  }, [hide, note.id]);
-
-  useEffect(() => {
-    const unlisten = onCloseRequested(hide);
-    return () => void unlisten.then((f) => f());
-  }, [hide]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "n" && !e.shiftKey) {
-        e.preventDefault();
-        void commands.createNote();
-      } else if (key === "w") {
-        e.preventDefault();
-        hide();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [hide]);
-
-  const pinButton = note.window.alwaysOnTop && (
-    <button
-      type="button"
-      className="dn-pin-on"
-      aria-label="Always on top is on"
-      title="Always on top · click to turn off"
-      aria-pressed="true"
-      onClick={() => void commands.setAlwaysOnTop(note.id, false).then(refresh, () => undefined)}
-    >
-      <Icon name="pin" size={13} />
-    </button>
-  );
-
-  if (note.window.collapsed) {
-    const expand = () => void commands.setCollapsed(note.id, false).then(refresh, () => undefined);
-    return (
-      <div className={`dn-note is-collapsed${look.classes}`} style={look.style}>
-        <div className="dn-collapsed-strip" data-tauri-drag-region onDoubleClick={expand}>
-          <button type="button" className="dn-tool" aria-label="Expand" aria-expanded="false" title="Expand" onClick={expand}>
-            <Icon name="chevright" />
-          </button>
-          <span className="dn-collapsed-title" data-tauri-drag-region>
-            {label}
-          </span>
-          {pinButton}
-        </div>
-      </div>
-    );
-  }
-
-  // Rolling up or out shows only the label or the PIN pad: nothing to save, no text revealed.
-  const collapse = () => void commands.setCollapsed(note.id, true).then(refresh, () => undefined);
-  return (
-    <div className={`dn-note is-private-locked${seeThroughClass(note.appearance)}${look.classes}`} style={look.style}>
-      <header className="dn-note-header" data-tauri-drag-region>
-        <span className="dn-grip" data-tauri-drag-region>
-          <Icon name="grip" size={14} />
-        </span>
-        <button
-          type="button"
-          className="dn-tool dn-locked-collapse"
-          aria-label="Collapse note"
-          aria-expanded="true"
-          title="Collapse to header"
-          onClick={collapse}
-        >
-          <Icon name="chevdown" />
-        </button>
-        <span className="dn-locked-label" data-tauri-drag-region>
-          {label}
-        </span>
-        <div className="dn-note-controls">
-          <span className="dn-spacer" data-tauri-drag-region />
-          {pinButton}
-          <button type="button" className="dn-tool" aria-label="Hide note" title="Hide note (Ctrl+W)" onClick={hide}>
-            <Icon name="close" />
-          </button>
-        </div>
-      </header>
-      <div className="dn-note-locked">
-        {/* Paused under "Forgot your PIN?": digits typed there must never be sent as a PIN. */}
-        <PinPad onUnlocked={refresh} onForgot={() => setForgot(true)} paused={forgot} />
-      </div>
-      {/* Once proved, the lock is off: privacy-changed brings the note back unlocked. */}
-      {forgot && <ForgotPin onClose={() => setForgot(false)} />}
-    </div>
-  );
-}
-
-/** Design N7: keeps a note look, header still drags and hides. */
-function NoteLoadError({
-  noteId,
-  color,
-  appearance,
-  app,
-}: {
-  noteId: string;
-  color: string;
-  appearance: Appearance;
-  app: AppAppearance;
-}) {
-  useSeeThrough(appearance);
-  const look = noteLook(color, appearance, app);
-  return (
-    <div className={`dn-note${seeThroughClass(appearance)}${look.classes}`} style={look.style}>
-      <header className="dn-note-header" data-tauri-drag-region>
-        <span className="dn-grip" data-tauri-drag-region>
-          <Icon name="grip" size={14} />
-        </span>
-        <span className="dn-spacer" data-tauri-drag-region />
-        <button type="button" className="dn-tool" aria-label="Hide note" onClick={() => void commands.hideNote(noteId)}>
-          <Icon name="close" />
-        </button>
-      </header>
-      <div className="dn-note-failed" role="alert">
-        <span className="dn-failed-icon">
-          <Icon name="alert" size={20} />
-        </span>
-        <div className="dn-failed-title">This note could not be opened.</div>
-        <button type="button" className="dn-pill-ink" onClick={() => void commands.showManager()}>
-          Open manager
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) => void; app: AppAppearance }) {
   const [color, setColor] = useState(note.color);
   const [appearance, setAppearance] = useState(note.appearance);
   useSeeThrough(appearance);
   /** The note's own values over the app defaults: what is drawn, never what is stored. */
-  const shown = useMemo(() => effectiveAppearance(appearance, app), [appearance, app]);
-  const look = { classes: appClasses(app), style: appearanceStyle(color, shown) };
+  const look = useMemo(() => noteLook(color, appearance, app), [color, appearance, app]);
   const [updatedAt, setUpdatedAt] = useState(note.updatedAt);
   const [title, setTitle] = useState(note.title);
   const [pinned, setPinned] = useState(note.window.alwaysOnTop);
@@ -1297,7 +1035,7 @@ function LoadedNote({ note, onLocked, app }: { note: Note; onLocked: (n: Note) =
         <FormatBar
           editor={editor}
           narrow={narrow}
-          appearance={shown}
+          appearance={look.shown}
           onLink={() => openPopover("link")}
           noteId={note.id}
           onImageProblem={showImageProblem}

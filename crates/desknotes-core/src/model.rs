@@ -93,6 +93,22 @@ pub enum Layout {
     Compact,
 }
 
+impl Layout {
+    /// The stored and serialised name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Layout::Comfortable => "comfortable",
+            Layout::Compact => "compact",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Layout> {
+        [Layout::Comfortable, Layout::Compact]
+            .into_iter()
+            .find(|l| l.as_str() == raw)
+    }
+}
+
 /// Smallest and largest app default text size, in px.
 pub const MIN_DEFAULT_SIZE: u8 = 10;
 pub const MAX_DEFAULT_SIZE: u8 = 32;

@@ -7,7 +7,7 @@ use tauri_plugin_opener::OpenerExt as _;
 
 use crate::automation::{self, AUTOMATIONS_CHANGED};
 use crate::error::{IpcError, IpcResult};
-use crate::state::AppState;
+use crate::state::{AppState, SharedDb, with_db};
 use crate::windows::{self, emit_app_appearance_changed, emit_changed};
 
 /// Everything the Settings window shows.
@@ -251,9 +251,14 @@ pub fn set_app_appearance(
     state: State<'_, AppState>,
     appearance: AppAppearance,
 ) -> IpcResult<AppAppearance> {
-    let saved = state.with_db(|db| db.set_app_appearance(appearance))?;
+    let saved = save_app_appearance(state.db(), appearance)?;
     emit_app_appearance_changed(&app, &saved);
     Ok(saved)
+}
+
+/// What `set_app_appearance` stores, and the value it then sends to the windows.
+fn save_app_appearance(db: &SharedDb, appearance: AppAppearance) -> IpcResult<AppAppearance> {
+    with_db(db, |db| db.set_app_appearance(appearance))
 }
 
 /// Settings only. Save the automation rules, run rules 3 and 4 once at once (on
@@ -418,17 +423,22 @@ mod section_tests {
 
 #[cfg(test)]
 mod appearance_tests {
-    use crate::error::IpcError;
+    use super::save_app_appearance as save;
+    use crate::state::{SharedDb, with_db};
     use desknotes_core::{AppAppearance, Database, Layout};
+    use std::sync::Mutex;
 
-    /// What `set_app_appearance` does with the database, as the webview sees it.
-    fn save(db: &Database, a: AppAppearance) -> Result<AppAppearance, IpcError> {
-        Ok(db.set_app_appearance(a)?)
+    fn open() -> SharedDb {
+        Mutex::new(Some(Database::open_in_memory().unwrap()))
+    }
+
+    fn stored(db: &SharedDb) -> AppAppearance {
+        with_db(db, |db| db.app_appearance()).unwrap()
     }
 
     #[test]
     fn a_refused_appearance_is_a_validation_error_and_stores_nothing() {
-        let db = Database::open_in_memory().unwrap();
+        let db = open();
         let bad_font = AppAppearance {
             high_contrast: true,
             layout: Layout::Compact,
@@ -441,12 +451,12 @@ mod appearance_tests {
             ..AppAppearance::default()
         };
         assert_eq!(save(&db, too_big).unwrap_err().code, "validation");
-        assert_eq!(db.app_appearance().unwrap(), AppAppearance::default());
+        assert_eq!(stored(&db), AppAppearance::default());
     }
 
     #[test]
     fn a_saved_appearance_is_returned_normalised_and_serialises_camel_case() {
-        let db = Database::open_in_memory().unwrap();
+        let db = open();
         let saved = save(
             &db,
             AppAppearance {
@@ -458,7 +468,7 @@ mod appearance_tests {
         )
         .unwrap();
         assert_eq!(saved.default_font.as_deref(), Some("Ubuntu"));
-        assert_eq!(db.app_appearance().unwrap(), saved);
+        assert_eq!(stored(&db), saved);
         assert_eq!(
             serde_json::to_value(&saved).unwrap(),
             serde_json::json!({
