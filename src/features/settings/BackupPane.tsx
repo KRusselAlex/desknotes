@@ -63,9 +63,12 @@ export function BackupPane({
       const skipped = result.skipped
         ? ` ${result.skipped} damaged ${result.skipped === 1 ? "note was" : "notes were"} left out.`
         : "";
+      const reminders = result.damagedReminders
+        ? ` ${result.damagedReminders} damaged ${result.damagedReminders === 1 ? "reminder was" : "reminders were"} left out.`
+        : "";
       setNotice({
-        kind: result.skipped ? "error" : "ok",
-        text: `Backup saved: ${result.count} ${result.count === 1 ? "note" : "notes"} in ${result.path}.${skipped}`,
+        kind: result.skipped || result.damagedReminders ? "error" : "ok",
+        text: `Backup saved: ${result.count} ${result.count === 1 ? "note" : "notes"} in ${result.path}.${skipped}${reminders}`,
       });
     }, "export");
 

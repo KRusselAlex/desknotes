@@ -21,6 +21,8 @@ pub struct ExportResult {
     pub count: usize,
     /// Notes left out because their stored content is unreadable.
     pub skipped: usize,
+    /// Notes exported without their reminder, because its stored row is unreadable.
+    pub damaged_reminders: usize,
     pub exported_at: i64,
 }
 
@@ -101,6 +103,7 @@ pub async fn export_backup(
         path: path.display().to_string(),
         count: export.backup.notes.len(),
         skipped: export.skipped.len(),
+        damaged_reminders: export.damaged_reminders.len(),
         exported_at: at,
     }))
 }

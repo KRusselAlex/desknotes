@@ -175,6 +175,8 @@ export interface ExportResult {
   path: string;
   count: number;
   skipped: number;
+  /** Notes exported without their reminder, because its stored row is unreadable. */
+  damagedReminders: number;
   exportedAt: number;
 }
 

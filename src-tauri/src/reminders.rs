@@ -56,8 +56,8 @@ pub const REMINDER_ACTIONS: &[(&str, &str)] = &[
 pub const SUMMARY_ACTIONS: &[(&str, &str)] = &[("default", "")];
 
 /// The title a reminder may show: "Private note" while the lock withholds the note
-/// (ruling R6), else the real title (possibly empty). Used by the notification and the
-/// manager's Reminders tab alike.
+/// (ruling R6), else the real title (possibly empty). The manager's Reminders tab shows
+/// the note's private label instead (`ReminderRow::locked_label`).
 pub fn masked_title(title: &str, locked: bool) -> &str {
     if locked {
         PRIVATE_FALLBACK_LABEL

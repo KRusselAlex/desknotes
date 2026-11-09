@@ -119,13 +119,16 @@ pub struct ReminderRow {
     pub title: String,
     pub color: String,
     pub private: bool,
+    /// The note's neutral label, or "Private note" when it has none: what the manager
+    /// shows instead of `title` while `locked` (owner decision 2026-11-09).
+    pub locked_label: String,
     pub repeat: Repeat,
     /// UTC ms; the snooze if there is one, else the occurrence.
     pub effective_due: i64,
     /// `effective_due <= now`: due and not dismissed or rescheduled yet.
     pub overdue: bool,
-    /// The lock currently withholds this private note: the shell shows "Private note"
-    /// instead of `title`, and the core's search matched the label, not the title.
+    /// The lock currently withholds this private note: the shell shows `locked_label`
+    /// instead of `title`, and the core's search matched that label, not the title.
     pub locked: bool,
     /// The note is archived: it has no window, so the manager shows it in Archived.
     pub archived: bool,

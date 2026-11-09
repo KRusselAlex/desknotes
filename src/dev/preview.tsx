@@ -40,7 +40,7 @@
 // note keeps the reminder seeded for it above, if any (a2's is two hours from now).
 // The manager's Reminders tab (R2) lists them: click the tab; a1 shows as overdue, a2 and a3
 // fall under Today and Tomorrow (or Today only, near midnight), r1 under Later. With
-// ?w=manager&locked=private, a2 is private and locked, so its row reads "Private note".
+// ?w=manager&locked=private, a2 is private and locked, so its row reads its private label.
 //
 // Automations (DES-42): ?w=settings&section=automations. Every rule starts off with the default days (7 and 30), and changes
 // emit automations-changed like the native side. "Empty old trash" always counts 4 notes.
@@ -589,7 +589,7 @@ mockIPC(
         return null;
       case "export_backup":
         if (anyWithheld()) throw notLocked();
-        return { path: "~/Documents/desknotes-backup.json", count: notes.length, skipped: 0, exportedAt: Date.now() };
+        return { path: "~/Documents/desknotes-backup.json", count: notes.length, skipped: 0, damagedReminders: 0, exportedAt: Date.now() };
       case "choose_backup":
         if (anyWithheld()) throw notLocked();
         return { fileName: "desknotes-backup.json", backupCount: notes.length, currentCount: notes.length, exportedAt: now - 24 * H };
@@ -635,7 +635,7 @@ mockIPC(
           if (q && !searched.toLowerCase().includes(q)) continue;
           rows.push({
             noteId,
-            title: locked ? PRIVATE_FALLBACK_LABEL : n.title,
+            title: locked ? searched : n.title,
             color: n.color,
             repeat: r.repeat,
             dueAt: r.dueAt,

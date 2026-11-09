@@ -26,12 +26,43 @@ describe("BackupPane", () => {
     expect(screen.getByText("Last backup: never")).toBeInTheDocument();
   });
 
+  it("says how many damaged notes and reminders were left out, as an error", async () => {
+    vi.mocked(commands.exportBackup).mockResolvedValue({
+      path: "/home/me/b.json",
+      count: 3,
+      skipped: 1,
+      damagedReminders: 2,
+      exportedAt: 123,
+    });
+    render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /Export backup/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Backup saved: 3 notes in /home/me/b.json. 1 damaged note was left out. 2 damaged reminders were left out.",
+    );
+  });
+
+  it("reports one damaged reminder alone", async () => {
+    vi.mocked(commands.exportBackup).mockResolvedValue({
+      path: "/home/me/b.json",
+      count: 3,
+      skipped: 0,
+      damagedReminders: 1,
+      exportedAt: 123,
+    });
+    render(<BackupPane lastBackupAt={null} onExported={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: /Export backup/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Backup saved: 3 notes in /home/me/b.json. 1 damaged reminder was left out.",
+    );
+  });
+
   it("exports and reports where the file was saved", async () => {
     const onExported = vi.fn();
     vi.mocked(commands.exportBackup).mockResolvedValue({
       path: "/home/me/desknotes-2026-11-01.json",
       count: 3,
       skipped: 0,
+      damagedReminders: 0,
       exportedAt: 123,
     });
     render(<BackupPane lastBackupAt={null} onExported={onExported} />);
@@ -99,7 +130,7 @@ describe("BackupPane", () => {
 
   describe("while private notes are locked (R11)", () => {
     const locked = () => new CommandError("private_locked", "private notes are locked");
-    const exported = { path: "/home/me/b.json", count: 4, skipped: 0, exportedAt: 9 };
+    const exported = { path: "/home/me/b.json", count: 4, skipped: 0, damagedReminders: 0, exportedAt: 9 };
 
     it("export_while_locked_asks_pin_then_exports", async () => {
       const onExported = vi.fn();

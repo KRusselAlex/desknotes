@@ -766,9 +766,12 @@ real-app check are.
   - A desktop notification shows the note's **title**, or "Private note" while it is
     locked, with buttons: 10 min, 1 h, Dismiss.
   - Clicking the notification opens the note.
-  - The manager has a Reminders tab.
-  - Reminders missed while DeskNotes was closed come as one summary notification at
-    start-up. A click on it opens the manager.
+  - The manager has a Reminders tab. A locked private note's row shows its private label
+    ("Private note" if it has none), never its title.
+  - Reminders missed while DeskNotes was closed, or while the computer slept, come as at
+    most five notifications plus one summary for the rest. A click on the summary opens
+    the manager; a new summary replaces the one before.
+  - After a backup is restored, every reminder notification still on screen is closed.
 - **How it works:**
   - All time rules are pure functions in `crates/desknotes-core/src/reminders.rs`. The
     reminder keeps the wall-clock time, so a time-zone change keeps it.
@@ -849,7 +852,9 @@ real-app check are.
 - **How it works:**
   - Both export and restore first ask every open note to save.
   - Export writes to a temporary file, then moves it into place. It includes the images
-    the notes use (format 6, at most 300 MiB).
+    the notes use (format 6, at most 300 MiB). A note whose stored text, or reminder,
+    cannot be read is left out (the reminder alone, for the second), and the notice says
+    how many.
   - Restore writes `backups/pre-restore-<ms>.db`, then replaces everything in one
     transaction. If "Empty old trash" was on, the same transaction switches it off
     (`purge_trash_off_by_restore`), because restored notes keep their old trash dates.

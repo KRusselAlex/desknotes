@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::error::{IpcError, IpcResult};
-use crate::reminders::{self, masked_title};
+use crate::reminders;
 use crate::state::AppState;
 
 /// A note's reminder as the reminder popover and the chip need it.
@@ -30,8 +30,9 @@ pub struct ReminderView {
     pub overdue: bool,
 }
 
-/// One row of the manager's Reminders tab. `title` is already "Private note" while
-/// the lock withholds the note (ruling R6).
+/// One row of the manager's Reminders tab. `title` is already the note's private label
+/// ("Private note" if it has none) while the lock withholds the note (ruling R6, owner
+/// decision 2026-11-09).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReminderListRow {
@@ -88,7 +89,8 @@ fn set_in<Tz: TimeZone>(
 
 fn list_row(r: ReminderRow) -> ReminderListRow {
     ReminderListRow {
-        title: masked_title(&r.title, r.locked).to_owned(),
+        // The note's own label while locked, as the manager's Notes tab shows it.
+        title: if r.locked { r.locked_label } else { r.title },
         note_id: r.note_id,
         color: r.color,
         repeat: r.repeat,
@@ -279,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn list_masks_locked_titles_only() {
+    fn list_shows_the_private_label_for_locked_notes_only() {
         let (db, open) = db_with_note("Dentist");
         let private = db.create_note(Some("#ffd6e0")).unwrap().id;
         let doc = serde_json::json!({"type":"doc","content":[{"type":"paragraph","content":[
@@ -303,15 +305,29 @@ mod tests {
         db.set_new_pin("482913").unwrap();
         db.set_privacy_locked(true, &[]);
         let rows = list_in(&db, "", now()).unwrap();
-        assert_eq!(
-            (rows[1].title.as_str(), rows[1].locked),
-            ("Private note", true)
-        );
+        assert_eq!((rows[1].title.as_str(), rows[1].locked), ("Money", true));
         let json = serde_json::to_string(&rows).unwrap();
         assert!(!json.contains("Bank"), "{json}");
         assert!(json.contains("\"noteId\"") && json.contains("\"dueAt\""));
-        // Search cannot probe the hidden title.
+        // Search cannot probe the hidden title; it finds the label.
         assert!(list_in(&db, "bank", now()).unwrap().is_empty());
+        assert_eq!(list_in(&db, "money", now()).unwrap().len(), 1);
+
+        // A private note without a label reads "Private note" while locked.
+        db.set_privacy_locked(false, &[]);
+        let unlabelled = db.create_note(None).unwrap().id;
+        let doc = serde_json::json!({"type":"doc","content":[{"type":"paragraph","content":[
+            {"type":"text","text":"Doctor letter"}]}]});
+        db.save_content(&unlabelled, &doc.to_string()).unwrap();
+        db.set_private(&unlabelled, true, "").unwrap();
+        set(&db, &unlabelled, "2026-11-04", "15:30", "none").unwrap();
+        db.set_privacy_locked(true, &[]);
+        let rows = list_in(&db, "", now()).unwrap();
+        assert_eq!(
+            (rows[2].title.as_str(), rows[2].locked),
+            ("Private note", true)
+        );
+        db.trash_note(&unlabelled).unwrap();
 
         // An empty note is listed with an empty title; the manager shows "Empty note".
         let empty = db.create_note(None).unwrap().id;

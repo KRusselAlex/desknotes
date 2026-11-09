@@ -27,6 +27,8 @@ pub const LAST_BACKUP_AT: &str = "last_backup_at";
 pub struct Export {
     pub backup: Backup,
     pub skipped: Vec<String>,
+    /// Notes exported without their reminder, because its stored row is unreadable.
+    pub damaged_reminders: Vec<String>,
 }
 
 impl Database {
@@ -49,7 +51,8 @@ impl Database {
         max_bytes: usize,
     ) -> CoreResult<Export> {
         self.refuse_if_any_private_locked()?;
-        // A reminder row that cannot be read back is left out, as if the note had none.
+        // A reminder row that cannot be read back is left out, as if the note had none,
+        // and reported in `damaged_reminders`.
         let mut reminders: std::collections::HashMap<String, BackupReminder> = self
             .all_reminders()?
             .into_iter()
@@ -104,6 +107,20 @@ impl Database {
                 },
             ))
         })?;
+        let damaged_reminders: Vec<String> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT note_id FROM reminders ORDER BY note_id")?;
+            let ids = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            let mut damaged = Vec::new();
+            for id in ids {
+                let id = id?;
+                if !reminders.contains_key(&id) {
+                    damaged.push(id);
+                }
+            }
+            damaged
+        };
         let (mut notes, mut skipped) = (Vec::new(), Vec::new());
         for row in rows {
             let (id, raw, mut note) = row?;
@@ -125,7 +142,11 @@ impl Database {
             images: Vec::new(),
         };
         self.add_images_to_backup(&mut backup, max_bytes)?;
-        Ok(Export { backup, skipped })
+        Ok(Export {
+            backup,
+            skipped,
+            damaged_reminders,
+        })
     }
 
     /// The images the exported notes use, each once, in id order. Refuses, before
@@ -759,6 +780,34 @@ mod tests {
         let export = db.export_backup("0.1.0").unwrap();
         assert_eq!(export.skipped, vec![a]);
         assert_eq!(export.backup.notes.len(), 2);
+        assert!(export.damaged_reminders.is_empty());
+    }
+
+    #[test]
+    fn unreadable_reminders_are_reported_not_hidden() {
+        let db = Database::open_in_memory().unwrap();
+        let (a, b, _) = sample(&db);
+        for id in [&a, &b] {
+            db.conn
+                .execute(
+                    "INSERT INTO reminders (note_id, local_date, local_time, repeat, due_at)
+                     VALUES (?1, '2026-11-20', '09:00', 'none', 1795000000000)",
+                    [id],
+                )
+                .unwrap();
+        }
+        db.conn
+            .execute(
+                "UPDATE reminders SET repeat = 'hourly' WHERE note_id = ?1",
+                [&a],
+            )
+            .unwrap();
+        let export = db.export_backup("0.1.0").unwrap();
+        assert_eq!(export.damaged_reminders, vec![a.clone()]);
+        assert!(export.skipped.is_empty(), "the note itself is exported");
+        let exported = |id: &str| export.backup.notes.iter().find(|n| n.id == id).unwrap();
+        assert!(exported(&a).reminder.is_none());
+        assert!(exported(&b).reminder.is_some());
     }
 
     // ---- version 6: images ----
