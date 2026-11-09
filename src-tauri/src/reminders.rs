@@ -266,6 +266,12 @@ pub struct Scheduler {
     /// The database was replaced (a backup restored): re-anchor at the next pass, as
     /// when the UTC offset changes, since its due times may come from another zone.
     reanchor_pending: AtomicBool,
+    /// The computer resumed from sleep: the next pass is a burst again, capped at
+    /// [`STARTUP_LIMIT`] like the one at start (owner decision 2026-11-09).
+    resumed: AtomicBool,
+    /// Notes whose reminder the person changed since the last pass: a fire sent but
+    /// not recorded for them is dropped, so it can never mark the new reminder fired.
+    changed_notes: Mutex<HashSet<String>>,
 }
 
 impl Scheduler {
@@ -278,7 +284,23 @@ impl Scheduler {
             to_close: Mutex::new(Vec::new()),
             lock_engaged: AtomicBool::new(false),
             reanchor_pending: AtomicBool::new(false),
+            resumed: AtomicBool::new(false),
+            changed_notes: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// The database was replaced: every notification on screen is about the old one, so
+    /// all are closed at the next pass, and reminders are re-anchored.
+    fn database_replaced(&self) {
+        let ids: Vec<u32> = lock(&self.shown).drain().map(|(id, _)| id).collect();
+        lock(&self.to_close).extend(ids);
+        self.request_reanchor();
+    }
+
+    /// The person changed the note's reminder (set, removed, snoozed, dismissed).
+    fn reminder_changed(&self, note_id: &str) {
+        self.forget_note(note_id);
+        lock(&self.changed_notes).insert(note_id.to_owned());
     }
 
     /// Re-anchor every reminder at the next pass, and wake now.
@@ -384,7 +406,7 @@ pub fn wake(app: &AppHandle) {
 /// notifications, tell every window and wake the scheduler.
 pub fn changed(app: &AppHandle, note_id: Option<&str>) {
     if let (Some(scheduler), Some(id)) = (app.try_state::<Scheduler>(), note_id) {
-        scheduler.forget_note(id);
+        scheduler.reminder_changed(id);
     }
     windows::emit_reminders_changed(app, note_id);
     wake(app);
@@ -399,10 +421,19 @@ pub fn on_locked(app: &AppHandle) {
     }
 }
 
-/// Re-anchor every reminder at the next pass (the database was replaced by a backup).
+/// The database was replaced by a backup: close every notification about the old one
+/// and re-anchor every reminder at the next pass.
 pub fn reanchor(app: &AppHandle) {
     if let Some(scheduler) = app.try_state::<Scheduler>() {
-        scheduler.request_reanchor();
+        scheduler.database_replaced();
+    }
+}
+
+/// The computer resumed from sleep: wake now, with the start-up cap on what is sent.
+pub fn resumed(app: &AppHandle) {
+    if let Some(scheduler) = app.try_state::<Scheduler>() {
+        scheduler.resumed.store(true, Ordering::Release);
+        scheduler.wake();
     }
 }
 
@@ -490,6 +521,11 @@ fn pass<D: DbAccess, Tz: TimeZone>(
     offset: i32,
     log: &mut dyn FnMut(&str),
 ) -> bool {
+    // After sleep, what came due meanwhile arrives as a capped burst, as at start.
+    if scheduler.resumed.swap(false, Ordering::AcqRel) {
+        run.first = true;
+        run.burst_sent = 0;
+    }
     // Out-of-date notifications (their reminder changed) go first.
     scheduler.close_stale(log);
     // R10: the lock engaged. If the check fails the flag is kept for the next pass.
@@ -508,6 +544,9 @@ fn pass<D: DbAccess, Tz: TimeZone>(
 
     // Fires sent but not recorded: record them now. A reminder changed since makes
     // `mark_fired` a no-op, which also ends the entry. Failures were logged already.
+    let changed_notes = std::mem::take(&mut *lock(&scheduler.changed_notes));
+    run.unrecorded
+        .retain(|(note_id, _)| !changed_notes.contains(note_id));
     if !run.unrecorded.is_empty() {
         let pending: Vec<(String, i64)> = run.unrecorded.iter().cloned().collect();
         for fire in pending {
@@ -580,6 +619,15 @@ fn pass<D: DbAccess, Tz: TimeZone>(
             // of date and their buttons do nothing, so take them away.
             scheduler.forget_note(note_id);
             scheduler.close_stale(log);
+        } else {
+            // A new summary replaces the one before, so `shown` cannot grow with
+            // summaries whose NotificationClosed never came.
+            let old: Vec<u32> = lock(&scheduler.shown)
+                .iter()
+                .filter(|(_, s)| s.reminder.is_none())
+                .map(|(id, _)| *id)
+                .collect();
+            old.into_iter().for_each(|id| scheduler.close(id, log));
         }
         lock(&scheduler.shown).insert(
             id,
@@ -657,7 +705,7 @@ fn handle_action<D: DbAccess, Tz: TimeZone>(
         (Some((note_id, due)), Some(action)) => {
             match db.db(|db| apply_if_current(db, &note_id, due, action, now, tz)) {
                 Ok(true) => {
-                    scheduler.forget_note(&note_id);
+                    scheduler.reminder_changed(&note_id);
                     ActionOutcome::Changed(note_id)
                 }
                 Ok(false) => ActionOutcome::Ignored,
@@ -1125,6 +1173,96 @@ mod tests {
         tick(&db, &s, &mut run, &mut log);
         assert_eq!(fake.summaries().len(), 6);
         assert!(log.is_empty());
+    }
+
+    #[test]
+    fn after_sleep_what_came_due_is_capped_like_at_start() {
+        let db = Database::open_in_memory().unwrap();
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log); // start: nothing due
+        assert!(!run.first);
+        let ids: Vec<String> = (0..7)
+            .map(|n| note_with_due_reminder(&db, &format!("Note {n}")))
+            .collect();
+        s.resumed.store(true, Ordering::Release);
+        assert!(tick(&db, &s, &mut run, &mut log));
+        let summaries = fake.summaries();
+        assert_eq!(summaries.len(), 6, "{summaries:?}");
+        assert_eq!(summaries[5], "2 more reminders");
+        assert!(ids.iter().all(|id| fired(&db, id)));
+        assert!(!run.first, "only the pass after waking is capped");
+    }
+
+    #[test]
+    fn without_a_resume_every_due_reminder_is_sent() {
+        let db = Database::open_in_memory().unwrap();
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        for n in 0..7 {
+            note_with_due_reminder(&db, &format!("Note {n}"));
+        }
+        tick(&db, &s, &mut run, &mut log);
+        assert_eq!(fake.summaries().len(), 7);
+    }
+
+    #[test]
+    fn a_new_summary_closes_the_one_before() {
+        let db = Database::open_in_memory().unwrap();
+        for n in 0..7 {
+            note_with_due_reminder(&db, &format!("Note {n}"));
+        }
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        let first_summary = fake.last_id();
+        for n in 0..7 {
+            note_with_due_reminder(&db, &format!("Later {n}"));
+        }
+        s.resumed.store(true, Ordering::Release);
+        tick(&db, &s, &mut run, &mut log);
+        assert!(fake.state().closed.contains(&first_summary));
+        let summaries = lock(&s.shown)
+            .values()
+            .filter(|shown| shown.reminder.is_none())
+            .count();
+        assert_eq!(summaries, 1);
+    }
+
+    #[test]
+    fn a_restore_closes_every_notification_at_the_next_pass() {
+        let db = Database::open_in_memory().unwrap();
+        note_with_due_reminder(&db, "Dentist");
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        let id = fake.last_id();
+        s.database_replaced();
+        assert!(lock(&s.shown).is_empty(), "its buttons do nothing from now");
+        tick(&db, &s, &mut run, &mut log);
+        assert_eq!(fake.state().closed, [id]);
+    }
+
+    #[test]
+    fn a_reminder_changed_by_the_person_drops_its_unrecorded_fire() {
+        let db = Database::open_in_memory().unwrap();
+        let id = note_with_due_reminder(&db, "Dentist");
+        let due = db.reminder(&id).unwrap().unwrap().effective_due();
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        run.first = false;
+        // An earlier fire at the same due time was sent but could not be recorded.
+        run.unrecorded.insert((id.clone(), due));
+        s.reminder_changed(&id);
+        tick(&db, &s, &mut run, &mut log);
+        assert!(run.unrecorded.is_empty());
+        assert_eq!(
+            fake.summaries(),
+            ["Dentist"],
+            "the changed reminder is announced"
+        );
+        assert!(fired(&db, &id));
     }
 
     /// A note titled "Routine" with one ticked checklist item and a daily reminder at

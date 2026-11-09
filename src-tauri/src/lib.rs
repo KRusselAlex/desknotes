@@ -30,7 +30,7 @@ fn start_lock_triggers(app: &tauri::AppHandle) {
         move || {
             privacy::lock_automatically(&on_event);
         },
-        move || reminders::wake(&on_resume),
+        move || reminders::resumed(&on_resume),
     );
     let on_tick = app.clone();
     platform::lock_triggers::watch_inactivity(move || privacy::lock_if_inactive(&on_tick));
