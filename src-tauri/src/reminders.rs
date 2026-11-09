@@ -630,6 +630,12 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         Ok(items) => {
             run.offset = Some(offset);
             run.unavailable = false;
+            // A restore landed after the check above: what is unrecorded is about the
+            // old database, and must not hold back (or later clear) the new one's fires.
+            if run.epoch != gathered_epoch {
+                run.unrecorded.clear();
+                run.epoch = gathered_epoch;
+            }
             items
         }
         Err(e) => {
@@ -672,9 +678,6 @@ fn pass<D: DbAccess, Tz: TimeZone>(
             }
         };
         if let Some((note_id, _)) = &out.reminder {
-            if run.first {
-                run.burst_sent += 1;
-            }
             // A new occurrence (ruling R5): the reminder's older notifications are out
             // of date and their buttons do nothing, so take them away.
             scheduler.forget_note(note_id);
@@ -731,6 +734,10 @@ fn pass<D: DbAccess, Tz: TimeZone>(
                 ));
                 run.unrecorded.extend(out.fires.iter().cloned());
             }
+        }
+        // Counted once it stays sent: one closed for a replaced database does not count.
+        if out.reminder.is_some() && run.first {
+            run.burst_sent += 1;
         }
         changed = true;
     }
@@ -1391,6 +1398,44 @@ mod tests {
         assert!(fired(&db, &id));
     }
 
+    /// A restore lands before the first database call, and the second call (recording
+    /// the fire) fails, as with a full disk.
+    struct RestoredThenFailing<'a> {
+        db: &'a Database,
+        scheduler: &'a Scheduler,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl DbAccess for RestoredThenFailing<'_> {
+        fn db<T>(&self, f: impl FnOnce(&Database) -> CoreResult<T>) -> IpcResult<T> {
+            match self.calls.fetch_add(1, Ordering::AcqRel) {
+                0 => self.scheduler.database_replaced(),
+                1 => return Err(crate::error::IpcError::new("io", "disk full")),
+                _ => {}
+            }
+            Ok(f(self.db)?)
+        }
+    }
+
+    #[test]
+    fn a_fire_from_the_restored_database_left_unrecorded_is_not_sent_twice() {
+        let db = Database::open_in_memory().unwrap();
+        let id = note_with_due_reminder(&db, "Dentist");
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        run.first = false;
+        let flaky = RestoredThenFailing {
+            db: &db,
+            scheduler: &s,
+            calls: Default::default(),
+        };
+        tick(&flaky, &s, &mut run, &mut log);
+        assert!(!fired(&db, &id), "recording failed");
+        tick(&db, &s, &mut run, &mut log);
+        assert_eq!(fake.summaries(), ["Dentist"], "sent once");
+        assert!(fired(&db, &id), "recorded at the retry");
+    }
+
     #[test]
     fn a_restore_drops_fires_left_unrecorded_from_the_old_database() {
         let db = Database::open_in_memory().unwrap();
@@ -1421,7 +1466,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reminder_changed_by_the_person_drops_its_unrecorded_fire() {
+    fn a_reminder_changed_by_the_person_stops_retrying_its_unrecorded_fire() {
         let db = Database::open_in_memory().unwrap();
         let id = note_with_due_reminder(&db, "Dentist");
         let due = db.reminder(&id).unwrap().unwrap().effective_due();
