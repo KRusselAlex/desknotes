@@ -197,7 +197,12 @@ pub async fn restore_backup(
         .app_data_dir()
         .map_err(|e| IpcError::new("io", e.to_string()))?
         .join("backups");
-    let copy = state.with_db(|db| db.restore_backup(&pending.backup, &safety_dir))?;
+    // Inside the same call: no reminder pass can read the new database as the old one.
+    let copy = state.with_db(|db| {
+        let copy = db.restore_backup(&pending.backup, &safety_dir)?;
+        crate::reminders::database_replaced(&app);
+        Ok(copy)
+    })?;
     // A restore turns "Empty old trash" off: an open Settings window must hear of it, or
     // its next save would carry the old rules.
     match state.with_db(|db| db.automations()) {
@@ -207,8 +212,6 @@ pub async fn restore_backup(
             e.message
         ),
     }
-    // The restored due times may come from another time zone: re-anchor them.
-    crate::reminders::reanchor(&app);
     let (notes, _) = state.with_db(|db| db.notes_to_show())?;
     for note in &notes {
         windows::open_note(&app, note)?;

@@ -151,8 +151,9 @@ mod linux {
                     inhibitor = None;
                 }
                 Some(false) => {
-                    inhibitor = take_inhibitor(&manager);
+                    // First: logind is busy just after resume, and the inhibitor waits on it.
                     on_resume();
+                    inhibitor = take_inhibitor(&manager);
                 }
                 None => {}
             }

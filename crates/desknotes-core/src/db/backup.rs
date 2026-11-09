@@ -107,20 +107,15 @@ impl Database {
                 },
             ))
         })?;
-        let damaged_reminders: Vec<String> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT note_id FROM reminders ORDER BY note_id")?;
-            let ids = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            let mut damaged = Vec::new();
-            for id in ids {
-                let id = id?;
-                if !reminders.contains_key(&id) {
-                    damaged.push(id);
-                }
-            }
-            damaged
-        };
+        let stored_reminders: Vec<String> = self
+            .conn
+            .prepare("SELECT note_id FROM reminders ORDER BY note_id")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?;
+        let unreadable: Vec<String> = stored_reminders
+            .into_iter()
+            .filter(|id| !reminders.contains_key(id))
+            .collect();
         let (mut notes, mut skipped) = (Vec::new(), Vec::new());
         for row in rows {
             let (id, raw, mut note) = row?;
@@ -133,6 +128,11 @@ impl Database {
                 Err(_) => skipped.push(id),
             }
         }
+        // A note left out entirely is reported once, in `skipped`.
+        let damaged_reminders = unreadable
+            .into_iter()
+            .filter(|id| !skipped.contains(id))
+            .collect();
         let mut backup = Backup {
             format: BACKUP_FORMAT.into(),
             version: BACKUP_VERSION,
@@ -808,6 +808,17 @@ mod tests {
         let exported = |id: &str| export.backup.notes.iter().find(|n| n.id == id).unwrap();
         assert!(exported(&a).reminder.is_none());
         assert!(exported(&b).reminder.is_some());
+
+        // A note whose text is unreadable too is left out, and reported once.
+        db.conn
+            .execute(
+                "UPDATE notes SET content_json = '{oops' WHERE id = ?1",
+                [&a],
+            )
+            .unwrap();
+        let export = db.export_backup("0.1.0").unwrap();
+        assert_eq!(export.skipped, vec![a]);
+        assert!(export.damaged_reminders.is_empty());
     }
 
     // ---- version 6: images ----

@@ -777,7 +777,12 @@ real-app check are.
     reminder keeps the wall-clock time, so a time-zone change keeps it.
   - The scheduler thread in `src-tauri/src/reminders.rs` sleeps until the next due time,
     60 s at most.
-  - It wakes at once when a reminder changes, at start, and on resume from sleep.
+  - It wakes at once when a reminder changes, at start, and on resume from sleep. It
+    also notices a sleep by itself (wall-clock time ran more than 30 s past the
+    monotonic clock), since logind's resume signal can come after the first pass.
+  - A restore tells the scheduler inside the same database call (`database_replaced`,
+    which bumps an epoch). A pass reads the epoch inside its own database calls, so a
+    notification gathered from the replaced database is closed and never recorded.
   - It re-anchors reminders when the UTC offset changes, and never sends a reminder
     twice.
   - Notifications go over D-Bus (`platform/notify.rs`), with one connection kept open.

@@ -89,3 +89,10 @@ Not checked in the real app (unit tests only):
 - Notifications closing after a restore. Clicks do not reach the Settings window here.
 - A new summary replacing the old one.
 - The export notice for a damaged reminder.
+
+Review findings fixed in this batch (unit tests, each failing without its fix):
+- **Restore while a pass is sending, or waiting for the database.** The send is closed
+  and not recorded, or is sent from the new database and kept.
+- **Sleep noticed from the clocks** when the resume signal comes late.
+- **A fire dropped because the reminder changed** still reaches rule 2.
+- **A note left out of an export** is reported once.
