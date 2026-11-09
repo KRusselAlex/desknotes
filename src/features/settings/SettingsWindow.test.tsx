@@ -743,6 +743,14 @@ describe("SettingsWindow", () => {
       return screen.findByRole("heading", { name: "Appearance" });
     };
 
+    it("switches to Appearance when another window asks", async () => {
+      render(<SettingsWindow />);
+      await waitFor(() => expect(events.section).not.toBeNull());
+      act(() => events.section!("appearance"));
+      expect(screen.getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-current", "page");
+      expect(await screen.findByRole("heading", { name: "Appearance" })).toBeInTheDocument();
+    });
+
     it("opens at ?section=appearance", async () => {
       window.history.replaceState(null, "", "/?section=appearance");
       try {
@@ -808,7 +816,7 @@ describe("SettingsWindow", () => {
       expect(commands.setAppAppearance).toHaveBeenCalledWith({ ...defaults, defaultFont: null });
     });
 
-    it("steps the size by one and stops at 10 and 32", async () => {
+    it("disables the smaller button at 10 and steps the size up by one", async () => {
       vi.mocked(commands.getSettings).mockResolvedValue({ ...settings, appAppearance: { ...defaults, defaultSize: 10 } });
       vi.mocked(commands.setAppAppearance).mockImplementation(async (a) => a);
       await openAppearance();
@@ -866,6 +874,24 @@ describe("SettingsWindow", () => {
       await userEvent.click(sw);
       expect(await screen.findByRole("alert")).toHaveTextContent("The default size must be 10 to 32.");
       expect(sw).toHaveAttribute("aria-checked", "false");
+    });
+
+    it("drops a change queued behind a save that fails, and shows the saved value", async () => {
+      // The queued value is the whole appearance built on the refused one, so it would resend it.
+      let refuse: (e: Error) => void = () => undefined;
+      vi.mocked(commands.setAppAppearance).mockImplementationOnce(
+        () => new Promise((_, reject) => (refuse = reject)),
+      );
+      await openAppearance();
+      const sw = screen.getByRole("switch", { name: "High-contrast notes" });
+      await userEvent.click(sw);
+      await userEvent.click(screen.getByRole("radio", { name: "Compact" }));
+      expect(screen.getByRole("radio", { name: "Compact" })).toHaveAttribute("aria-checked", "true");
+      act(() => refuse(new Error("no")));
+      expect(await screen.findByRole("alert")).toHaveTextContent("no");
+      expect(commands.setAppAppearance).toHaveBeenCalledTimes(1);
+      expect(sw).toHaveAttribute("aria-checked", "false");
+      expect(screen.getByRole("radio", { name: "Comfortable" })).toHaveAttribute("aria-checked", "true");
     });
 
     it("clears the error after the next save works", async () => {
