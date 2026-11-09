@@ -2529,9 +2529,53 @@ describe("NoteWindow", () => {
         });
         expect(root.style.getPropertyValue("--note-bg")).toBe("rgba(207, 232, 255, 0.85)");
         expect(document.documentElement).toHaveClass("dn-see-through");
+        expect(root).not.toHaveClass("is-high-contrast");
       } finally {
         window.history.replaceState(null, "", before);
       }
+    });
+
+    it("draws the first frame in high contrast when the app is in it (DES-35)", async () => {
+      const before = window.location.href;
+      window.history.replaceState(null, "", "/?color=%23cfe8ff&hc=1");
+      try {
+        vi.mocked(commands.getNote).mockReturnValue(new Promise(() => undefined));
+        const { container } = render(<NoteWindow noteId={ID} />);
+        const root = await waitFor(() => {
+          const el = container.querySelector('.dn-note[aria-busy="true"]') as HTMLElement | null;
+          expect(el).not.toBeNull();
+          return el!;
+        });
+        // note.css paints .is-high-contrast white over the note's own colour.
+        expect(root).toHaveClass("is-high-contrast");
+      } finally {
+        window.history.replaceState(null, "", before);
+      }
+    });
+
+    it("high contrast is black and white everywhere in the note (DES-35)", () => {
+      const css = readFileSync("src/styles/note.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const rule = (selector: string) => {
+        const at = css.indexOf(`${selector} {`);
+        expect(at, selector).toBeGreaterThanOrEqual(0);
+        return css.slice(at, css.indexOf("}", at));
+      };
+      const hc = rule(".dn-note.is-high-contrast");
+      for (const [token, value] of [
+        ["--dn-accent", "--dn-hc-ink"],
+        ["--dn-accent-hover", "--dn-hc-ink"],
+        ["--dn-accent-press", "--dn-hc-ink"],
+        ["--dn-on-accent", "--dn-hc-bg"],
+        ["--dn-accent-tint", "--dn-hc-bg"],
+        ["--dn-sage-tint", "--dn-hc-bg"],
+        ["--dn-sage-ink", "--dn-hc-ink"],
+        ["--dn-ink-fill", "--dn-hc-bg"],
+      ]) {
+        expect(hc).toMatch(new RegExp(`${token}: var\\(${value}\\);`));
+      }
+      expect(rule(".dn-note.is-high-contrast.is-collapsed")).toMatch(/box-shadow: inset 0 0 0 var\(--dn-hc-rule\) var\(--dn-hc-line\)/);
+      expect(rule(".dn-note.is-high-contrast .dn-tooltip")).toMatch(/background: var\(--dn-hc-ink\)/);
+      expect(rule(".dn-note.is-high-contrast .dn-tooltip-sub")).toMatch(/opacity: 1/);
     });
 
     it("checkboxes follow the text colour, with an opaque tick, also in high contrast", () => {

@@ -386,7 +386,7 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
     // Transparency is a creation-time property of the window, so only a note
     // below 100 % opacity gets it; crossing 100 % reopens the window.
     let transparent = needs_transparency(&note.appearance);
-    let url = note_url(&note.color, &note.appearance);
+    let (color, appearance) = (note.color.clone(), note.appearance.clone());
 
     // Builds the window. Runs on the main thread (inside `with_webview` on Linux).
     let handle = app.clone();
@@ -403,15 +403,18 @@ pub fn open_note_with_focus(app: &AppHandle, note: &Note, focus: bool) -> tauri:
         let min = min_note_size(&handle);
         // Read here too: an opacity change made while this build was queued saw no
         // window, so nothing would reopen one built with the old transparency.
-        let fresh = handle
-            .state::<AppState>()
-            .with_db(|db| db.get_note(&note_id));
+        let state = handle.state::<AppState>();
+        let fresh = state.with_db(|db| db.get_note(&note_id));
+        // High contrast paints the first frame white too, not the note's colour.
+        let high_contrast = state
+            .with_db(|db| db.app_appearance())
+            .is_ok_and(|a| a.high_contrast);
         let (transparent, url) = match &fresh {
             Ok(n) => (
                 needs_transparency(&n.appearance),
-                note_url(&n.color, &n.appearance),
+                note_url(&n.color, &n.appearance, high_contrast),
             ),
-            Err(_) => (transparent, url),
+            Err(_) => (transparent, note_url(&color, &appearance, high_contrast)),
         };
         let width = rect.width.max(f64::from(min.width));
         let (min_height, height) = if collapsed {
@@ -489,22 +492,30 @@ fn focus_after_show(
     }
 }
 
-/// Page loaded by a new note window. The note's colour and, below 100 %, its
-/// opacity ride along so the page's first frame (before the note is read) has
-/// the note's colour instead of a lemon flash. Never anything of its text.
-fn note_url(color: &str, appearance: &Appearance) -> String {
-    let mut url = String::from("index.html");
+/// Page loaded by a new note window. The note's colour, below 100 % its
+/// opacity, and the app's high contrast ride along so the page's first frame
+/// (before the note is read) looks like the note instead of a lemon flash.
+/// Never anything of its text.
+fn note_url(color: &str, appearance: &Appearance, high_contrast: bool) -> String {
+    let mut query = Vec::new();
     if let Ok(color) = desknotes_core::validation::validate_color(color) {
         // `#rrggbb` once validated; `#` must be escaped in a query.
-        url.push_str(&format!("?color=%23{}", &color[1..]));
+        query.push(format!("color=%23{}", &color[1..]));
         if let Some(opacity) = appearance
             .opacity
             .filter(|_| needs_transparency(appearance))
         {
-            url.push_str(&format!("&opacity={opacity}"));
+            query.push(format!("opacity={opacity}"));
         }
     }
-    url
+    if high_contrast {
+        query.push("hc=1".to_owned());
+    }
+    if query.is_empty() {
+        "index.html".to_owned()
+    } else {
+        format!("index.html?{}", query.join("&"))
+    }
 }
 
 /// Whether a note's window must be created transparent: its opacity is below
@@ -840,19 +851,25 @@ mod tests {
             ..Appearance::default()
         };
         assert_eq!(
-            note_url("#FFF4A3", &with(None)),
+            note_url("#FFF4A3", &with(None), false),
             "index.html?color=%23fff4a3"
         );
         assert_eq!(
-            note_url("#cfe3ff", &with(Some(100))),
+            note_url("#cfe3ff", &with(Some(100)), false),
             "index.html?color=%23cfe3ff"
         );
         assert_eq!(
-            note_url("#cfe3ff", &with(Some(85))),
+            note_url("#cfe3ff", &with(Some(85)), false),
             "index.html?color=%23cfe3ff&opacity=85"
         );
         // A colour that is not #rrggbb never reaches the URL.
-        assert_eq!(note_url("red&x=1", &with(Some(85))), "index.html");
+        assert_eq!(note_url("red&x=1", &with(Some(85)), false), "index.html");
+        // High contrast rides along, with or without a colour.
+        assert_eq!(
+            note_url("#cfe3ff", &with(Some(85)), true),
+            "index.html?color=%23cfe3ff&opacity=85&hc=1"
+        );
+        assert_eq!(note_url("red", &with(None), true), "index.html?hc=1");
     }
 
     #[test]

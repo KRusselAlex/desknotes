@@ -38,3 +38,23 @@ Design: `docs/superpowers/specs/2026-11-04-appearance-settings-design.md` (owner
 
 513 frontend tests, `cargo test --workspace`, `cargo clippy -D warnings`, `npm run lint` and `npm run typecheck` all pass.
 Each task was reviewed separately, then the whole branch; findings were fixed and re-reviewed.
+
+## DES-35 batch 1: high contrast polish and behaviour (2026-11-09)
+
+Debug build of `fix/des-35-appearance`, hidden X display, scratch HOME. High contrast was
+switched on in the throwaway database, which also held a read-only blue note with inline code
+and a rolled-up peach note.
+
+| Check | Result |
+|---|---|
+| Read-only chip | White with a black edge (was a grey tint) |
+| Inline code | Black outline on white |
+| Rolled-up strip | Black 2 px edge on white |
+
+Owner decisions (2026-11-09): a note's font or size equal to the app default means "follow
+the app", for both (before, only the size did). A per-note "System font" while an app default
+font is set is not wanted for now.
+
+Not checked in the real app: the first frame in high contrast (it lasts one frame), the
+Forgot-PIN accent button under a dark system theme, and the link tooltip. These are covered
+by unit tests and the stylesheet test.

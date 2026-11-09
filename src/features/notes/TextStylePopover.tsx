@@ -47,15 +47,16 @@ const ALIGN_BUTTONS: { value: TextAlignment; label: string; icon: IconName }[] =
 ];
 
 // Installed fonts, asked for once per note window, the first time the popover opens.
-// A failure is not kept, so the next open asks again. Only names a note may store
-// are offered.
-let installedFonts: Promise<string[]> | null = null;
-function loadFonts(): Promise<string[]> {
+// A failure is not kept, so the next open asks again, and gives null: with the list
+// unknown, a font in the text is shown plainly, not as "not installed". Only names a
+// note may store are offered.
+let installedFonts: Promise<string[] | null> | null = null;
+function loadFonts(): Promise<string[] | null> {
   installedFonts ??= commands.listFonts().then(
     (fonts) => fonts.filter(isAllowedFontFamily),
     () => {
       installedFonts = null;
-      return [];
+      return null;
     },
   );
   return installedFonts;

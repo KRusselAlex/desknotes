@@ -39,18 +39,20 @@ const DIRECTIONS: readonly { value: TextDirection; label: string }[] = [
 ];
 
 /** The appearance with `patch` applied, without keys that are unset or at their default.
- * The size is the exception: the default it is compared with is `defaultSize`, the size
- * the stepper shows when the note has none (the app default, × 0.9 in Compact, rounded to
- * whole pixels), and only when the patch sets it. Stepping back to that size leaves it unset
- * so the note follows the app again; a size the note already has is never dropped by another
- * change. */
-function merged(current: Appearance, patch: Appearance, defaultSize: number): Appearance {
+ * The size and font are compared with what the app gives a note that has none, and only
+ * when the patch sets them: `defaultSize`, the size the stepper shows (the app default,
+ * × 0.9 in Compact, rounded to whole pixels), and `defaultFont`, the app's default font.
+ * Choosing that value leaves the key unset, so the note follows the app again when its
+ * default changes (owner decision, DES-35); a value the note already has is never
+ * dropped by another change. */
+function merged(current: Appearance, patch: Appearance, defaultSize: number, defaultFont: string | null): Appearance {
   const next: Record<string, unknown> = { ...current, ...patch };
   const defaults: Record<string, unknown> = APPEARANCE_DEFAULTS;
   for (const key of Object.keys(next)) {
     if (next[key] === undefined || (key !== "fontSize" && next[key] === defaults[key])) delete next[key];
   }
   if (patch.fontSize !== undefined && patch.fontSize === defaultSize) delete next.fontSize;
+  if (patch.font !== undefined && defaultFont !== null && patch.font === defaultFont) delete next.font;
   return next as Appearance;
 }
 
@@ -225,12 +227,12 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   }, [flushAppearance]);
 
   function changeAppearance(patch: Appearance) {
-    showAppearance(merged(appearanceRef.current, patch, shownDefaultSize));
+    showAppearance(merged(appearanceRef.current, patch, shownDefaultSize, app?.defaultFont ?? null));
     sendAppearanceNow();
   }
 
   function slide(patch: Appearance) {
-    showAppearance(merged(appearanceRef.current, patch, shownDefaultSize));
+    showAppearance(merged(appearanceRef.current, patch, shownDefaultSize, app?.defaultFont ?? null));
     sendAppearanceSoon();
   }
 
@@ -268,9 +270,10 @@ export function NoteSettingsWindow({ noteId: firstNoteId }: { noteId: string }) 
   // The note the window opened for (a switch reads its note in the handler below).
   useEffect(() => refresh(idRef.current, true), [refresh]);
 
-  // Installed fonts, read once per window opening.
+  // Installed fonts, read once per window opening. When they cannot be listed the list
+  // stays unknown (null): a saved font is then shown plainly, not as "not installed".
   useEffect(() => {
-    commands.listFonts().then(setFonts, () => setFonts([]));
+    commands.listFonts().then(setFonts, () => setFonts(null));
   }, []);
 
   useEffect(() => {

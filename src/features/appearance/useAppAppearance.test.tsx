@@ -17,7 +17,7 @@ vi.mock("../../ipc/events", () => ({
 vi.mock("../../ipc/commands", () => ({ commands: { getAppAppearance: vi.fn() } }));
 
 import { commands } from "../../ipc/commands";
-import { useAppAppearance } from "./useAppAppearance";
+import { LISTEN_WAIT_MS, useAppAppearance } from "./useAppAppearance";
 
 const look = (over: Partial<AppAppearance> = {}): AppAppearance => ({ ...APP_APPEARANCE_DEFAULTS, ...over });
 
@@ -63,5 +63,36 @@ describe("useAppAppearance", () => {
     await act(async () => resolveListen?.());
     unmount();
     await waitFor(() => expect(unlisten).toHaveBeenCalled());
+  });
+
+  it("reads anyway when listening does not answer in time (DES-35)", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(look({ defaultSize: 20 }));
+      const { result } = renderHook(() => useAppAppearance());
+      await act(async () => vi.advanceTimersByTimeAsync(LISTEN_WAIT_MS - 1));
+      expect(commands.getAppAppearance).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(result.current).toEqual(look({ defaultSize: 20 }));
+      // Listening answering late reads nothing more.
+      await act(async () => resolveListen?.());
+      expect(commands.getAppAppearance).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unmounted before listening answers: stops listening once it does, and reads nothing (DES-35)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = renderHook(() => useAppAppearance());
+      unmount();
+      await act(async () => resolveListen?.());
+      expect(unlisten).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTimeAsync(LISTEN_WAIT_MS * 2));
+      expect(commands.getAppAppearance).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

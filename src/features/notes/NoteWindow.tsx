@@ -160,7 +160,13 @@ function noteLook(color: string, appearance: Appearance, app: AppAppearance) {
 function FirstFrame() {
   const [look] = useState(() => firstFrameLook(window.location.search));
   useSeeThrough(look.appearance);
-  return <div className="dn-note" aria-busy="true" style={appearanceStyle(look.color, look.appearance)} />;
+  return (
+    <div
+      className={`dn-note${look.highContrast ? " is-high-contrast" : ""}`}
+      aria-busy="true"
+      style={appearanceStyle(look.color, look.appearance)}
+    />
+  );
 }
 
 export function NoteWindow({ noteId }: { noteId: string }) {
