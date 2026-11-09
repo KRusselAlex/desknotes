@@ -74,6 +74,12 @@ the Compact layout, two private notes (one rolled up) and a plain note with its 
 | Plain note | Its own 20 px text; Compact 28 px header |
 | App log | Only the usual Xvfb graphics warnings |
 
-943 frontend tests, `cargo test --workspace`, `cargo clippy -D warnings`, lint and
-typecheck pass. One full frontend run had one failing test under load; the next four full
-runs passed, and the failing test was not named in that run's output.
+943 frontend tests, `cargo test --workspace`, `cargo clippy -D warnings`, eslint and
+typecheck pass. (Plain `npm run lint` fails in a checkout that holds Claude worktrees under
+`.claude/worktrees/`; eslint run with `--ignore-pattern '.claude/**'` is clean.)
+
+One full frontend run had a failing test. Running three suites at once reproduced it: every
+failure was a slow test passing vitest's 5 s limit (5.3–5.9 s), never a wrong result. The
+tests that went over were "renders the saved rich text with the note colour", "Private opens
+Make private in place…" (NoteWindow) and "says the note is marked done…" (DoneStrip). Alone,
+the suite passes every time (four runs in a row).

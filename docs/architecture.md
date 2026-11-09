@@ -558,8 +558,8 @@ real-app check are.
     (`db/notes.rs` `save_content`).
   - If a save fails, the window stays open and shows the error, and quitting is blocked
     (`quit.rs`).
-- **Code:** `src/features/notes/NoteWindow.tsx`, `autosave.ts`, `SaveStatus.tsx`;
-  `commands/notes.rs`; `db/notes.rs`.
+- **Code:** `src/features/notes/NoteWindow.tsx`, `autosave.ts`, `SaveStatus.tsx`,
+  `NoteLoadError.tsx` (a note that cannot be read); `commands/notes.rs`; `db/notes.rs`.
 - **Design and check:** [design.md](design.md) §4 (Autosave),
   [m1-verification.md](testing/m1-verification.md).
 
@@ -634,7 +634,8 @@ real-app check are.
     `app-appearance-changed`.
   - Note windows read it before their first paint (`useAppAppearance.ts`).
 - **Code:** `src/features/appearance/`, `src/features/settings/AppearancePane.tsx`,
-  `src/features/notes/ColorPopover.tsx`, `commands/settings.rs`.
+  `src/features/notes/ColorPopover.tsx`, `noteLook.ts` (a note's classes and style from its
+  own look over the app's), `commands/settings.rs`.
 - **Design and check:**
   [spec](superpowers/specs/2026-11-04-appearance-settings-design.md),
   [check](testing/m3-appearance-verification.md).
@@ -747,7 +748,8 @@ real-app check are.
   - Only the Settings window may change the rules (`set_automations`,
     `enable_purge_trash`). Every window hears `automations-changed`.
 - **Code:** `src/features/settings/AutomationsPane.tsx`, `src/features/notes/checklist.ts`,
-  `DoneStrip.tsx`; `src-tauri/src/automation.rs`, `commands/settings.rs`;
+  `DoneStrip.tsx`, `noteHooks.ts` (`useAutoCompleteRule`); `src-tauri/src/automation.rs`,
+  `commands/settings.rs`;
   `crates/desknotes-core/src/db/automation.rs`.
 - **Design and check:** [spec](superpowers/specs/2026-11-06-automation-rules-design.md),
   [check](testing/m4-automation-rules-verification.md).
@@ -777,7 +779,8 @@ real-app check are.
     twice.
   - Notifications go over D-Bus (`platform/notify.rs`), with one connection kept open.
   - When the lock engages, notifications that showed a now-locked title are closed.
-- **Code:** `src/features/notes/ReminderPopover.tsx`, `reminderText.ts`, `timeInput.ts`;
+- **Code:** `src/features/notes/ReminderPopover.tsx`, `reminderText.ts`, `timeInput.ts`,
+  `noteHooks.ts` (`useReminder`);
   `src/features/manager/RemindersList.tsx`, `reminderGroups.ts`;
   `commands/reminders.rs`; `db/reminders.rs`.
 - **Design and check:** [spec](superpowers/specs/2026-11-04-reminders-design.md),
@@ -827,7 +830,8 @@ real-app check are.
     writes the "PIN was reset" notice and the PIN removal in one transaction. It lets the
     name go during the Ubuntu password prompt (a DeskNotes started then would wait on it
     and fail) and takes it again before writing, refusing if DeskNotes started.
-- **Code:** `src/features/privacy/`, `src/features/settings/PrivacyPane.tsx`,
+- **Code:** `src/features/privacy/`, `src/features/notes/LockedNote.tsx` (the PIN inside a
+  note), `src/features/settings/PrivacyPane.tsx`,
   `PinSetup.tsx`, `ChangePin.tsx`, `RecoveryCode.tsx`; `commands/privacy.rs`;
   `platform/lock_triggers.rs`, `platform/system_auth.rs`; `reset_pin.rs`;
   `db/privacy.rs`.

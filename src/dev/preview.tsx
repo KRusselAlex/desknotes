@@ -287,7 +287,9 @@ const inRange = (n: number, min: number, max: number) => Number.isInteger(n) && 
 /** As `validate_font_name` (crates/desknotes-core/src/validation.rs): hidden or reordering
  * characters removed, trimmed, blank is none, at most 100 characters, no control, `"`, `\` or `;`. */
 function fakeFontName(raw: string | null): string | null {
-  const name = (raw ?? "").replace(/[\u202A-\u202E\u2066-\u2069\u200B\u2060\uFEFF\u00AD]/g, "").trim();
+  const name = (raw ?? "").replace(/[\u202A-\u202E\u2066-\u2069\u200B\u2060\uFEFF\u00AD]/g, "")
+    // Rust trim also removes U+0085, which String.prototype.trim keeps.
+    .replace(/^[\s\u0085]+|[\s\u0085]+$/g, "");
   if (!name) return null;
   // eslint-disable-next-line no-control-regex
   if ([...name].length > 100 || /[\u0000-\u001F\u007F-\u009F"\\;]/.test(name)) {
