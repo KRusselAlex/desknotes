@@ -545,6 +545,28 @@ describe("NoteSettingsWindow", () => {
       expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 20 });
     });
 
+    it("choosing the app's default font by its name also follows the app (DES-35)", async () => {
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(appLook({ defaultFont: "Ubuntu" }));
+      await open(note({ appearance: { fontSize: 20 } }));
+      const font = screen.getByRole("combobox", { name: "Font" });
+      await waitFor(() => expect(within(font).getByRole("option", { name: "DejaVu Sans" })).toBeInTheDocument());
+      await userEvent.selectOptions(font, "DejaVu Sans");
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 20, font: "DejaVu Sans" });
+      // The same font as the app's, picked from the list: nothing of its own is stored.
+      await userEvent.selectOptions(font, "Ubuntu");
+      expect(commands.setNoteAppearance).toHaveBeenLastCalledWith(ID, { fontSize: 20 });
+    });
+
+    it("a saved font is shown plainly, not as \"not installed\", when the fonts cannot be listed (DES-35)", async () => {
+      vi.mocked(commands.listFonts).mockRejectedValue(new Error("fc-list failed"));
+      await open(note({ appearance: { font: "Old Font" } }));
+      const font = screen.getByRole("combobox", { name: "Font" });
+      await act(async () => undefined);
+      expect(within(font).getByRole("option", { name: "Old Font" })).toBeInTheDocument();
+      expect(within(font).queryByRole("option", { name: /not installed/ })).toBeNull();
+      expect(font).toHaveValue("Old Font");
+    });
+
     it("keeps \"System default\" as the first font option when the app has no default font", async () => {
       await open();
       const font = screen.getByRole("combobox", { name: "Font" });

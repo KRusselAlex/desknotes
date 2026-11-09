@@ -550,6 +550,21 @@ describe("TextStylePopover fonts", () => {
     expect(commands.listFonts).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a font in the text plainly, not as \"not installed\", when the fonts cannot be listed (DES-35)", async () => {
+    vi.resetModules();
+    const { commands } = await import("../../ipc/commands");
+    vi.mocked(commands.listFonts).mockRejectedValueOnce(new Error("fc-list failed"));
+    const { TextStylePopover: Fresh } = await import("./TextStylePopover");
+    const editor = makeEditor('<p><span style="font-family: Amiri">Hello</span></p>');
+    select(editor, 1, 6);
+    render(<Fresh editor={editor} appearance={{}} onClose={() => {}} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const font = screen.getByRole("combobox", { name: "Font" }) as HTMLSelectElement;
+    expect(Array.from(font.options).map((o) => o.textContent)).toEqual(["System default", "Amiri"]);
+  });
+
   it("asks again on the next open after a failure", async () => {
     vi.resetModules();
     const { commands } = await import("../../ipc/commands");
