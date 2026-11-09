@@ -74,9 +74,11 @@ describe("useAppAppearance", () => {
       expect(commands.getAppAppearance).not.toHaveBeenCalled();
       await act(async () => vi.advanceTimersByTimeAsync(1));
       expect(result.current).toEqual(look({ defaultSize: 20 }));
-      // Listening answering late reads nothing more.
+      // Listening answering late reads again: a change sent in between reached no one.
+      vi.mocked(commands.getAppAppearance).mockResolvedValue(look({ highContrast: true }));
       await act(async () => resolveListen?.());
-      expect(commands.getAppAppearance).toHaveBeenCalledTimes(1);
+      expect(commands.getAppAppearance).toHaveBeenCalledTimes(2);
+      expect(result.current).toEqual(look({ highContrast: true }));
     } finally {
       vi.useRealTimers();
     }

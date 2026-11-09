@@ -2576,6 +2576,9 @@ describe("NoteWindow", () => {
       expect(rule(".dn-note.is-high-contrast.is-collapsed")).toMatch(/box-shadow: inset 0 0 0 var\(--dn-hc-rule\) var\(--dn-hc-line\)/);
       expect(rule(".dn-note.is-high-contrast .dn-tooltip")).toMatch(/background: var\(--dn-hc-ink\)/);
       expect(rule(".dn-note.is-high-contrast .dn-tooltip-sub")).toMatch(/opacity: 1/);
+      const edged = rule(".dn-note.is-high-contrast :is(.dn-readonly-chip, .dn-reminder-chip, .dn-pin-key:not(.is-plain))");
+      expect(edged).toMatch(/box-shadow: inset 0 0 0 var\(--dn-hc-rule\) var\(--dn-hc-line\)/);
+      expect(rule(".dn-note.is-high-contrast .dn-btn-accent:not(:disabled):is(:hover, :active)")).toMatch(/box-shadow:/);
     });
 
     it("checkboxes follow the text colour, with an opaque tick, also in high contrast", () => {

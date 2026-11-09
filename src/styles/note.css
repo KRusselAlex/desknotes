@@ -980,11 +980,16 @@ html.dn-see-through #root {
 .dn-note.is-high-contrast.is-collapsed {
   box-shadow: inset 0 0 0 var(--dn-hc-rule) var(--dn-hc-line);
 }
-.dn-note.is-high-contrast :is(.dn-readonly-chip, .dn-pin-key:not(.is-plain)) {
-  box-shadow: inset 0 0 0 1px var(--dn-hc-line);
+.dn-note.is-high-contrast :is(.dn-readonly-chip, .dn-reminder-chip, .dn-pin-key:not(.is-plain)) {
+  box-shadow: inset 0 0 0 var(--dn-hc-rule) var(--dn-hc-line);
 }
 .dn-note.is-high-contrast .dn-note-body .tiptap code {
-  outline: 1px solid var(--dn-hc-line);
+  outline: var(--dn-hc-rule) solid var(--dn-hc-line);
+}
+/* Accent buttons are solid black in every state here: hover and press show as a white
+   ring inside instead. */
+.dn-note.is-high-contrast .dn-btn-accent:not(:disabled):is(:hover, :active) {
+  box-shadow: inset 0 0 0 var(--dn-hc-rule) var(--dn-hc-ink), inset 0 0 0 calc(2 * var(--dn-hc-rule)) var(--dn-hc-bg);
 }
 .dn-note.is-high-contrast .dn-tooltip {
   background: var(--dn-hc-ink);

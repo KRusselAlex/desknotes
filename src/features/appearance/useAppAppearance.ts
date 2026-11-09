@@ -19,10 +19,10 @@ export function useAppAppearance(): AppAppearance | null {
     let live = true;
     /** A change that arrived before the first read answered is newer: keep it. */
     let changed = false;
-    let read = false;
-    const readOnce = () => {
-      if (!live || read) return;
-      read = true;
+    let reads = 0;
+    const read = () => {
+      if (!live || changed) return;
+      reads += 1;
       commands.getAppAppearance().then(
         (a) => {
           if (live && !changed) setApp(a);
@@ -32,15 +32,22 @@ export function useAppAppearance(): AppAppearance | null {
         },
       );
     };
-    // Listen first, and read only once listening, so a change made while the read is on
-    // its way is not missed. Outside the app there may be nothing to listen to: read anyway.
-    // A listener that never answers would leave the note blank: read after a while anyway.
+    // Listen first, and read once listening, so a change made while the read is on its way
+    // is not missed. Outside the app there may be nothing to listen to: read anyway.
+    // A listener that never answers would leave the note blank, so after a while it reads
+    // anyway; once listening does start it reads again, since a change sent in between
+    // reached no one.
     const unlisten = onAppAppearanceChanged((a) => {
       changed = true;
       if (live) setApp(a);
     }).catch(() => null);
-    void unlisten.then(readOnce);
-    const timer = setTimeout(readOnce, LISTEN_WAIT_MS);
+    const timer = setTimeout(() => {
+      if (reads === 0) read();
+    }, LISTEN_WAIT_MS);
+    void unlisten.then(() => {
+      clearTimeout(timer);
+      read();
+    });
     return () => {
       live = false;
       clearTimeout(timer);
