@@ -27,6 +27,7 @@ import {
   onRemindersChanged,
   onSettingsSection,
 } from "./events";
+import nativeDefaults from "../../tests/fixtures/app-appearance-defaults.json";
 import { APP_APPEARANCE_DEFAULTS, type AppAppearance, type Automations } from "../types/note";
 
 describe("onAppAppearanceChanged", () => {
@@ -56,12 +57,8 @@ describe("onAppAppearanceChanged", () => {
 
 describe("APP_APPEARANCE_DEFAULTS", () => {
   it("matches the native defaults", () => {
-    expect(APP_APPEARANCE_DEFAULTS).toEqual({
-      highContrast: false,
-      layout: "comfortable",
-      defaultFont: null,
-      defaultSize: 15,
-    });
+    // The Rust core checks AppAppearance::default() against the same file.
+    expect(APP_APPEARANCE_DEFAULTS).toEqual(nativeDefaults);
   });
 });
 

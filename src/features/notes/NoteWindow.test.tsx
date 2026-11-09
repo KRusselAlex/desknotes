@@ -11,7 +11,7 @@ import {
   type SettingsView,
 } from "../../types/note";
 import type { RemindersChanged, ReminderView } from "../../types/reminder";
-import { appearanceStyle } from "../appearance/appearance";
+import { COMPACT_TEXT_SCALE, appearanceStyle } from "../appearance/appearance";
 
 const handlers: {
   appAppearance?: (a: AppAppearance) => void;
@@ -1554,7 +1554,8 @@ describe("NoteWindow", () => {
         "--dn-hc-ink: #000000",
         "--dn-hc-rule: 2px",
         "--dn-hc-focus: 3px",
-        "--dn-compact-text-scale: 0.9",
+        // The scale effectiveAppearance uses is the design token.
+        `--dn-compact-text-scale: ${COMPACT_TEXT_SCALE}`,
         "--dn-compact-pad: 10px",
         "--dn-compact-header: 28px",
       ]) {

@@ -440,6 +440,19 @@ mod tests {
     }
 
     #[test]
+    fn defaults_match_the_shared_fixture() {
+        // src/ipc/events.test.ts checks APP_APPEARANCE_DEFAULTS against the same file.
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/app-appearance-defaults.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(AppAppearance::default()).unwrap(),
+            fixture
+        );
+    }
+
+    #[test]
     fn app_appearance_serialises_camel_case() {
         let json = serde_json::to_value(AppAppearance {
             high_contrast: true,

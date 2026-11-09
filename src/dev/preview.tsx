@@ -284,6 +284,18 @@ let automations: Automations = {
 let checklistResetPending = false;
 const inRange = (n: number, min: number, max: number) => Number.isInteger(n) && n >= min && n <= max;
 
+/** As `validate_font_name` (crates/desknotes-core/src/validation.rs): hidden or reordering
+ * characters removed, trimmed, blank is none, at most 100 characters, no control, `"`, `\` or `;`. */
+function fakeFontName(raw: string | null): string | null {
+  const name = (raw ?? "").replace(/[\u202A-\u202E\u2066-\u2069\u200B\u2060\uFEFF\u00AD]/g, "").trim();
+  if (!name) return null;
+  // eslint-disable-next-line no-control-regex
+  if ([...name].length > 100 || /[\u0000-\u001F\u007F-\u009F"\\;]/.test(name)) {
+    throw { code: "validation", message: "font name contains characters that are not allowed" };
+  }
+  return name;
+}
+
 // Fake reminders, following the native rules loosely (crates/desknotes-core/src/reminders.rs).
 interface FakeReminder {
   date: string;
@@ -423,10 +435,14 @@ mockIPC(
         return { ...appAppearance };
       case "set_app_appearance": {
         const next = a.appearance as AppAppearance;
-        if (!Number.isInteger(next.defaultSize) || next.defaultSize < 10 || next.defaultSize > 32) {
+        if (typeof next.highContrast !== "boolean" || (next.layout !== "comfortable" && next.layout !== "compact")) {
+          throw { code: "validation", message: "invalid appearance" };
+        }
+        if (!inRange(next.defaultSize, 10, 32)) {
           throw { code: "validation", message: "default text size must be 10–32 px" };
         }
-        appAppearance = { ...next, defaultFont: next.defaultFont?.trim() || null };
+        const font = fakeFontName(next.defaultFont);
+        appAppearance = { ...next, defaultFont: font };
         void emit("app-appearance-changed", { ...appAppearance });
         return { ...appAppearance };
       }
