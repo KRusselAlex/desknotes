@@ -58,3 +58,22 @@ font is set is not wanted for now.
 Not checked in the real app: the first frame in high contrast (it lasts one frame), the
 Forgot-PIN accent button under a dark system theme, and the link tooltip. These are covered
 by unit tests and the stylesheet test.
+
+## DES-35 batch 2: code and test tidy-ups (2026-11-09)
+
+No visible change was intended: the note window was split into smaller files and the
+appearance setter and tests were tidied. Debug build of `refactor/des-35-tidy`, hidden X
+display, scratch HOME. The throwaway database had a PIN set (so the lock was on at start),
+the Compact layout, two private notes (one rolled up) and a plain note with its own 20 px size.
+
+| Check | Result |
+|---|---|
+| Locked private note | Its label "Bank" and the PIN pad; no note text |
+| Rolled-up private note | A 32 px strip with its label "Diary" |
+| Expand, then collapse, the private note | 320 × 300 with the PIN pad and no text, then back to the 32 px strip |
+| Plain note | Its own 20 px text; Compact 28 px header |
+| App log | Only the usual Xvfb graphics warnings |
+
+943 frontend tests, `cargo test --workspace`, `cargo clippy -D warnings`, lint and
+typecheck pass. One full frontend run had one failing test under load; the next four full
+runs passed, and the failing test was not named in that run's output.
