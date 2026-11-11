@@ -692,7 +692,7 @@ mockIPC(
   { shouldMockEvents: true },
 );
 
-followSystemTheme();
+followSystemTheme(which === "note");
 
 if (which === "note" && params.has("textStyle")) void openTextStyle();
 if (which === "note" && params.get("reminder") === "open") void openReminder();

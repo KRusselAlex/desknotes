@@ -15,18 +15,6 @@
   line-height: var(--dn-leading);
 }
 
-/* Note surfaces are always light (notes keep their own colours, R14), so inside a note
-   window the danger tokens keep their light-theme values from tokens.css even under a
-   dark system theme: the reminder popover's Remove, the link error, the save error and
-   the overdue chip stay readable. High contrast (more specific, below) still wins. */
-.dn-note {
-  --dn-danger: #b3261e;
-  --dn-danger-hover: #962019;
-  --dn-danger-press: #7a1b14;
-  --dn-danger-bg: #fde7e3;
-  --dn-danger-ink: #7a1b14;
-}
-
 /* Below 100 % opacity every region must show the window behind at the same
    opacity, painted once. The header and the format bar paint --note-hd themselves,
    so the root paints --note-bg only between them (a bottom inset when the bar shows).

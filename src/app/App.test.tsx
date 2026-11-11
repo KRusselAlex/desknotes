@@ -12,7 +12,7 @@ vi.mock("../features/notes/NoteWindow", () => ({
   NoteWindow: ({ noteId }: { noteId: string }) => <p>note {noteId}</p>,
 }));
 
-import { App } from "./App";
+import { App, isNoteWindow } from "./App";
 
 describe("App window routing", () => {
   it("routes by window label", () => {
@@ -26,5 +26,12 @@ describe("App window routing", () => {
     expect(screen.getByText("note settings 5678-efgh")).toBeInTheDocument();
     rerender(<App label={null} />);
     expect(screen.getByRole("heading", { name: "DeskNotes" })).toBeInTheDocument();
+  });
+});
+
+describe("isNoteWindow", () => {
+  it("is true for note windows only, not Note settings", () => {
+    expect(isNoteWindow("note-0b9d6f6e-3f0a-4b8e-9a51-2a4c1d7e8f90")).toBe(true);
+    for (const label of ["note_settings", "manager", "settings", "", null]) expect(isNoteWindow(label), String(label)).toBe(false);
   });
 });
