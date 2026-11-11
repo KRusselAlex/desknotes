@@ -353,7 +353,7 @@ fn invalid(msg: impl Into<String>) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Datelike, Timelike, Weekday};
+    use chrono::{Datelike, FixedOffset, LocalResult, Timelike, Weekday};
     use chrono_tz::America::New_York;
     use chrono_tz::Europe::Paris;
 
@@ -372,6 +372,42 @@ mod tests {
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
+    }
+
+    /// A zone where no local time exists (every minute is in a gap), at UTC+2. No real
+    /// zone does this; it drives `resolve_local`'s last fallback.
+    #[derive(Clone)]
+    struct NoLocalTimes;
+
+    impl TimeZone for NoLocalTimes {
+        type Offset = FixedOffset;
+        fn from_offset(_: &FixedOffset) -> Self {
+            NoLocalTimes
+        }
+        fn offset_from_local_date(&self, _: &NaiveDate) -> LocalResult<FixedOffset> {
+            LocalResult::None
+        }
+        fn offset_from_local_datetime(&self, _: &NaiveDateTime) -> LocalResult<FixedOffset> {
+            LocalResult::None
+        }
+        fn offset_from_utc_date(&self, _: &NaiveDate) -> FixedOffset {
+            FixedOffset::east_opt(7200).unwrap()
+        }
+        fn offset_from_utc_datetime(&self, _: &NaiveDateTime) -> FixedOffset {
+            FixedOffset::east_opt(7200).unwrap()
+        }
+    }
+
+    #[test]
+    fn a_local_time_no_zone_rule_resolves_reads_the_clock_with_the_offset_in_force() {
+        let local = NaiveDate::from_ymd_opt(2026, 11, 4)
+            .unwrap()
+            .and_hms_opt(14, 0, 0)
+            .unwrap();
+        assert_eq!(resolve_local(local, &NoLocalTimes), utc(2026, 11, 4, 12, 0));
+        // A rule in such a zone still gets a due time, and nothing panics.
+        let once = rule("2026-11-04", "14:00", "none");
+        assert_eq!(first_due(&once, &NoLocalTimes), utc(2026, 11, 4, 12, 0));
     }
 
     #[test]
