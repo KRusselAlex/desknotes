@@ -50,7 +50,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => ({
 }));
 
 import { CommandError, commands } from "../../ipc/commands";
-import { ManagerWindow, highlight } from "./ManagerWindow";
+import { highlight } from "./highlight";
+import { ManagerWindow } from "./ManagerWindow";
 
 const note = (over: Partial<NoteSummary> = {}): NoteSummary => ({
   id: "n1",
@@ -637,6 +638,22 @@ describe("ManagerWindow Reminders tab (R2)", () => {
     expect(vi.mocked(commands.listReminders).mock.calls.length).toBeGreaterThan(calls);
     await waitFor(() => expect(screen.getByText("Today")).toBeInTheDocument());
     expect(screen.queryByText("Tomorrow")).toBeNull();
+  });
+
+  it("stops the minute reload once another tab is shown", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.mocked(commands.listReminders).mockResolvedValue([reminder()]);
+    await openTab();
+    await screen.findByRole("listitem");
+    await userEvent.click(screen.getByRole("tab", { name: /Active/ }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Active/ })).toHaveAttribute("aria-selected", "true"));
+    await new Promise((r) => setTimeout(r, 200)); // the tab change's own reload settles
+    const calls = vi.mocked(commands.listReminders).mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+    });
+    expect(vi.mocked(commands.listReminders).mock.calls.length).toBe(calls);
   });
 });
 

@@ -56,3 +56,31 @@ describe("defaultReminder", () => {
     expect(defaultReminder(new Date(2026, 11, 31, 22, 10))).toEqual({ date: "2027-01-01", time: "09:00" });
   });
 });
+
+describe("chipText across a daylight-saving change and the new year", () => {
+  beforeAll(() => {
+    vi.stubEnv("TZ", "Europe/Paris"); // Node reads TZ again when it is set
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("counts the 23-hour and 25-hour days as one day each", () => {
+    // Clocks go forward at 02:00 on 29 March 2026 and back at 03:00 on 25 October.
+    expect(new Date(2026, 2, 29, 12).getTimezoneOffset()).toBe(-120);
+    expect(chipText(at(2026, 2, 29, 23, 30), new Date(2026, 2, 29, 0, 30))).toBe("23:30");
+    expect(chipText(at(2026, 2, 29, 9, 0), new Date(2026, 2, 28, 22, 0))).toBe("Sun 09:00");
+    expect(chipText(at(2026, 9, 25, 23, 50), new Date(2026, 9, 25, 0, 10))).toBe("23:50");
+    expect(chipText(at(2026, 9, 25, 23, 30), new Date(2026, 9, 24, 23, 30))).toBe("Sun 23:30");
+    expect(chipText(at(2026, 9, 31, 9, 0), new Date(2026, 9, 24, 23, 30))).toBe("31 Oct");
+  });
+
+  it("names the weekday into the new year, then the date with its year", () => {
+    const newYearsEve = new Date(2026, 11, 31, 22, 0);
+    expect(chipText(at(2027, 0, 1, 9, 0), newYearsEve)).toBe("Fri 09:00");
+    expect(chipText(at(2027, 0, 6, 9, 0), newYearsEve)).toBe("Wed 09:00");
+    expect(chipText(at(2027, 0, 8, 9, 0), newYearsEve)).toBe("8 Jan 2027");
+    // Overdue since the old year, seen on New Year's Day.
+    expect(chipText(at(2026, 11, 31, 14, 0), new Date(2027, 0, 1, 9, 0))).toBe("31 Dec 2026");
+  });
+});

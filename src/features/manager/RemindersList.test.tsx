@@ -50,6 +50,25 @@ describe("RemindersList", () => {
     expect(bike).toHaveTextContent("08:45");
   });
 
+  it("makes each group a list named by its label, holding only its rows", () => {
+    render(
+      <RemindersList
+        rows={[row({ noteId: "a" }), row({ noteId: "b", dueAt: new Date(2026, 10, 5, 8, 45).getTime() })]}
+        now={now}
+        query=""
+        onOpen={() => undefined}
+      />,
+    );
+    const today = screen.getByRole("list", { name: "Today" });
+    const tomorrow = screen.getByRole("list", { name: "Tomorrow" });
+    for (const list of [today, tomorrow]) {
+      for (const child of Array.from(list.children)) expect(child).toHaveAttribute("role", "listitem");
+    }
+    expect(within(today).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(tomorrow).getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "Reminders" })).toContainElement(today);
+  });
+
   it("opens the note with the row's button, by click or Enter", async () => {
     const onOpen = vi.fn();
     render(<RemindersList rows={[row()]} now={now} query="" onOpen={onOpen} />);
