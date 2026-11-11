@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "DeskNotes",
-  "version": "0.2.0",
+  "version": "0.3.0-beta.1",
   "identifier": "io.github.krusselalex.desknotes",
   "build": {
     "beforeDevCommand": "npm run dev",

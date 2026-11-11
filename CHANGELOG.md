@@ -6,6 +6,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-11 — Milestones 3 and 4: customization, privacy and reminders
+
 Database: migrations 4–8 (private notes, appearance, reminders, completed notes, images); backup format 6. A copy is made before upgrading.
 
 ### Added
