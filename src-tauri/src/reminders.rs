@@ -282,7 +282,9 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new(notifier: Arc<dyn Notify>) -> Self {
         Self {
-            pending: Mutex::new(true),
+            // The thread's first pass runs at once anyway; a wake from before it is read
+            // by that pass, so starting `true` would only add a second, empty pass.
+            pending: Mutex::new(false),
             woken: Condvar::new(),
             notifier,
             shown: Mutex::new(HashMap::new()),
@@ -1261,6 +1263,24 @@ mod tests {
         tick(&db, &s, &mut run, &mut log);
         assert_eq!(fake.summaries().len(), 6);
         assert!(log.is_empty());
+    }
+
+    #[test]
+    fn a_new_scheduler_sleeps_after_its_first_pass_until_woken() {
+        let (_fake, s) = scheduler();
+        let started = Instant::now();
+        s.wait(Duration::from_millis(80));
+        assert!(
+            started.elapsed() >= Duration::from_millis(80),
+            "no second pass at start"
+        );
+        s.wake();
+        let started = Instant::now();
+        s.wait(Duration::from_secs(5));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a wake ends the wait"
+        );
     }
 
     #[test]
