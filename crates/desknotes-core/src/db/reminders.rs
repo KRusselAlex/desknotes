@@ -477,7 +477,6 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
     use chrono_tz::Europe::Paris;
 
     use super::*;
@@ -1385,6 +1384,30 @@ mod tests {
                 .iter()
                 .any(|r| r.note_id == once)
         );
+    }
+
+    #[test]
+    fn a_past_due_one_off_moves_later_when_the_zone_moves_west() {
+        use chrono_tz::America::New_York;
+        // 14:00 Paris (13:00 UTC) went by at 13:30 UTC without firing (the app was busy).
+        let (db, id) = db_with_note();
+        db.set_reminder(&id, rule("2026-11-04", "14:00", "none"), now(), &Paris)
+            .unwrap();
+        let late = utc(2026, 11, 4, 13, 30);
+        assert!(
+            db.due_reminders(late, &Paris)
+                .unwrap()
+                .iter()
+                .any(|r| r.note_id == id)
+        );
+        // The computer moves to New York, where it is 08:30: the wall-clock rule keeps
+        // 14:00, now 14:00 New York (19:00 UTC). It is no longer due; it fires then.
+        assert_eq!(db.reanchor_reminders(late, &New_York).unwrap(), 1);
+        assert_eq!(
+            db.reminder(&id).unwrap().unwrap().due_at,
+            ms(utc(2026, 11, 4, 19, 0))
+        );
+        assert!(db.due_reminders(late, &New_York).unwrap().is_empty());
     }
 
     // ---- R7: trashed notes ----

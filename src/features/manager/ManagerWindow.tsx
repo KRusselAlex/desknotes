@@ -11,8 +11,6 @@ import { refusalText } from "../privacy/refusal";
 import { highlight } from "./highlight";
 import { RemindersList } from "./RemindersList";
 
-export { highlight };
-
 /** The tab bar's own ids: the note lists, plus Reminders, which is not a note filter. */
 type ManagerTab = NoteFilter | "reminders";
 
@@ -299,7 +297,7 @@ export function ManagerWindow() {
         reminders === null ? (
           <div className="dn-list" aria-busy="true" />
         ) : reminders.rows.length === 0 ? (
-          <EmptyState tab={tab} searching={searching} onCreate={() => undefined} />
+          <EmptyState tab={tab} searching={searching} />
         ) : (
           <RemindersList
             rows={reminders.rows}
@@ -533,7 +531,8 @@ function EmptyState({
 }: {
   tab: ManagerTab;
   searching: boolean;
-  onCreate: () => void;
+  /** The Active tab's "New note" button; the other tabs have none. */
+  onCreate?: () => void;
 }) {
   if (searching) {
     return (

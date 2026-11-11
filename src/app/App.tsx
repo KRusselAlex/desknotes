@@ -9,6 +9,11 @@ const NOTE_PREFIX = "note-";
 /** Underscore on purpose: labels starting with `note-` are note windows. */
 const NOTE_SETTINGS = "note_settings";
 
+/** Whether the window with this label shows a note (Note settings is an app window). */
+export function isNoteWindow(label: string | null): boolean {
+  return label?.startsWith(NOTE_PREFIX) ?? false;
+}
+
 /** One bundle serves every window; the window label decides what to show. */
 export function App({ label }: { label: string | null }) {
   useActivityReporter();
@@ -18,7 +23,7 @@ export function App({ label }: { label: string | null }) {
     const noteId = noteIdFromUrl();
     if (noteId) return <NoteSettingsWindow noteId={noteId} />;
   }
-  if (label?.startsWith(NOTE_PREFIX)) return <NoteWindow noteId={label.slice(NOTE_PREFIX.length)} />;
+  if (label && isNoteWindow(label)) return <NoteWindow noteId={label.slice(NOTE_PREFIX.length)} />;
   return (
     <main className="outside-tauri">
       <h1>DeskNotes</h1>

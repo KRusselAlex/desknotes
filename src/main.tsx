@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./app/App";
+import { App, isNoteWindow } from "./app/App";
 import { followSystemTheme } from "./app/theme";
 import { currentWindowLabel } from "./ipc/window";
 import "./styles/tokens.css";
@@ -24,10 +24,11 @@ document.addEventListener(
 document.addEventListener("dragover", (e) => e.preventDefault());
 document.addEventListener("drop", (e) => e.preventDefault());
 
-followSystemTheme();
+const label = currentWindowLabel();
+followSystemTheme(isNoteWindow(label));
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App label={currentWindowLabel()} />
+    <App label={label} />
   </StrictMode>,
 );

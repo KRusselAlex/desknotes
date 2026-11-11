@@ -395,7 +395,6 @@
 
 /* Reminders tab (R2) */
 .dn-rem-row {
-  flex: none;
   border-radius: 12px;
 }
 .dn-rem-row.is-overdue {

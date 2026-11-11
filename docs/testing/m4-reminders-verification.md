@@ -98,3 +98,21 @@ Review findings fixed in this batch (unit tests, each failing without its fix):
 - **Sleep noticed from the clocks** when the resume signal comes late.
 - **A fire dropped because the reminder changed** still reaches rule 2.
 - **A note left out of an export** is reported once.
+
+## DES-37 batch 2: tests, tidy-ups and the note window theme (2026-11-11)
+
+Debug build of `fix/des-37-batch2`, hidden X display, scratch HOME, started with
+`GTK_THEME=Adwaita:dark` so WebKit reports a dark system theme. The throwaway database held
+one note with a link and an overdue reminder.
+
+| Check | Result |
+|---|---|
+| Manager | Dark (the system theme reached WebKit) |
+| The note, opened from the manager | Light: yellow note, dark link ink, the overdue chip light red with white text, light window controls. No dark-theme peach anywhere in the capture |
+
+Not checked in the real app: the keyboard focus ring inside the note (Tab did not show one in
+the capture), and popovers and dialogs opened in a note under the dark theme. Unit tests cover
+the theme choice per window.
+
+The Reminders tab's groups are now separate lists named by their labels. This was checked
+only by unit tests: the look is unchanged by design.

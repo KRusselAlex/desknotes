@@ -17,6 +17,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Each test file in its own process: a process reads TZ again when a test sets it
+    // (reminderText.test.ts), a worker thread does not.
+    pool: "forks",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
   },

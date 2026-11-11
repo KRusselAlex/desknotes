@@ -93,7 +93,7 @@ Other shell files:
 | Path | What it owns |
 |---|---|
 | `main.tsx`, `app/App.tsx` | One bundle serves every window. The window **label** decides the screen: `manager`, `settings`, `note_settings`, or `note-<id>`. |
-| `app/` | Activity reporting for the inactivity lock (`activity.ts`), theme, time formatting, window size. |
+| `app/` | Activity reporting for the inactivity lock (`activity.ts`), theme (`theme.ts`: app windows follow the system's light or dark preference; a note window is always light, with everything drawn on it), time formatting, window size. |
 | `ipc/commands.ts` | The **only** place that calls `invoke`; ESLint enforces this in `eslint.config.js`. Each function maps to one Rust command. |
 | `ipc/events.ts` | Event names and typed `listen` helpers. |
 | `ipc/images.ts` | Builds `desknotes-image` addresses for stored images, and reads the id back from one. |

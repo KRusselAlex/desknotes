@@ -1522,26 +1522,19 @@ describe("NoteWindow", () => {
       expect(label).not.toMatch(/text-overflow|overflow:/);
     });
 
-    it("keeps the light danger tokens inside notes under a dark system theme (R14)", () => {
+    it("needs no dark-theme exceptions: a note window is always light", () => {
       const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
       const tokens = readFileSync("src/styles/tokens.css", "utf8");
-      const light = /:root\s*\{([^}]*)\}/.exec(tokens)![1]!;
       const dark = /\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(tokens)![1]!;
       const value = (block: string, name: string) => new RegExp(`${name}:\\s*([^;]+);`).exec(block)?.[1]?.trim();
-      // A rule on the note root itself (not the high-contrast one) re-declares them.
+      // Nothing in the note stylesheet answers to the dark theme, or re-declares its tokens.
+      expect(noteCss).not.toMatch(/data-theme/);
       const rootBlocks = [...noteCss.matchAll(/(?:^|\n)\.dn-note\s*\{([^}]*)\}/g)].map((m) => m[1]!);
-      const scoped = rootBlocks.find((b) => b.includes("--dn-danger"));
-      expect(scoped).toBeDefined();
+      expect(rootBlocks.some((b) => b.includes("--dn-danger"))).toBe(false);
+      expect(noteCss).toMatch(/\.dn-reminder-chip\.is-overdue[^{]*\{\s*background:\s*var\(--dn-danger\);\s*color:\s*#fff;/);
+      // High contrast sets every danger token itself.
       const darkDanger = [...dark.matchAll(/(--dn-danger[a-z-]*):/g)].map((m) => m[1]!);
       expect(darkDanger).toEqual(["--dn-danger", "--dn-danger-hover", "--dn-danger-press", "--dn-danger-bg", "--dn-danger-ink"]);
-      for (const token of darkDanger) {
-        expect(value(scoped!, token), token).toBe(value(light, token));
-        expect(value(scoped!, token), token).not.toBe(value(dark, token));
-      }
-      // The overdue chip needs no dark-theme exception any more: white on the light red.
-      expect(noteCss).not.toMatch(/\[data-theme="dark"\][^{]*\.dn-reminder-chip/);
-      expect(noteCss).toMatch(/\.dn-reminder-chip\.is-overdue[^{]*\{\s*background:\s*var\(--dn-danger\);\s*color:\s*#fff;/);
-      // High contrast still wins: it is more specific and sets every danger token itself.
       const hc = /\.dn-note\.is-high-contrast\s*\{([^}]*)\}/.exec(noteCss)![1]!;
       for (const token of darkDanger) expect(value(hc, token), token).toMatch(/^var\(--dn-hc-(ink|bg)\)$/);
     });

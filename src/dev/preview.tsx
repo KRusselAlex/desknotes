@@ -52,7 +52,7 @@ import { createRoot } from "react-dom/client";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import fixture from "../../tests/fixtures/rich-doc.json";
-import { App } from "../app/App";
+import { App, isNoteWindow } from "../app/App";
 import { setImageUrlResolver } from "../ipc/images";
 import { followSystemTheme } from "../app/theme";
 import {
@@ -692,7 +692,7 @@ mockIPC(
   { shouldMockEvents: true },
 );
 
-followSystemTheme();
+followSystemTheme(isNoteWindow(label));
 
 if (which === "note" && params.has("textStyle")) void openTextStyle();
 if (which === "note" && params.get("reminder") === "open") void openReminder();
