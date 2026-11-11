@@ -5,8 +5,8 @@ import { groupReminders, reminderWhen, repeatLabel } from "./reminderGroups";
 
 /**
  * The Reminders tab's rows (design R2), grouped Today / Tomorrow / Later. Each row is a
- * button that opens the note (the manager decides how: an archived note has no window). The title is what the command returned: "Private note" while
- * the note is locked.
+ * button that opens the note (the manager decides how: an archived note has no window). The title is what the command returned: the
+ * note's private label ("Private note" if it has none) while the note is locked.
  */
 export function RemindersList({
   rows,

@@ -445,9 +445,10 @@ impl Database {
                 continue;
             };
             let locked = self.withheld(lock, private, &reminder.note_id);
+            let locked_label = display_label(&label).to_owned();
             if !needle.is_empty() {
                 let searched = if locked {
-                    display_label(&label).to_lowercase()
+                    locked_label.to_lowercase()
                 } else {
                     title.to_lowercase()
                 };
@@ -461,6 +462,7 @@ impl Database {
                 title,
                 color,
                 private,
+                locked_label,
                 repeat: reminder.rule.repeat,
                 effective_due: due,
                 overdue: due <= now_ms,

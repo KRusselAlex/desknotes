@@ -19,7 +19,7 @@ export interface ReminderView {
 /** One row of the manager's Reminders tab (`list_reminders`). */
 export interface ReminderListRow {
   noteId: string;
-  /** Already "Private note" while the lock withholds the note; "" for an empty note. */
+  /** Already the note's private label ("Private note" if it has none) while the lock withholds it; "" for an empty note. */
   title: string;
   color: string;
   repeat: Repeat;

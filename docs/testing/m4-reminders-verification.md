@@ -66,3 +66,35 @@ The first report ("still broken") came from a DeskNotes started at 04:32 from th
 
 578 frontend tests, `cargo test --workspace` (core 162, shell 97, others 17), `cargo clippy -D warnings`, `npm run lint` and `npm run typecheck` all pass.
 Each task was reviewed separately, then the whole branch; findings were fixed and re-reviewed.
+
+## DES-37 batch 1: owner decisions and scheduler fixes (2026-11-09)
+
+Owner decisions (2026-11-09):
+- GNOME's three buttons stay 10 min, 1 h, Dismiss.
+- In the Reminders tab, a locked private note's row shows its private label.
+- The five-notification cap applies after waking from sleep too.
+- (2026-11-11) A restore gets the same cap: what is due in the restored notes comes
+  as five notifications plus a summary. Unit tests only, as for sleep.
+
+Debug build of `fix/des-37-reminders`, hidden X display, scratch HOME. The throwaway
+database had a PIN set (so the lock was on at start) and three hidden notes with reminders
+on 20 Nov: a private note labelled "Bank", a private note with no label, and "Dentist".
+
+| Check | Result |
+|---|---|
+| Reminders tab rows | "Bank", "Private note", "Dentist"; no note text |
+| Search "secret" (words only in the private notes' text) | "No reminders match your search" |
+| Search "bank" | The "Bank" row only |
+
+Not checked in the real app (unit tests only):
+- The cap after a real sleep and resume. It needs logind's sleep signal on the system bus.
+- Notifications closing after a restore. Clicks do not reach the Settings window here.
+- A new summary replacing the old one.
+- The export notice for a damaged reminder.
+
+Review findings fixed in this batch (unit tests, each failing without its fix):
+- **Restore while a pass is sending, or waiting for the database.** The send is closed
+  and not recorded, or is sent from the new database and kept.
+- **Sleep noticed from the clocks** when the resume signal comes late.
+- **A fire dropped because the reminder changed** still reaches rule 2.
+- **A note left out of an export** is reported once.
