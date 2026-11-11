@@ -73,6 +73,8 @@ Owner decisions (2026-11-09):
 - GNOME's three buttons stay 10 min, 1 h, Dismiss.
 - In the Reminders tab, a locked private note's row shows its private label.
 - The five-notification cap applies after waking from sleep too.
+- (2026-11-11) A restore gets the same cap: what is due in the restored notes comes
+  as five notifications plus a summary. Unit tests only, as for sleep.
 
 Debug build of `fix/des-37-reminders`, hidden X display, scratch HOME. The throwaway
 database had a PIN set (so the lock was on at start) and three hidden notes with reminders

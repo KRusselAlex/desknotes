@@ -266,9 +266,10 @@ pub struct Scheduler {
     /// The database was replaced (a backup restored): re-anchor at the next pass, as
     /// when the UTC offset changes, since its due times may come from another zone.
     reanchor_pending: AtomicBool,
-    /// The computer resumed from sleep: the next pass is a burst again, capped at
-    /// [`STARTUP_LIMIT`] like the one at start (owner decision 2026-11-09).
-    resumed: AtomicBool,
+    /// The computer resumed from sleep, or a backup was restored: the next pass is a
+    /// burst again, capped at [`STARTUP_LIMIT`] like the one at start (owner decisions
+    /// 2026-11-09 and 2026-11-11).
+    burst_pending: AtomicBool,
     /// Notes whose reminder the person changed since the last pass: a fire sent but
     /// not recorded for them is not retried, so it can never mark the new reminder fired.
     changed_notes: Mutex<HashSet<String>>,
@@ -288,17 +289,19 @@ impl Scheduler {
             to_close: Mutex::new(Vec::new()),
             lock_engaged: AtomicBool::new(false),
             reanchor_pending: AtomicBool::new(false),
-            resumed: AtomicBool::new(false),
+            burst_pending: AtomicBool::new(false),
             changed_notes: Mutex::new(HashSet::new()),
             epoch: AtomicU64::new(0),
         }
     }
 
     /// The database was replaced: every notification on screen is about the old one, so
-    /// all are closed at the next pass, and reminders are re-anchored. Call it while
-    /// holding the database lock, in the same call that replaced the database.
+    /// all are closed at the next pass, reminders are re-anchored, and what is due in the
+    /// restored notes comes as a capped burst. Call it while holding the database lock,
+    /// in the same call that replaced the database.
     fn database_replaced(&self) {
         self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.burst_pending.store(true, Ordering::Release);
         let ids: Vec<u32> = lock(&self.shown).drain().map(|(id, _)| id).collect();
         lock(&self.to_close).extend(ids);
         self.request_reanchor();
@@ -440,7 +443,7 @@ pub fn database_replaced(app: &AppHandle) {
 /// The computer resumed from sleep: wake now, with the start-up cap on what is sent.
 pub fn resumed(app: &AppHandle) {
     if let Some(scheduler) = app.try_state::<Scheduler>() {
-        scheduler.resumed.store(true, Ordering::Release);
+        scheduler.burst_pending.store(true, Ordering::Release);
         scheduler.wake();
     }
 }
@@ -512,7 +515,7 @@ fn run(app: &AppHandle) {
         if let Some((mono, wall)) = last_pass
             && slept(mono.elapsed(), wall_now - wall)
         {
-            scheduler.resumed.store(true, Ordering::Release);
+            scheduler.burst_pending.store(true, Ordering::Release);
         }
         last_pass = Some((Instant::now(), wall_now));
         let offset = Local::now().offset().fix().local_minus_utc();
@@ -554,11 +557,6 @@ fn pass<D: DbAccess, Tz: TimeZone>(
     offset: i32,
     log: &mut dyn FnMut(&str),
 ) -> bool {
-    // After sleep, what came due meanwhile arrives as a capped burst, as at start.
-    if scheduler.resumed.swap(false, Ordering::AcqRel) {
-        run.first = true;
-        run.burst_sent = 0;
-    }
     // Out-of-date notifications (their reminder changed) go first.
     scheduler.close_stale(log);
     // R10: the lock engaged. If the check fails the flag is kept for the next pass.
@@ -615,11 +613,14 @@ fn pass<D: DbAccess, Tz: TimeZone>(
 
     let mut changed = false;
     // A restored backup re-anchors as an offset change does. Kept if the read fails.
-    // Read under the database lock, with the epoch: a restore sets both in its own call.
+    // Read under the database lock, with the epoch: a restore sets all three in its own
+    // call. After sleep or a restore, what is due arrives as a capped burst, as at start.
     let mut reanchor = false;
+    let mut burst = false;
     let mut gathered_epoch = epoch;
     let gathered = db.db(|db| {
         reanchor = scheduler.reanchor_pending.swap(false, Ordering::AcqRel);
+        burst = scheduler.burst_pending.swap(false, Ordering::AcqRel);
         gathered_epoch = scheduler.epoch.load(Ordering::Acquire);
         if reanchor || run.offset != Some(offset) {
             changed |= db.reanchor_reminders(now, tz)? > 0;
@@ -630,6 +631,10 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         Ok(items) => {
             run.offset = Some(offset);
             run.unavailable = false;
+            if burst {
+                run.first = true;
+                run.burst_sent = 0;
+            }
             // A restore landed after the check above: what is unrecorded is about the
             // old database, and must not hold back (or later clear) the new one's fires.
             if run.epoch != gathered_epoch {
@@ -641,6 +646,9 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         Err(e) => {
             if reanchor {
                 scheduler.reanchor_pending.store(true, Ordering::Release);
+            }
+            if burst {
+                scheduler.burst_pending.store(true, Ordering::Release);
             }
             if !run.unavailable {
                 log(&format!("reminders could not be read: {}", e.code));
@@ -1265,7 +1273,7 @@ mod tests {
         let ids: Vec<String> = (0..7)
             .map(|n| note_with_due_reminder(&db, &format!("Note {n}")))
             .collect();
-        s.resumed.store(true, Ordering::Release);
+        s.burst_pending.store(true, Ordering::Release);
         assert!(tick(&db, &s, &mut run, &mut log));
         let summaries = fake.summaries();
         assert_eq!(summaries.len(), 6, "{summaries:?}");
@@ -1300,7 +1308,7 @@ mod tests {
         for n in 0..7 {
             note_with_due_reminder(&db, &format!("Later {n}"));
         }
-        s.resumed.store(true, Ordering::Release);
+        s.burst_pending.store(true, Ordering::Release);
         tick(&db, &s, &mut run, &mut log);
         assert!(fake.state().closed.contains(&first_summary));
         let summaries = lock(&s.shown)
@@ -1434,6 +1442,41 @@ mod tests {
         tick(&db, &s, &mut run, &mut log);
         assert_eq!(fake.summaries(), ["Dentist"], "sent once");
         assert!(fired(&db, &id), "recorded at the retry");
+    }
+
+    #[test]
+    fn what_is_due_after_a_restore_is_capped_like_at_start() {
+        let db = Database::open_in_memory().unwrap();
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        for n in 0..7 {
+            note_with_due_reminder(&db, &format!("Note {n}"));
+        }
+        s.database_replaced();
+        tick(&db, &s, &mut run, &mut log);
+        let summaries = fake.summaries();
+        assert_eq!(summaries.len(), 6, "{summaries:?}");
+        assert_eq!(summaries[5], "2 more reminders");
+    }
+
+    #[test]
+    fn a_pass_waiting_behind_a_restore_caps_what_it_sends() {
+        let db = Database::open_in_memory().unwrap();
+        for n in 0..7 {
+            note_with_due_reminder(&db, &format!("Note {n}"));
+        }
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        run.first = false;
+        let restored = RestoredFirst {
+            db: &db,
+            scheduler: &s,
+            done: AtomicBool::new(false),
+        };
+        tick(&restored, &s, &mut run, &mut log);
+        assert_eq!(fake.summaries().len(), 6);
+        assert!(!run.first, "only that one pass is capped");
     }
 
     #[test]

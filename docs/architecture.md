@@ -771,7 +771,8 @@ real-app check are.
   - Reminders missed while DeskNotes was closed, or while the computer slept, come as at
     most five notifications plus one summary for the rest. A click on the summary opens
     the manager; a new summary replaces the one before.
-  - After a backup is restored, every reminder notification still on screen is closed.
+  - After a backup is restored, every reminder notification still on screen is closed,
+    and what is due in the restored notes comes capped the same way (five plus a summary).
 - **How it works:**
   - All time rules are pure functions in `crates/desknotes-core/src/reminders.rs`. The
     reminder keeps the wall-clock time, so a time-zone change keeps it.
