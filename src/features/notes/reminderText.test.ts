@@ -59,7 +59,7 @@ describe("defaultReminder", () => {
 
 describe("chipText across a daylight-saving change and the new year", () => {
   beforeAll(() => {
-    vi.stubEnv("TZ", "Europe/Paris"); // Node reads TZ again when it is set
+    vi.stubEnv("TZ", "Europe/Paris"); // a test process reads TZ again when it is set (pool "forks")
   });
   afterAll(() => {
     vi.unstubAllEnvs();

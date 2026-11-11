@@ -10,20 +10,23 @@ const REMINDER_REFRESH_MS = 60_000;
  * The note's reminder, read again when it changes (reminders-changed for this note, or for
  * several) and every minute. `null` while it has none, and until the first read succeeds.
  * A failed read keeps what is shown (the next minute or change reads again), and a read
- * that answers after a newer one has answered is ignored, so an old value never returns.
+ * that answers after a newer one has succeeded is ignored, so an old value never returns.
  */
 export function useReminder(noteId: string): ReminderView | null {
   const [reminder, setReminder] = useState<ReminderView | null>(null);
   useEffect(() => {
     let live = true;
     let started = 0;
-    let answered = 0;
+    let shown = 0;
     const load = () => {
       const mine = ++started;
-      const newest = () => live && mine > answered && ((answered = mine), true);
       commands.getReminder(noteId).then(
-        (r) => newest() && setReminder(r),
-        () => void newest(),
+        (r) => {
+          if (!live || mine < shown) return;
+          shown = mine;
+          setReminder(r);
+        },
+        () => undefined,
       );
     };
     load();

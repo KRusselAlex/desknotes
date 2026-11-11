@@ -282,8 +282,9 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new(notifier: Arc<dyn Notify>) -> Self {
         Self {
-            // The thread's first pass runs at once anyway; a wake from before it is read
-            // by that pass, so starting `true` would only add a second, empty pass.
+            // The thread's first pass runs at once anyway: starting `true` only added a second,
+            // empty pass. A wake that comes before or during that pass still sets this, so
+            // the first wait returns at once and nothing is missed.
             pending: Mutex::new(false),
             woken: Condvar::new(),
             notifier,

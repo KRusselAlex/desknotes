@@ -49,7 +49,7 @@ describe("useReminder", () => {
     expect(result.current).toEqual(view(2));
   });
 
-  it("keeps what is shown when a read fails, and ignores an older read that answers later", async () => {
+  it("keeps what is shown when a read fails, and still takes an older read that succeeds", async () => {
     const answers = pendingReads();
     const { result } = renderHook(() => useReminder("n1"));
     await act(async () => answers[0]!.ok(view(1)));
@@ -57,8 +57,9 @@ describe("useReminder", () => {
     await act(async () => events.reminders?.({ noteId: "n1" }));
     await act(async () => answers[2]!.fail(new Error("busy")));
     expect(result.current).toEqual(view(1));
-    await act(async () => answers[1]!.ok(view(9)));
-    expect(result.current).toEqual(view(1)); // older than the failed read
+    // Older than the failed read, but newer than what is shown (the reminder was removed).
+    await act(async () => answers[1]!.ok(null));
+    expect(result.current).toBeNull();
   });
 
   it("reads only for its own note's changes", async () => {

@@ -1522,7 +1522,7 @@ describe("NoteWindow", () => {
       expect(label).not.toMatch(/text-overflow|overflow:/);
     });
 
-    it("needs no dark-theme exceptions: a note window is always light (R14)", () => {
+    it("needs no dark-theme exceptions: a note window is always light", () => {
       const noteCss = readFileSync("src/styles/note.css", "utf8"); // vitest blanks imported CSS
       const tokens = readFileSync("src/styles/tokens.css", "utf8");
       const dark = /\[data-theme="dark"\]\s*\{([^}]*)\}/.exec(tokens)![1]!;
