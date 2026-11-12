@@ -82,7 +82,8 @@ sha256sum -c SHA256SUMS --ignore-missing
 ```
 
 `gh attestation verify DeskNotes_<version>_amd64.deb --repo KRusselAlex/desknotes` (needs
-the GitHub CLI) checks that GitHub's build system made the file from this repository.
+the GitHub CLI, version 2.49 or newer; the `gh` in Ubuntu 24.04's own packages is 2.45, which
+does not have this command) checks that GitHub's build system made the file from this repository.
 
 ### Beta versions
 
@@ -102,9 +103,11 @@ shows:
 > Your notes were saved by a newer version of DeskNotes. Install that version (or newer) to
 > open them; nothing was changed.
 
-Version 0.2.0 and older say it differently: "The notes database could not be opened: database
-schema version 7 is newer than this DeskNotes supports (3); it was left untouched" (the
-numbers vary).
+Version 0.2.0 and older, and the beta 0.3.0-beta.1, only say "the notes database is not open"
+at the top of the manager, with an empty list. Started from a terminal (`desknotes`), they
+also print the reason there. 0.2.0 prints "The notes database could not be opened: database
+schema version 8 is newer than this DeskNotes supports (3); it was left untouched" (the
+numbers vary); 0.3.0-beta.1 prints the message above.
 
 This is safe. DeskNotes refused to open the database and did not change your notes. Either
 install the newer version again, or roll back as described next.

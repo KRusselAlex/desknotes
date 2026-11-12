@@ -40,6 +40,10 @@ export class CommandError extends Error {
   }
 }
 
+/** Code of every command while the notes database never opened (`state::DATABASE_UNAVAILABLE`).
+ *  Why it did not open is in `startupErrors`. */
+export const DATABASE_UNAVAILABLE = "database_unavailable";
+
 function toCommandError(raw: unknown): CommandError {
   if (raw && typeof raw === "object" && "code" in raw && "message" in raw) {
     return new CommandError(String(raw.code), String(raw.message));

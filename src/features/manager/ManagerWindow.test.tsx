@@ -25,6 +25,7 @@ vi.mock("../../ipc/events", () => ({
 }));
 vi.mock("../../ipc/commands", async (importOriginal) => ({
   CommandError: (await importOriginal<typeof import("../../ipc/commands")>()).CommandError,
+  DATABASE_UNAVAILABLE: (await importOriginal<typeof import("../../ipc/commands")>()).DATABASE_UNAVAILABLE,
   commands: {
     listNotes: vi.fn(),
     noteCounts: vi.fn(),
@@ -265,6 +266,56 @@ describe("ManagerWindow", () => {
     vi.mocked(commands.listNotes).mockRejectedValue(new Error("database is locked"));
     render(<ManagerWindow />);
     expect(await screen.findByRole("alert")).toHaveTextContent("database is locked");
+  });
+
+  it("says why the notes database did not open, not just that it is not open", async () => {
+    const newer =
+      "Your notes were saved by a newer version of DeskNotes. Install that version (or newer) to open them; nothing was changed.";
+    vi.mocked(commands.startupErrors).mockResolvedValue([newer]);
+    const unavailable = new CommandError("database_unavailable", "the notes database is not open");
+    vi.mocked(commands.listNotes).mockRejectedValue(unavailable);
+    vi.mocked(commands.noteCounts).mockRejectedValue(unavailable);
+    render(<ManagerWindow />);
+    await waitFor(() => expect(commands.listNotes).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(newer));
+    expect(screen.getByRole("alert")).not.toHaveTextContent("not open");
+    // Retry cannot reopen it: the reason stays.
+    await userEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(commands.listNotes).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("alert")).toHaveTextContent(newer);
+  });
+
+  it("keeps the reason when Retry is pressed before the first read has failed", async () => {
+    const newer = "Your notes were saved by a newer version of DeskNotes.";
+    vi.mocked(commands.startupErrors).mockResolvedValue([newer]);
+    vi.mocked(commands.listNotes).mockRejectedValue(
+      new CommandError("database_unavailable", "the notes database is not open"),
+    );
+    render(<ManagerWindow />);
+    // The reason is shown at once; the first read comes 120 ms later.
+    const alert = await screen.findByRole("alert");
+    expect(commands.listNotes).not.toHaveBeenCalled();
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(commands.listNotes).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("alert")).toHaveTextContent(newer);
+  });
+
+  it("does not hide another problem behind the reason the database did not open", async () => {
+    vi.mocked(commands.startupErrors).mockResolvedValue(["Your notes were saved by a newer version of DeskNotes."]);
+    vi.mocked(commands.listNotes).mockRejectedValue(
+      new CommandError("database_unavailable", "the notes database is not open"),
+    );
+    render(<ManagerWindow />);
+    await waitFor(() => expect(commands.listNotes).toHaveBeenCalled());
+    act(() => quitBlocked.handler?.(1));
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 note has unsaved text");
+  });
+
+  it("still shows a failed read over an earlier, unrelated startup problem", async () => {
+    vi.mocked(commands.startupErrors).mockResolvedValue(["The Settings window could not be opened: no display"]);
+    vi.mocked(commands.listNotes).mockRejectedValue(new Error("database is locked"));
+    render(<ManagerWindow />);
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("database is locked"));
   });
 
   it("explains when quitting was cancelled because of unsaved text", async () => {
