@@ -80,6 +80,9 @@ Database: migrations 4–8 (private notes, appearance, reminders, completed note
   (which could shift the note sideways on a click); the date gives way first, then the
   "Read-only" word, so the reminder time stays whole.
 - A database from a newer DeskNotes is no longer modified when it is refused.
+- When the notes were saved by a newer DeskNotes, the manager now says so ("Your notes were
+  saved by a newer version…") instead of only "the notes database is not open", and Retry
+  keeps that explanation. Found while testing 0.3.0-beta.1.
 - Archiving, trashing or hiding a note from the manager while several notes are open no longer
   does the same to every open note (DES-41).
 

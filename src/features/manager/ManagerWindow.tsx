@@ -3,7 +3,7 @@ import { dateGroup, doneDateLabel, listDateLabel } from "../../app/time";
 import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
-import { commands } from "../../ipc/commands";
+import { CommandError, DATABASE_UNAVAILABLE, commands } from "../../ipc/commands";
 import { onActionFailed, onNotesChanged, onPrivacyChanged, onQuitBlocked, onRemindersChanged } from "../../ipc/events";
 import { PRIVATE_FALLBACK_LABEL, type NoteCounts, type NoteFilter, type NoteSummary, type PrivacyStatus } from "../../types/note";
 import type { ReminderListRow } from "../../types/reminder";
@@ -37,6 +37,13 @@ function rowName(n: NoteSummary): string {
   return n.locked ? n.privateLabel || PRIVATE_FALLBACK_LABEL : n.title;
 }
 
+/** A message for the banner. `unavailable`: it only says the database never opened. */
+type ShownError = { text: string; unavailable: boolean };
+
+function shown(text: string, cause?: unknown): ShownError {
+  return { text, unavailable: cause instanceof CommandError && cause.code === DATABASE_UNAVAILABLE };
+}
+
 export function ManagerWindow() {
   const [tab, setTab] = useState<ManagerTab>("active");
   const [query, setQuery] = useState("");
@@ -45,7 +52,7 @@ export function ManagerWindow() {
   // The Reminders tab: its rows, the clock they were read at, and how many reminders exist in all.
   const [reminders, setReminders] = useState<{ rows: ReminderListRow[]; now: number } | null>(null);
   const [reminderTotal, setReminderTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ShownError | null>(null);
   const [startupErrors, setStartupErrors] = useState<string[]>([]);
   const [confirmPurge, setConfirmPurge] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,7 +64,7 @@ export function ManagerWindow() {
   const { width } = useWindowSize();
   const searching = query.trim() !== "";
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean> => {
     // The lock state only decides "Lock now" and the reset notice; the list does not wait for it.
     // A failed read keeps what was last known (the reset notice stays); the next refresh asks again.
     const read = ++privacyRead.current;
@@ -90,9 +97,12 @@ export function ManagerWindow() {
       if (allReminders) setReminderTotal(allReminders.length);
       if (shownReminders) setReminders({ rows: shownReminders, now: Date.now() });
       setHiddenCount(hidden);
-      setError(tab === "reminders" ? remindersError : null);
+      const failed: string | null = tab === "reminders" ? remindersError : null;
+      setError(failed === null ? null : shown(failed));
+      return true;
     } catch (e) {
-      setError((e as Error).message);
+      setError(shown((e as Error).message, e));
+      return false;
     }
   }, [tab, query]);
 
@@ -126,11 +136,13 @@ export function ManagerWindow() {
     commands.startupErrors().then(setStartupErrors, () => undefined);
     const unlisten = onQuitBlocked((count) =>
       setError(
-        `DeskNotes did not quit: ${count} ${count === 1 ? "note has" : "notes have"} unsaved text. ` +
-          "Look for the note showing \"Not saved\" and press Retry.",
+        shown(
+          `DeskNotes did not quit: ${count} ${count === 1 ? "note has" : "notes have"} unsaved text. ` +
+            "Look for the note showing \"Not saved\" and press Retry.",
+        ),
       ),
     );
-    const unlistenFailed = onActionFailed((message) => setError(message));
+    const unlistenFailed = onActionFailed((message) => setError(shown(message)));
     return () => {
       void unlisten.then((f) => f());
       void unlistenFailed.then((f) => f());
@@ -159,11 +171,12 @@ export function ManagerWindow() {
       await refresh();
     } catch (e) {
       // e.g. a locked private note cannot be deleted for good (D12): say why.
-      setError(refusalText(e));
+      setError(shown(refusalText(e), e));
     }
   }
 
-  const banner = error ?? startupErrors[0] ?? null;
+  // "Not open" says nothing new when startup already said why (e.g. notes from a newer DeskNotes).
+  const banner = (error?.unavailable ? startupErrors[0] : undefined) ?? error?.text ?? startupErrors[0] ?? null;
   const countOf = (id: ManagerTab) => (id === "reminders" ? reminderTotal : (counts?.[id] ?? 0));
   const grouped = !searching && tab === "active" && (notes?.length ?? 0) > GROUP_THRESHOLD;
 
@@ -260,8 +273,10 @@ export function ManagerWindow() {
           <button
             type="button"
             onClick={() => {
-              setStartupErrors([]);
-              void refresh();
+              // Startup problems are dismissed only once a read works again.
+              void refresh().then((ok) => {
+                if (ok) setStartupErrors([]);
+              });
             }}
           >
             Retry
