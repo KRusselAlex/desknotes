@@ -794,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "desknotes"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -818,7 +818,7 @@ dependencies = [
 
 [[package]]
 name = "desknotes-core"
-version = "0.3.0-beta.1"
+version = "0.3.0-beta.2"
 dependencies = [
  "argon2",
  "base64 0.22.1",
