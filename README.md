@@ -7,7 +7,7 @@
 Lightweight, private sticky notes for the Linux desktop. Built with Tauri 2, React and
 SQLite. Free, open source (MIT), offline, no account, no telemetry.
 
-> **Status: version 0.3.0-beta.1, a beta of Milestones 3 and 4** (note customization,
+> **Status: version 0.3.0-beta.2, a beta of Milestones 3 and 4** (note customization,
 > private notes with a PIN, images, reminders, done notes and automation rules). The last
 > stable release is 0.2.0, Milestone 2 (desktop reliability), verified on Ubuntu 24.04
 > GNOME: notes, manager, tray icon, show / hide all shortcut, backup and restore, and a
