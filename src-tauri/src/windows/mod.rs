@@ -255,7 +255,7 @@ fn build_failure_message(what: Building, e: &dyn std::fmt::Display) -> String {
 /// Tell the owner about a window that could not be (re)opened: the message goes
 /// on the manager's error list and the manager is shown.
 pub(crate) fn report_window_problem(app: &AppHandle, message: String) {
-    app.state::<AppState>().push_error(message);
+    app.state::<AppState>().push_error(app, message);
     let _ = show_manager(app);
 }
 
@@ -722,15 +722,21 @@ pub fn restore_on_startup(app: &AppHandle) {
     let notes = match state.with_db(|db| db.notes_to_show()) {
         Ok((notes, unreadable)) => {
             for id in unreadable {
-                state.push_error(format!(
-                    "Note {id} could not be read and was not opened. Its data was left untouched."
-                ));
+                state.push_error(
+                    app,
+                    format!(
+                        "Note {id} could not be read and was not opened. Its data was left untouched."
+                    ),
+                );
             }
             notes
         }
         Err(e) if e.code == crate::state::DATABASE_UNAVAILABLE => Vec::new(), // already reported
         Err(e) => {
-            state.push_error(format!("Saved notes could not be loaded: {}", e.message));
+            state.push_error(
+                app,
+                format!("Saved notes could not be loaded: {}", e.message),
+            );
             Vec::new()
         }
     };

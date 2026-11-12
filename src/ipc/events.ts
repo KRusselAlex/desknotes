@@ -55,6 +55,16 @@ export function onActionFailed(handler: (message: string) => void): Promise<Unli
   return listen<string>(ACTION_FAILED, (event) => handler(event.payload));
 }
 
+export const ERRORS_CHANGED = "errors-changed";
+
+/**
+ * A problem was added to the manager's error list, e.g. a window failed to open after startup.
+ * The payload is the whole list, oldest first; the list only grows. Sent to the manager only.
+ */
+export function onErrorsChanged(handler: (errors: string[]) => void): Promise<UnlistenFn> {
+  return listenHere(ERRORS_CHANGED, handler);
+}
+
 export const PRIVACY_CHANGED = "privacy-changed";
 
 /** The privacy lock turned on or off. Sent to every window, or to one note

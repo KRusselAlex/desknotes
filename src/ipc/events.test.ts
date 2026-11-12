@@ -9,6 +9,7 @@ import {
   APP_APPEARANCE_CHANGED,
   AUTOMATIONS_CHANGED,
   CHECKLIST_RESET,
+  ERRORS_CHANGED,
   IMAGES_DROPPED,
   NOTE_ACTION,
   NOTE_RESIZED,
@@ -19,6 +20,7 @@ import {
   onAppAppearanceChanged,
   onAutomationsChanged,
   onChecklistReset,
+  onErrorsChanged,
   onImagesDropped,
   onNoteAction,
   onNoteResized,
@@ -143,6 +145,7 @@ describe("events sent to one window", () => {
     [NOTE_RESIZED, "note-resized", onNoteResized, { id: "n", width: 300, height: 200 }],
     [NOTE_SETTINGS_NOTE, "note-settings-note", onNoteSettingsNote, "n"],
     [CHECKLIST_RESET, "checklist-reset", onChecklistReset, { noteId: "abc" }],
+    [ERRORS_CHANGED, "errors-changed", onErrorsChanged, ["The Settings window could not be opened: no display"]],
     [IMAGES_DROPPED, "images-dropped", onImagesDropped, { noteId: "n", images: [], texts: [], problem: null, x: 1, y: 2 }],
   ] as [string, string, (h: (p: unknown) => void) => Promise<unknown>, unknown][])(
     "%s listens for this window only and passes the payload on",

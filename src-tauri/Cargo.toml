@@ -35,6 +35,8 @@ chrono-tz = "=0.10.4"
 # A second connection to a scratch database, to make one write fail (R8 rollback tests).
 rusqlite = { workspace = true }
 tempfile = "3"
+# Tauri's mock runtime, to check which windows an event reaches.
+tauri = { version = "2", features = ["tray-icon", "test"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Same version Tauri uses; only to name the WebKit view type shared between windows.

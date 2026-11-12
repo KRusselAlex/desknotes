@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use desknotes_core::{CoreError, CoreResult, Database, now_ms};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, Runtime};
 
 use crate::automation::PendingResets;
 use crate::error::{IpcError, IpcResult};
@@ -26,8 +26,8 @@ pub fn with_db<T>(db: &SharedDb, f: impl FnOnce(&Database) -> CoreResult<T>) -> 
 
 pub struct AppState {
     db: Arc<SharedDb>,
-    /// Problems found at startup, shown in the manager. Never contains note text.
-    startup_errors: Mutex<Vec<String>>,
+    /// Problems found at startup or reported later, shown in the manager.
+    startup_errors: ErrorList,
     pub geometry: GeometryWriter,
     pub quit: QuitCoordinator,
     /// A validated backup chosen in the restore dialog, waiting for confirmation.
@@ -120,7 +120,7 @@ impl AppState {
         Self {
             geometry: GeometryWriter::spawn(db.clone()),
             db,
-            startup_errors: Mutex::new(errors),
+            startup_errors: ErrorList::new(errors),
             quit: QuitCoordinator::default(),
             pending_restore: Mutex::new(None),
             tray: AtomicBool::new(false),
@@ -166,24 +166,95 @@ impl AppState {
         self.notes_action.store(false, Ordering::Release);
     }
 
-    pub fn push_error(&self, message: String) {
-        eprintln!("DeskNotes: {message}");
-        if let Ok(mut errors) = self.startup_errors.lock() {
-            errors.push(message);
-        }
+    /// Add a problem for the manager to show, and tell an open manager.
+    pub fn push_error(&self, app: &AppHandle, message: String) {
+        self.startup_errors.push(app, message);
     }
 
     pub fn errors(&self) -> Vec<String> {
-        self.startup_errors
-            .lock()
-            .map(|e| e.clone())
-            .unwrap_or_default()
+        self.startup_errors.all()
+    }
+}
+
+/// Sent to the manager each time a problem is added to the error list. The payload is
+/// the whole list, oldest first; the list only grows, so a longer one is newer.
+pub const ERRORS_CHANGED: &str = "errors-changed";
+
+/// Problems for the manager to show, oldest first. Never contains note text.
+/// Problems are only ever added: the manager hides the ones Retry dismissed.
+pub struct ErrorList(Mutex<Vec<String>>);
+
+impl ErrorList {
+    pub fn new(errors: Vec<String>) -> Self {
+        Self(Mutex::new(errors))
+    }
+
+    /// Add `message` and send the new list to the manager. The manager also reads the
+    /// list when it opens, so a problem added before it exists is not lost.
+    pub fn push<R: Runtime>(&self, app: &impl Emitter<R>, message: String) {
+        eprintln!("DeskNotes: {message}");
+        let Ok(mut errors) = self.0.lock() else {
+            return;
+        };
+        errors.push(message);
+        let all = errors.clone();
+        drop(errors);
+        let manager = EventTarget::webview_window(crate::windows::MANAGER);
+        if let Err(e) = app.emit_to(manager, ERRORS_CHANGED, all) {
+            eprintln!("DeskNotes: could not tell the manager about a problem: {e}");
+        }
+    }
+
+    pub fn all(&self) -> Vec<String> {
+        self.0.lock().map(|e| e.clone()).unwrap_or_default()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::{Listener, WebviewUrl, WebviewWindowBuilder};
+
+    #[test]
+    fn a_new_problem_sends_the_whole_list_to_the_manager_only() {
+        let app = tauri::test::mock_app();
+        let manager =
+            WebviewWindowBuilder::new(&app, crate::windows::MANAGER, WebviewUrl::default())
+                .build()
+                .unwrap();
+        let note = WebviewWindowBuilder::new(&app, "note-abc", WebviewUrl::default())
+            .build()
+            .unwrap();
+        let to_manager = Arc::new(Mutex::new(Vec::new()));
+        let to_note = Arc::new(Mutex::new(Vec::new()));
+        let sink = to_manager.clone();
+        manager.listen(ERRORS_CHANGED, move |e| {
+            sink.lock().unwrap().push(e.payload().to_string())
+        });
+        let sink = to_note.clone();
+        note.listen(ERRORS_CHANGED, move |e| {
+            sink.lock().unwrap().push(e.payload().to_string())
+        });
+
+        let list = ErrorList::new(vec!["Found at startup".into()]);
+        list.push(
+            &app,
+            "The Settings window could not be opened: no display".into(),
+        );
+
+        assert_eq!(
+            list.all(),
+            [
+                "Found at startup",
+                "The Settings window could not be opened: no display"
+            ]
+        );
+        assert_eq!(
+            *to_manager.lock().unwrap(),
+            [r#"["Found at startup","The Settings window could not be opened: no display"]"#]
+        );
+        assert!(to_note.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn newer_database_message() {
