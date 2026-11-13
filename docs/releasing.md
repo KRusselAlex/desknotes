@@ -131,7 +131,7 @@ expected and changes no data; confirm with `Y`.
 ### 6. Publish the draft
 
 The previous release must already be published (not a draft) before a new release goes
-public, because users roll back to it. (v0.2.0 is still a draft: publish it first.)
+public, because users roll back to it. (v0.2.0 was published on 2026-11-13.)
 
 On the [releases page](https://github.com/KRusselAlex/desknotes/releases) open the draft,
 read the notes and the file list (`.deb`, `.AppImage`, `SHA256SUMS`), and click
