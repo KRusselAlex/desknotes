@@ -784,16 +784,20 @@ real-app check are.
   - A restore tells the scheduler inside the same database call (`database_replaced`,
     which bumps an epoch). A pass reads the epoch inside its own database calls, so a
     notification gathered from the replaced database is closed and never recorded.
-  - It re-anchors reminders when the UTC offset changes, and never sends a reminder
-    twice.
+  - It re-anchors reminders when the time zone changes: its UTC offset, or its name
+    (`iana-time-zone`), since two zones can share an offset today and differ at their
+    next summer-time change. It never sends a reminder twice.
   - Notifications go over D-Bus (`platform/notify.rs`), with one connection kept open.
-  - When the lock engages, notifications that showed a now-locked title are closed.
+  - A clicked notification stays tracked until the desktop reports it closed, since some
+    desktops keep it on screen. When the lock engages, notifications that showed a
+    now-locked title are closed.
 - **Code:** `src/features/notes/ReminderPopover.tsx`, `reminderText.ts`, `timeInput.ts`,
   `noteHooks.ts` (`useReminder`);
   `src/features/manager/RemindersList.tsx`, `reminderGroups.ts`;
   `commands/reminders.rs`; `db/reminders.rs`.
 - **Design and check:** [spec](superpowers/specs/2026-11-04-reminders-design.md),
-  [check](testing/m4-reminders-verification.md).
+  [check](testing/m4-reminders-verification.md),
+  [zone and click check](testing/m5-des37-zone-and-clicks-verification.md).
 
 ### 6.10 Privacy lock and PIN reset
 

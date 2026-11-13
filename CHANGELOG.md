@@ -6,6 +6,12 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Reminders keep their time when the computer moves to a time zone with the same offset
+  today but different summer-time dates (for example London to Abidjan in winter).
+- On desktops that keep a clicked notification on screen, a reminder notification you
+  clicked is now still taken away when the privacy lock engages or the reminder changes.
+
 ## [0.3.0] — 2026-11-11 — Milestones 3 and 4: customization, privacy and reminders
 
 Database: migrations 4–8 (private notes, appearance, reminders, completed notes, images); backup format 6. A copy is made before upgrading.

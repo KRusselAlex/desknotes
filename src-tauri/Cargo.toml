@@ -28,6 +28,9 @@ tauri-plugin-dialog = "2"
 # Same version and features as desknotes-core: `Local` and `Utc::now` for the reminder
 # scheduler (the core's time rules take the time and the zone as arguments).
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# The zone's name, so a change to a zone with the same offset is noticed (already in
+# the build through chrono).
+iana-time-zone = "0.1.65"
 
 [dev-dependencies]
 # Same version as desknotes-core's tests: a fixed IANA zone for the reminder tests.

@@ -801,6 +801,7 @@ dependencies = [
  "desknotes-core",
  "gio",
  "gtk",
+ "iana-time-zone",
  "rusqlite",
  "serde",
  "serde_json",
