@@ -3,7 +3,7 @@
 //! One thread waits until the next reminder is due, or 60 s at most, so a change of
 //! the clock or the time zone is noticed within a minute. It also wakes at once when a
 //! reminder changes, at start and when the computer resumes from sleep. On each wake
-//! it re-anchors the reminders if the local UTC offset changed (ruling R4) or a backup
+//! it re-anchors the reminders if the time zone changed (ruling R4) or a backup
 //! was restored, asks the core which reminders are due, sends one notification per
 //! reminder and records it as fired; a fire that could not be recorded is retried and
 //! never sent twice. The core owns every time rule; this module only moves data
@@ -264,7 +264,7 @@ pub struct Scheduler {
     /// The privacy lock engaged: close notifications that show a now-withheld title.
     lock_engaged: AtomicBool,
     /// The database was replaced (a backup restored): re-anchor at the next pass, as
-    /// when the UTC offset changes, since its due times may come from another zone.
+    /// when the time zone changes, since its due times may come from another zone.
     reanchor_pending: AtomicBool,
     /// The computer resumed from sleep, or a backup was restored: the next pass is a
     /// burst again, capped at [`STARTUP_LIMIT`] like the one at start (owner decisions
@@ -351,6 +351,12 @@ impl Scheduler {
         }
         drop(shown);
         lock(&self.to_close).extend(ids);
+    }
+
+    /// The desktop closed notification `id` (dismissed, expired or clicked away).
+    fn notification_closed(&self, id: u32) {
+        lock(&self.shown).remove(&id);
+        lock(&self.to_close).retain(|queued| *queued != id);
     }
 
     /// Close now the notifications queued by [`Self::forget_note`].
@@ -458,8 +464,8 @@ struct Run {
     /// Reminder notifications sent during the start-up burst (across retries), so a
     /// failed send cannot raise the burst above [`STARTUP_LIMIT`].
     burst_sent: usize,
-    /// The local UTC offset (seconds) at the last pass; `None` before the first.
-    offset: Option<i32>,
+    /// The computer's time zone at the last pass; `None` before the first.
+    zone: Option<Zone>,
     /// No notification is tried before this, after the service failed.
     retry_at: Option<Instant>,
     /// The last failure was logged; cleared by a success.
@@ -482,7 +488,7 @@ impl Run {
         Self {
             first: true,
             burst_sent: 0,
-            offset: None,
+            zone: None,
             retry_at: None,
             failing: false,
             unavailable: false,
@@ -493,9 +499,22 @@ impl Run {
     }
 }
 
+/// The computer's time zone as a pass sees it: its UTC offset (seconds) now, and its
+/// name when the system gives one. A change of either re-anchors (ruling R4): two zones
+/// can share an offset today and still differ at their next daylight-saving change.
+/// Without a name, only an offset change is noticed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Zone {
+    pub offset: i32,
+    pub name: Option<String>,
+}
+
 /// Wall-clock time that ran this much past the monotonic clock (which stops while the
 /// computer sleeps) means the computer slept.
 const SLEEP_GAP_MS: i64 = 30_000;
+
+/// Longer than chrono's `Local` reuses a loaded zone without checking /etc/localtime (1 s).
+const LOCAL_ZONE_CACHE: Duration = Duration::from_millis(1100);
 
 /// Whether the computer slept between two passes: `wall_ms` of wall-clock time went by
 /// while the monotonic clock counted only `mono`. A clock set forward by hand also
@@ -521,14 +540,26 @@ fn run(app: &AppHandle) {
             scheduler.burst_pending.store(true, Ordering::Release);
         }
         last_pass = Some((Instant::now(), wall_now));
-        let offset = Local::now().offset().fix().local_minus_utc();
+        // The name is read fresh each time, but chrono's `Local` keeps using the zone it
+        // last loaded for up to a second (per thread) without looking at /etc/localtime.
+        // When the name just changed, wait that out, so the offset below and the re-anchor
+        // use the new zone's rules; otherwise the change would be recorded but re-anchored
+        // with the old rules, and never tried again.
+        let name = iana_time_zone::get_timezone().ok();
+        if run.zone.as_ref().is_some_and(|z| z.name != name) {
+            std::thread::sleep(LOCAL_ZONE_CACHE);
+        }
+        let zone = Zone {
+            offset: Local::now().offset().fix().local_minus_utc(),
+            name,
+        };
         let changed = pass(
             &*state,
             &scheduler,
             &mut run,
             Utc::now(),
             &Local,
-            offset,
+            &zone,
             &mut log,
         );
         // Automation rule 2, for each fire just recorded (live or in the start-up
@@ -549,7 +580,7 @@ fn run(app: &AppHandle) {
 }
 
 /// One wake: close out-of-date and newly withheld notifications, re-anchor if the
-/// zone's offset changed, send what is due and record it fired. Returns whether any
+/// time zone changed, send what is due and record it fired. Returns whether any
 /// reminder changed. `log` lines never contain a title.
 fn pass<D: DbAccess, Tz: TimeZone>(
     db: &D,
@@ -557,7 +588,7 @@ fn pass<D: DbAccess, Tz: TimeZone>(
     run: &mut Run,
     now: DateTime<Utc>,
     tz: &Tz,
-    offset: i32,
+    zone: &Zone,
     log: &mut dyn FnMut(&str),
 ) -> bool {
     // Out-of-date notifications (their reminder changed) go first.
@@ -615,7 +646,7 @@ fn pass<D: DbAccess, Tz: TimeZone>(
     }
 
     let mut changed = false;
-    // A restored backup re-anchors as an offset change does. Kept if the read fails.
+    // A restored backup re-anchors as a zone change does. Kept if the read fails.
     // Read under the database lock, with the epoch: a restore sets all three in its own
     // call. After sleep or a restore, what is due arrives as a capped burst, as at start.
     let mut reanchor = false;
@@ -625,14 +656,14 @@ fn pass<D: DbAccess, Tz: TimeZone>(
         reanchor = scheduler.reanchor_pending.swap(false, Ordering::AcqRel);
         burst = scheduler.burst_pending.swap(false, Ordering::AcqRel);
         gathered_epoch = scheduler.epoch.load(Ordering::Acquire);
-        if reanchor || run.offset != Some(offset) {
+        if reanchor || run.zone.as_ref() != Some(zone) {
             changed |= db.reanchor_reminders(now, tz)? > 0;
         }
         gather(db, now, tz)
     });
     let mut items = match gathered {
         Ok(items) => {
-            run.offset = Some(offset);
+            run.zone = Some(zone.clone());
             run.unavailable = false;
             if burst {
                 run.first = true;
@@ -781,8 +812,10 @@ fn handle_action<D: DbAccess, Tz: TimeZone>(
     now: DateTime<Utc>,
     tz: &Tz,
 ) -> ActionOutcome {
-    // Unknown ids belong to another app or were already answered.
-    let Some(shown) = lock(&scheduler.shown).remove(&id) else {
+    // Unknown ids belong to another app or were closed. A clicked notification stays
+    // known until the desktop says it closed: some desktops keep it on screen, and the
+    // lock must still be able to take its title away (R10).
+    let Some(shown) = lock(&scheduler.shown).get(&id).cloned() else {
         return ActionOutcome::Ignored;
     };
     match (shown.reminder, action_for_key(key)) {
@@ -809,7 +842,7 @@ fn on_signal(app: &AppHandle, signal: Signal) {
     };
     let (id, key) = match signal {
         Signal::Closed { id } => {
-            lock(&scheduler.shown).remove(&id);
+            scheduler.notification_closed(id);
             return;
         }
         Signal::Action { id, key } => (id, key),
@@ -1196,10 +1229,15 @@ mod tests {
         (fake, s)
     }
 
-    const PARIS_OFFSET: i32 = 3600;
+    fn paris() -> Zone {
+        Zone {
+            offset: 3600,
+            name: Some("Europe/Paris".into()),
+        }
+    }
 
     fn tick<D: DbAccess>(db: &D, s: &Scheduler, run: &mut Run, log: &mut Vec<String>) -> bool {
-        pass(db, s, run, now(), &Paris, PARIS_OFFSET, &mut |l| {
+        pass(db, s, run, now(), &Paris, &paris(), &mut |l| {
             log.push(l.to_owned())
         })
     }
@@ -1791,15 +1829,9 @@ mod tests {
 
         // Not answered; the next day's occurrence is sent (ruling R5).
         let tomorrow = utc(2026, 11, 5, 10, 0);
-        pass(
-            &db,
-            &s,
-            &mut run,
-            tomorrow,
-            &Paris,
-            PARIS_OFFSET,
-            &mut |l| log.push(l.to_owned()),
-        );
+        pass(&db, &s, &mut run, tomorrow, &Paris, &paris(), &mut |l| {
+            log.push(l.to_owned())
+        });
         let latest = fake.last_id();
         assert_ne!(latest, daily);
         assert_eq!(fake.state().closed, [daily], "the old one is taken away");
@@ -1822,13 +1854,16 @@ mod tests {
         let new_york_due = utc(2026, 11, 4, 20, 0).timestamp_millis();
         let (_fake, s) = scheduler();
         let (mut run, mut log) = (Run::new(), Vec::new());
-        let ny_offset = -5 * 3600;
+        let new_york = Zone {
+            offset: -5 * 3600,
+            name: Some("America/New_York".into()),
+        };
         let mut tick_ny = |s: &Scheduler, run: &mut Run| {
-            pass(&db, s, run, now(), &New_York, ny_offset, &mut |l| {
+            pass(&db, s, run, now(), &New_York, &new_york, &mut |l| {
                 log.push(l.to_owned())
             })
         };
-        run.offset = Some(ny_offset);
+        run.zone = Some(new_york.clone());
         tick_ny(&s, &mut run);
         assert_eq!(
             db.reminder(&id).unwrap().unwrap().due_at,
@@ -1840,6 +1875,80 @@ mod tests {
         assert!(tick_ny(&s, &mut run), "a reminder changed");
         assert_eq!(db.reminder(&id).unwrap().unwrap().due_at, new_york_due);
         assert!(!s.reanchor_pending.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_zone_with_the_same_offset_but_other_rules_reanchors() {
+        use chrono_tz::{Africa::Abidjan, Europe::London};
+        let db = Database::open_in_memory().unwrap();
+        let id = db.create_note(None).unwrap().id;
+        // 09:00 on 1 June 2027, picked in London: summer time then, so 08:00 UTC.
+        let rule = validate_rule("2027-06-01", "09:00", "none").unwrap();
+        db.set_reminder(&id, rule, now(), &London).unwrap();
+        let (_fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        let london = Zone {
+            offset: 0,
+            name: Some("Europe/London".into()),
+        };
+        pass(&db, &s, &mut run, now(), &London, &london, &mut |l| {
+            log.push(l.to_owned())
+        });
+        let due = || db.reminder(&id).unwrap().unwrap().due_at;
+        assert_eq!(due(), utc(2027, 6, 1, 8, 0).timestamp_millis());
+
+        // The computer moves to Abidjan: UTC+0 today too, but no summer time.
+        let abidjan = Zone {
+            offset: 0,
+            name: Some("Africa/Abidjan".into()),
+        };
+        let changed = pass(&db, &s, &mut run, now(), &Abidjan, &abidjan, &mut |l| {
+            log.push(l.to_owned())
+        });
+        assert!(changed, "a reminder changed");
+        assert_eq!(due(), utc(2027, 6, 1, 9, 0).timestamp_millis());
+    }
+
+    #[test]
+    fn a_clicked_notification_is_kept_so_the_lock_can_still_close_it() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_new_pin("482913").unwrap();
+        db.set_privacy_locked(false, &[]);
+        private_note_with_due_reminder(&db, "Bank");
+        let (fake, s) = scheduler();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        let bank = fake.last_id();
+        assert!(matches!(
+            handle_action(&db, &s, bank, "default", now(), &Paris),
+            ActionOutcome::OpenNote(_)
+        ));
+        // Some desktops keep a clicked notification on screen, title and all.
+        assert!(lock(&s.shown).contains_key(&bank));
+
+        db.set_privacy_locked(true, &[]);
+        s.lock_engaged.store(true, Ordering::Release);
+        tick(&db, &s, &mut run, &mut log);
+        assert_eq!(fake.state().closed, [bank]);
+    }
+
+    #[test]
+    fn a_notification_the_desktop_closed_is_not_closed_again() {
+        let (fake, s) = scheduler();
+        let shown = Shown {
+            reminder: Some(("a".to_owned(), 1)),
+            showed_title: true,
+        };
+        lock(&s.shown).extend([(1, shown.clone()), (2, shown)]);
+        s.notification_closed(2);
+        assert_eq!(lock(&s.shown).keys().copied().collect::<Vec<_>>(), [1]);
+        // Queued for closing (the reminder changed), then closed by the desktop.
+        s.forget_note("a");
+        s.notification_closed(1);
+        let db = Database::open_in_memory().unwrap();
+        let (mut run, mut log) = (Run::new(), Vec::new());
+        tick(&db, &s, &mut run, &mut log);
+        assert!(fake.state().closed.is_empty());
     }
 
     #[test]
@@ -1863,7 +1972,10 @@ mod tests {
         let out = handle_action(&db, &s, shown, "dismiss", now(), &Paris);
         assert_eq!(out, ActionOutcome::Ignored);
         assert_eq!(db.reminder(&id).unwrap(), Some(tomorrow));
-        assert!(!lock(&s.shown).contains_key(&shown), "forgotten");
+        assert!(
+            lock(&s.shown).contains_key(&shown),
+            "kept until it closes, so the lock can still take it away"
+        );
     }
 
     #[test]
@@ -1932,9 +2044,12 @@ mod tests {
             db.reminder(&id).unwrap().unwrap().snoozed_until,
             Some(utc(2026, 11, 4, 11, 0).timestamp_millis())
         );
-        // The note's other notification is closed at the next pass; the other note's stays.
+        // The note's notifications are closed at the next pass, the clicked one too in case
+        // the desktop kept it; the other note's stays.
         tick(&db, &s, &mut run, &mut log);
-        assert_eq!(fake.state().closed, [7]);
+        let mut closed = fake.state().closed.clone();
+        closed.sort();
+        assert_eq!(closed, [7, dentist]);
         assert!(lock(&s.shown).contains_key(&bakery));
         assert!(db.reminder(&other).unwrap().is_some());
 
@@ -1944,6 +2059,10 @@ mod tests {
             ActionOutcome::Changed(other.clone())
         );
         assert_eq!(db.reminder(&other).unwrap(), None);
+        // As on GNOME, the desktop closes it right after the click: not closed again.
+        s.notification_closed(bakery);
+        tick(&db, &s, &mut run, &mut log);
+        assert!(!fake.state().closed.contains(&bakery));
         // Answered once: a second click is ignored.
         assert_eq!(
             handle_action(&db, &s, bakery, "dismiss", now(), &Paris),
