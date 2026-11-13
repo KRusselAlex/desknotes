@@ -430,7 +430,7 @@ registered in `src-tauri/src/lib.rs`.
 | Command | What it does | Called by |
 |---|---|---|
 | `show_manager` | Shows the manager | Note window |
-| `startup_errors` | Problems found at start-up | Manager |
+| `startup_errors` | Problems found at start-up or reported since (later ones also arrive as `errors-changed`) | Manager |
 | `quit_app` | Saves all notes, then quits. Cancels with `quit-blocked` if any note holds unsaved text | Manager; tray (Rust) |
 | `quit_ready` | A note window's answer to `save-all-notes` | Note window |
 
@@ -502,8 +502,8 @@ While the lock is on, an image used only by locked private notes gets an empty 4
 
 ### Events
 
-Names live in `src/ipc/events.ts` and `src-tauri/src/windows/mod.rs` (`PRIVACY_CHANGED`
-and `ACTION_FAILED` are defined in `privacy.rs` and `tray.rs`).
+Names live in `src/ipc/events.ts` and `src-tauri/src/windows/mod.rs` (`PRIVACY_CHANGED`,
+`ACTION_FAILED` and `ERRORS_CHANGED` are defined in `privacy.rs`, `tray.rs` and `state.rs`).
 
 - **App-wide** means emitted with `app.emit`, to every window.
 - **Window-scoped** means emitted with `app.emit_to(label, …)`.
@@ -515,6 +515,7 @@ and `ACTION_FAILED` are defined in `privacy.rs` and `tray.rs`).
 | `quit-blocked` | count of unsaved notes | `commands/app.rs` | App-wide | Manager |
 | `note-action` | `"hide" \| "archive" \| "trash" \| "complete" \| "reopen"` | `windows::delegate_to_note` (an action started outside an open note) and `set_note_appearance` (`reopen`) | Window-scoped: that note | Note window: saves, then acts |
 | `action-failed` | message | `tray.rs` | App-wide | Manager |
+| `errors-changed` | the whole error list, oldest first (it only grows); never note text | `state::ErrorList::push` (via `AppState::push_error`: a window that failed to open, an unreadable note at startup) | Window-scoped: `manager` | Manager: shows the newest list in its banner |
 | `privacy-changed` | `{ locked }` | `privacy.rs` | App-wide. Also window-scoped to one note window when a note kept open at the last lock now locks | Manager, Note window, Privacy pane |
 | `settings-section` | section name | `windows::open_settings` | Window-scoped: `settings` | Settings |
 | `note-resized` | `{ id, width, height }` | `windows::on_window_event`, while Note settings is open | Window-scoped: `note_settings` | Note settings |
@@ -529,7 +530,7 @@ and `ACTION_FAILED` are defined in `privacy.rs` and `tray.rs`).
 listeners in every window. So the helpers for window-scoped events use `listenHere()` in
 `src/ipc/events.ts`, which listens with the current webview window as target:
 `note-action`, `privacy-changed`, `settings-section`, `note-resized`,
-`note-settings-note`, `images-dropped` and `checklist-reset`. App-wide events use plain
+`note-settings-note`, `images-dropped`, `checklist-reset` and `errors-changed`. App-wide events use plain
 `listen()`. This fixed DES-41, where Trash on one note's manager row could also trash
 another open note ([PR #25](https://github.com/KRusselAlex/desknotes/pull/25),
 [check](testing/des-41-window-events-verification.md)).

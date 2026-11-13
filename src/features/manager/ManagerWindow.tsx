@@ -4,7 +4,7 @@ import { useWindowSize } from "../../app/useWindowSize";
 import { Icon } from "../../components/Icon";
 import { Menu } from "../../components/Menu";
 import { CommandError, DATABASE_UNAVAILABLE, commands } from "../../ipc/commands";
-import { onActionFailed, onNotesChanged, onPrivacyChanged, onQuitBlocked, onRemindersChanged } from "../../ipc/events";
+import { onActionFailed, onErrorsChanged, onNotesChanged, onPrivacyChanged, onQuitBlocked, onRemindersChanged } from "../../ipc/events";
 import { PRIVATE_FALLBACK_LABEL, type NoteCounts, type NoteFilter, type NoteSummary, type PrivacyStatus } from "../../types/note";
 import type { ReminderListRow } from "../../types/reminder";
 import { refusalText } from "../privacy/refusal";
@@ -53,7 +53,8 @@ export function ManagerWindow() {
   const [reminders, setReminders] = useState<{ rows: ReminderListRow[]; now: number } | null>(null);
   const [reminderTotal, setReminderTotal] = useState(0);
   const [error, setError] = useState<ShownError | null>(null);
-  const [startupErrors, setStartupErrors] = useState<string[]>([]);
+  // Rust's error list (it only grows) and how many of its oldest entries Retry dismissed.
+  const [problems, setProblems] = useState<{ all: string[]; dismissed: number }>({ all: [], dismissed: 0 });
   const [confirmPurge, setConfirmPurge] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [hiddenCount, setHiddenCount] = useState(0);
@@ -133,7 +134,14 @@ export function ManagerWindow() {
   }, [tab, refresh]);
 
   useEffect(() => {
-    commands.startupErrors().then(setStartupErrors, () => undefined);
+    // The longer list is the newer one: a late answer to the first read cannot undo an event.
+    const learn = (all: string[]) => setProblems((p) => (all.length > p.all.length ? { ...p, all } : p));
+    // Listen first, then read, so a problem reported in between is not missed.
+    const unlistenErrors = onErrorsChanged(learn);
+    void unlistenErrors
+      .catch(() => undefined)
+      .then(() => commands.startupErrors())
+      .then(learn, () => undefined);
     const unlisten = onQuitBlocked((count) =>
       setError(
         shown(
@@ -146,6 +154,7 @@ export function ManagerWindow() {
     return () => {
       void unlisten.then((f) => f());
       void unlistenFailed.then((f) => f());
+      void unlistenErrors.then((f) => f(), () => undefined);
     };
   }, []);
 
@@ -176,6 +185,7 @@ export function ManagerWindow() {
   }
 
   // "Not open" says nothing new when startup already said why (e.g. notes from a newer DeskNotes).
+  const startupErrors = problems.all.slice(problems.dismissed);
   const banner = (error?.unavailable ? startupErrors[0] : undefined) ?? error?.text ?? startupErrors[0] ?? null;
   const countOf = (id: ManagerTab) => (id === "reminders" ? reminderTotal : (counts?.[id] ?? 0));
   const grouped = !searching && tab === "active" && (notes?.length ?? 0) > GROUP_THRESHOLD;
@@ -273,9 +283,11 @@ export function ManagerWindow() {
           <button
             type="button"
             onClick={() => {
-              // Startup problems are dismissed only once a read works again.
+              // Startup problems are dismissed only once a read works again; one that
+              // arrives meanwhile was not seen yet, so it stays.
+              const seen = problems.all.length;
               void refresh().then((ok) => {
-                if (ok) setStartupErrors([]);
+                if (ok) setProblems((p) => ({ ...p, dismissed: Math.max(p.dismissed, seen) }));
               });
             }}
           >

@@ -7,6 +7,7 @@ import { doneDateLabel } from "../../app/time";
 const quitBlocked: { handler?: (count: number) => void } = {};
 const privacyChanged: { handler?: (e: { locked: boolean }) => void } = {};
 const remindersChanged: { handler?: (e: { noteId: string | null }) => void } = {};
+const errorsChanged: { handler?: (errors: string[]) => void } = {};
 vi.mock("../../ipc/events", () => ({
   onNotesChanged: () => Promise.resolve(() => undefined),
   onPrivacyChanged: (h: (e: { locked: boolean }) => void) => {
@@ -18,6 +19,10 @@ vi.mock("../../ipc/events", () => ({
     return Promise.resolve(() => undefined);
   },
   onActionFailed: () => Promise.resolve(() => undefined),
+  onErrorsChanged: (h: (errors: string[]) => void) => {
+    errorsChanged.handler = h;
+    return Promise.resolve(() => undefined);
+  },
   onQuitBlocked: (h: (count: number) => void) => {
     quitBlocked.handler = h;
     return Promise.resolve(() => undefined);
@@ -316,6 +321,41 @@ describe("ManagerWindow", () => {
     vi.mocked(commands.listNotes).mockRejectedValue(new Error("database is locked"));
     render(<ManagerWindow />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("database is locked"));
+  });
+
+  it("shows a problem reported after the manager opened", async () => {
+    vi.mocked(commands.listNotes).mockResolvedValue([note()]);
+    render(<ManagerWindow />);
+    await screen.findByRole("listitem");
+    expect(screen.queryByRole("alert")).toBeNull();
+    // e.g. the Settings window failed to open: Rust adds it to the list and sends the whole list.
+    act(() => errorsChanged.handler?.(["The Settings window could not be opened: no display"]));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The Settings window could not be opened");
+  });
+
+  it("keeps a problem dismissed by Retry dismissed when a later one arrives", async () => {
+    const first = "Note n9 could not be read and was not opened. Its data was left untouched.";
+    vi.mocked(commands.startupErrors).mockResolvedValue([first]);
+    vi.mocked(commands.listNotes).mockResolvedValue([note()]);
+    render(<ManagerWindow />);
+    const alert = await screen.findByRole("alert");
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    const later = "The Note settings window could not be opened: no display";
+    act(() => errorsChanged.handler?.([first, later]));
+    expect(await screen.findByRole("alert")).toHaveTextContent(later);
+    expect(screen.getByRole("alert")).not.toHaveTextContent(first);
+  });
+
+  it("does not let a late first read undo a newer list", async () => {
+    let answer: (errors: string[]) => void = () => undefined;
+    vi.mocked(commands.startupErrors).mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    vi.mocked(commands.listNotes).mockResolvedValue([note()]);
+    render(<ManagerWindow />);
+    await screen.findByRole("listitem");
+    act(() => errorsChanged.handler?.(["The Settings window could not be opened: no display"]));
+    await act(async () => answer([]));
+    expect(screen.getByRole("alert")).toHaveTextContent("The Settings window could not be opened");
   });
 
   it("explains when quitting was cancelled because of unsaved text", async () => {
