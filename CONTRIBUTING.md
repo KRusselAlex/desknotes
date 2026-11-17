@@ -64,6 +64,28 @@ cargo clippy -p desknotes-core --all-targets -- -D warnings
 npm run tauri dev           # run the desktop app (needs the Ubuntu packages in README)
 ```
 
+### End-to-end tests
+
+They start the real app on a hidden display and drive its windows through WebDriver,
+with scratch data (never your notes). They need two extra tools, once:
+
+```bash
+sudo apt install webkit2gtk-driver xvfb x11-utils
+cargo install tauri-driver --locked
+```
+
+Then build the app and run them (about 15 seconds). Always go through `npm run test:e2e`:
+the tests refuse to start otherwise, because without the isolation the test app could
+hand over to your DeskNotes.
+
+```bash
+npm run tauri build -- --no-bundle
+npm run test:e2e                      # vitest arguments work too: npm run test:e2e -- -t restart
+```
+
+The tests are in `tests/e2e`; `docs/architecture.md` (section 7) explains how they are
+isolated and what they cannot reach.
+
 ### UI preview without the desktop app
 
 `npm run dev`, then open:
