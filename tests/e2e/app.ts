@@ -10,7 +10,7 @@ import { Session, waitFor } from "./webdriver";
 
 // Outside scripts/e2e/run.sh the app would use the real display, session bus and home
 // folder: it could hand over to the owner's DeskNotes, or take notes the owner types.
-function scratchFolder(): string {
+export function scratchFolder(): string {
   const dir = process.env.DESKNOTES_E2E_TMP;
   if (!dir || !process.env.HOME?.startsWith(dir + "/")) {
     throw new Error("Run the end-to-end tests with `npm run test:e2e` (scripts/e2e/run.sh), never vitest directly.");
@@ -111,7 +111,7 @@ export class App {
    */
   async manager(): Promise<void> {
     await this.switchToLabel("manager");
-    if (!(await this.managerOnScreen())) await this.openManagerFromMenu();
+    if (!(await this.onScreen())) await this.openManagerFromMenu();
   }
 
   /** Starts DeskNotes a second time, as the app menu does, and waits for the manager. */
@@ -126,11 +126,11 @@ export class App {
       throw new Error(`The second DeskNotes did not hand over and exit (${code})`);
     }
     await this.switchToLabel("manager");
-    await waitFor("the manager on screen", () => this.managerOnScreen());
+    await waitFor("the manager on screen", () => this.onScreen());
   }
 
-  /** Whether the manager's X window is mapped (the session must be on the manager). */
-  async managerOnScreen(): Promise<boolean> {
+  /** Whether the current window's X window is on screen (mapped and viewable). */
+  async onScreen(): Promise<boolean> {
     const rect = await this.session.rect();
     return x11Windows().some(
       (w) => w.viewable && w.width === rect.width && w.height === rect.height && w.x === rect.x && w.y === rect.y,

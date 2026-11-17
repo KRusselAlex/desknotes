@@ -94,7 +94,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev librsvg2-dev libxdo-dev \
             libayatana-appindicator3-dev patchelf \
-            webkit2gtk-driver xvfb x11-utils dbus-daemon
+            webkit2gtk-driver xvfb x11-utils dbus-daemon python3-gi
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

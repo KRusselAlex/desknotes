@@ -991,11 +991,24 @@ real-app check are.
     again, and the new copy hands over to the running one.
   - Saving is proved through the manager's search, which reads the database.
   - Window titles are read from X11, as other programs see them.
-  - WebDriver drives the webviews only. The tray, notification banners, dragging a window
+  - Reminders (`reminders.e2e.ts`) run on the real clock, so each test waits for the
+    next minute (the suite takes about 2 minutes).
+    - `tests/e2e/notifications.py` stands in for the desktop's notification service
+      on the private bus. It records each notification DeskNotes sends and clicks its
+      buttons (`ActionInvoked`, then `NotificationClosed`, as GNOME does).
+    - The tests run DeskNotes in a fixed time zone where it is about 10:00 (`TZ`,
+      passed on by tauri-driver), so a reminder a minute away is today at any real
+      hour and the popover's date starts right. WebDriver cannot type into WebKitGTK's
+      date field.
+    - What they check: a notification shows the title and no body, with the four
+      buttons; a click opens the hidden note; "10 min" and "Dismiss" act on the
+      reminder; seven reminders missed while closed come as five plus "2 more
+      reminders", whose click shows the manager.
+  - WebDriver drives the webviews only. The tray, GNOME's notification banners, dragging a window
     by its header and the keyboard layout stay with `scripts/verify/` and manual checks.
     The test app still reaches the real system bus: logind for sleep, and the screen-lock
     signal.
-  - Needs `webkit2gtk-driver`, `xvfb` and `x11-utils` (apt), and `tauri-driver`
+  - Needs `webkit2gtk-driver`, `xvfb`, `x11-utils` and `python3-gi` (apt), and `tauri-driver`
     (`cargo install tauri-driver --locked`).
   - CI runs the tests on every pull request against a debug build with the frontend
     embedded (`npm run tauri build -- --debug --no-bundle`).
