@@ -14,6 +14,9 @@ DRIVER=${TAURI_DRIVER:-$(command -v tauri-driver || echo "$HOME/.cargo/bin/tauri
 for tool in WebKitWebDriver Xvfb xwininfo dbus-run-session flock; do
   command -v "$tool" >/dev/null || { echo "$tool not found (see CONTRIBUTING.md, End-to-end tests)" >&2; exit 2; }
 done
+# The stand-in notification service (tests/e2e/notifications.py) needs GLib's Python bindings.
+python3 -I -c 'from gi.repository import Gio, GLib' 2>/dev/null ||
+  { echo "python3 cannot import gi: sudo apt install python3-gi" >&2; exit 2; }
 
 # One run at a time on this computer: the runs would share the app's processes.
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/desknotes-e2e.lock"
