@@ -111,7 +111,7 @@ Other shell files:
 | `test/setup.ts` | Vitest setup. |
 
 `tests/fixtures/` (at the repository root) holds rich-text fixtures shared by the Rust and
-TypeScript validation tests.
+TypeScript validation tests. `tests/e2e/` holds the end-to-end tests (section 7).
 
 ### `scripts/` and `docs/`
 
@@ -119,6 +119,7 @@ TypeScript validation tests.
 |---|---|
 | `scripts/setup-ubuntu.sh` | Installs the Ubuntu build packages. |
 | `scripts/verify/` | Real-app checks with isolated test data. `app.sh` starts and stops the app, `x.py` drives X11 windows (click, type, move, screenshot), `tray.py` lists and clicks tray items, `db.py` reads the database read-only, `resources.sh` measures memory and idle CPU. |
+| `scripts/e2e/run.sh` | Runs the end-to-end tests in `tests/e2e` on a hidden display with a private D-Bus session and scratch folders (`npm run test:e2e`). |
 | `scripts/release/` | Release safety: `check-tag.sh`, `changelog-section.sh`, `make-fixture.sh` (upgrade fixture of a released version), and their tests in `test.sh`. |
 | `docs/design.md` | The original Milestone 0 design. |
 | `docs/adr/` | Architecture decisions 0001–0006. |
@@ -973,6 +974,31 @@ real-app check are.
   cargo test -p desknotes-core
   cargo clippy --workspace --all-targets -- -D warnings
   ```
+- **End-to-end tests:** `npm run test:e2e` starts the built app (default
+  `target/release/desknotes`, or `$DESKNOTES_E2E_BINARY`) under tauri-driver and
+  WebKitWebDriver and drives the manager and note windows through their DOM.
+  - `scripts/e2e/run.sh` isolates each run:
+    - a hidden Xvfb display;
+    - a private D-Bus session, so the app never hands over to a DeskNotes already running;
+    - scratch home, config, cache, state and runtime folders, with GSettings kept in memory;
+    - the desktop's session variables unset.
+  - Runs on one computer take turns, through a lock file.
+  - The tests refuse to start unless `run.sh` set them up.
+  - Every app start gets a new data folder, and the first test checks that the database
+    lands in it. A restart reuses the folder.
+  - When notes are open at start-up, the manager starts hidden, and the restart test
+    checks this. The tests open it the way the app menu does: they start `desknotes`
+    again, and the new copy hands over to the running one.
+  - Saving is proved through the manager's search, which reads the database.
+  - Window titles are read from X11, as other programs see them.
+  - WebDriver drives the webviews only. The tray, notification banners, dragging a window
+    by its header and the keyboard layout stay with `scripts/verify/` and manual checks.
+    The test app still reaches the real system bus: logind for sleep, and the screen-lock
+    signal.
+  - Needs `webkit2gtk-driver`, `xvfb` and `x11-utils` (apt), and `tauri-driver`
+    (`cargo install tauri-driver --locked`).
+  - CI runs the tests on every pull request against a debug build with the frontend
+    embedded (`npm run tauri build -- --debug --no-bundle`).
 - **Real-app checks on Ubuntu:**
   - Use the `desknotes-verify-ubuntu` skill (`.claude/skills/`) and the tools in
     `scripts/verify/`. They use isolated test data, never your real notes.

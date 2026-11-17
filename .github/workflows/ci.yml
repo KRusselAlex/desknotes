@@ -81,3 +81,34 @@ jobs:
         run: cargo test -p desknotes
       - name: Build desktop app
         run: cargo build -p desknotes
+
+  e2e:
+    name: End-to-end (real app, hidden display)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages for Tauri and the WebDriver tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev librsvg2-dev libxdo-dev \
+            libayatana-appindicator3-dev patchelf \
+            webkit2gtk-driver xvfb x11-utils dbus-daemon
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: tauri-driver
+        run: cargo install tauri-driver --locked --version 2.1.0
+      - run: npm ci
+      # A debug build with the frontend embedded: the same windows, database and IPC as a
+      # release, without several minutes of release optimisation on every pull request.
+      - name: Build desktop app
+        run: npm run tauri build -- --debug --no-bundle
+      - name: End-to-end tests
+        run: npm run test:e2e
+        env:
+          DESKNOTES_E2E_BINARY: target/debug/desknotes

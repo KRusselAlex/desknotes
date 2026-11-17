@@ -31,6 +31,7 @@ npm test && npm run lint && npm run typecheck
 cargo test -p desknotes-core
 cargo clippy --workspace --all-targets -- -D warnings
 npm run tauri dev                      # real app (Ubuntu packages listed in README)
+npm run tauri build -- --no-bundle && npm run test:e2e   # end-to-end tests (CONTRIBUTING.md)
 npm run dev  # then http://localhost:1420/preview.html?w=manager  (mocked UI preview)
 ```
 Real-app checks on Ubuntu: see the `desknotes-verify-ubuntu` skill and `scripts/verify/`.
